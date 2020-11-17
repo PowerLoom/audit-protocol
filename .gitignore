@@ -6,3 +6,5 @@ settings.json
 __pycache__/
 *.db
 static/**
+*.swp
+
