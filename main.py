@@ -19,6 +19,7 @@ import logging
 import sys
 import json
 import aioredis
+import redis
 import time
 from skydb import SkydbTable
 
@@ -63,6 +64,8 @@ retreivals_bulk_table = SkydbTable(
 
 # setup CORS origins stuff
 origins = ["*"]
+
+redis_lock = redis.Redis()
 
 app = FastAPI(docs_url=None, openapi_url=None, redoc_url=None)
 app.add_middleware(
@@ -133,6 +136,20 @@ async def load_user_from_auth(
 	ffs_token_c = request.app.sqlite_cursor.execute("""
 		SELECT token FROM api_keys WHERE apiKey=?
 	""", (api_key_in_header, ))
+	row = None
+	while True:
+		rest_logger.debug("Waiting for Lock")
+		v = redis_lock.incr('my_lock')
+		if v == 1:
+			row = api_keys_table.fetch(condition={'api_key':api_key_in_header}, 
+					start_index=api_keys_table.index-1,
+					n_rows=1)
+			v = redis_lock.decr('my_lock')
+			break
+		v = redis_lock.decr('my_lock')
+		time.sleep(0.1)
+		
+
 	ffs_token = ffs_token_c.fetchone()
 	# rest_logger.debug(ffs_token)
 	if ffs_token:
@@ -165,6 +182,8 @@ async def create_filecoin_filesystem(
 	request.app.sqlite_cursor.execute("""
 		INSERT INTO api_keys VALUES (?, ?)
 	""", (new_ffs.token, api_key))
+	
+	api_keys_table.add_row({'token':new_ffs.token,'api_key':api_key})
 	request.app.sqlite_cursor.connection.commit()
 
 	# Add row to skydb
@@ -204,7 +223,19 @@ async def all_payloads(
 				SELECT requestID, completed FROM retrievals_bulk WHERE token=?
 			""", (ffs_token,))
 		res = c.fetchone()
-		row = retreivals_bulk_table.fetch(condition={'token':ffs_token})
+		row = None
+		while True:
+			rest_logger.debug("Waiting for Lock")
+			v = redis_lock.incr('my_lock')
+			if v == 1:
+				row = retreivals_bulk_table.fetch(condition={'token':ffs_token}, start_index=retreivals_bulk_table.index-1, n_rows=1)
+				v = redis_lock.decr('my_lock')
+				break
+			v = redis_lock.decr('my_lock')
+			time.sleep(0.1)
+
+		if len(row) >= 1:
+			row = row[next(iter(row.keys()))]
 		if not row:
 			request_id = str(uuid4())
 			request_status = 'Queued'
@@ -229,11 +260,23 @@ async def all_payloads(
 						ORDER BY timestamp DESC 
 					''', (ffs_token,))
 
-	records_rows = accounting_records_table.fetch(condition={'token':ffs_token}, mode=1)
+	records_rows = None
+	while True:
+		rest_logger.debug("Waiting for Lock")
+		v = redis_lock.incr('my_lock')
+		if v == 1:
+			records_rows = accounting_records_table.fetch(condition={'token':ffs_token}, 
+								start_index=accounting_records_table.index-1,
+								n_rows=3)
+
+			v = redis_lock.decr('my_lock')
+			break
+		v = redis_lock.decr('my_lock')
+		time.sleep(0.1)
 	print(records_rows)
 	for row_index in records_rows:
 		payload_obj = {
-			'recordCid': records_rows[row_index]['cid'],
+			'recordCid': records_rows[row_index]['localCID'],
 			'txHash': records_rows[row_index]['txHash'],
 			'timestamp': records_rows[row_index]['timestamp']
 		}
@@ -264,7 +307,19 @@ async def record(request: Request, response:Response, recordCid: str):
 	real_cid = res[1]
 	ffs_token = res[2]
 	# skydb fetching
-	row = accounting_records_table.fetch(condition={'localCID':recordCid})
+	row = None
+	while True:
+		rest_logger.debug("Waiting for Lock")
+		v = redis_lock.incr('my_lock')
+		if v == 1:
+			row = accounting_records_table.fetch(condition={'localCID':recordCid}, start_index=accounting_records_table.index-1, n_rows=1)
+			v = redis_lock.decr('my_lock')
+			break
+		v = redis_lock.decr('my_lock')
+		time.sleep(0.1)
+	assert len(row) >= 1, "No row found"
+	index = list(row.keys())[0]
+	row = row[index]
 	confirmed = int(row['confirmed'])
 	real_cid = row['cid']
 	ffs_token = row['token']
@@ -277,8 +332,19 @@ async def record(request: Request, response:Response, recordCid: str):
 	""", (real_cid, ))
 	res = c.fetchone()
 
-	row = retreivals_single_table.fetch(condition={'cid':real_cid})
+
+	row = None
+	while True:
+		rest_logger.debug("Waiting for Lock")
+		v = redis_lock.incr('my_lock')
+		if v == 1:
+			row = retreivals_single_table.fetch(condition={'cid':real_cid}, start_index=retreivals_single_table.index-1, n_rows=1)
+			v = redis_lock.decr('my_lock')
+			break
+		v = redis_lock.decr('my_lock')
+		time.sleep(0.1)
 	if row:
+		row = row[next(iter(row.keys()))]
 		request_id = row['requestID']
 		request_status = int(row['completed'])
 		if request_status == 0:
@@ -331,7 +397,17 @@ async def request_status(request: Request, requestId: str):
 		SELECT * FROM retrievals_single WHERE requestID=?
 	''', (requestId, ))
 
-	row = retreivals_single_table.fetch(condition={'requestID':requestId}, mode=0)
+	row = None
+	while True:
+		rest_logger.debug("Waiting for Lock")
+		v = redis_lock.incr('my_lock')
+		if v == 1:
+			row = retreivals_single_table.fetch(condition={'requestID':requestId}, start_index=retreivals_single_table.index-1, n_rows=1)
+			v = redis_lock.decr('my_lock')
+			break
+		v = redis_lock.decr('my_lock')
+		time.sleep(0.1)
+	row = row[next(iter(row.keys()))]
 	res = c.fetchone()
 
 	if row:
@@ -342,7 +418,16 @@ async def request_status(request: Request, requestId: str):
 				SELECT * FROM retrievals_bulk WHERE requestID=?
 			''', (requestId,))
 
-		c_bulk_row = retreivals_bulk_table.fetch(condition={'requestID':requestId})
+		c_bulk_row = None
+		while True:
+			rest_logger.debug("Waiting for Lock")
+			v = redis_lock.ince('my_lock')
+			if v == 1:
+				c_bulk_row = retreivals_bulk_table.fetch(condition={'requestID':requestId}, start_index=retreivals_bulk_table.index-1)
+				v = redis_lock.decr('my_lock')
+				break
+			v = redis_lock.decr('my_lock')
+			time.sleep(0.1)
 		res_bulk = c_bulk.fetchone()
 		return {'requestID': requestId, 'completed': bool(int(c_bulk_row['completed'])), 
 				"downloadFile": c_bulk_row['retreived_file']}
@@ -395,6 +480,7 @@ async def root(
 
 	rest_logger.debug("Adding row to accounting_records_table")
 	# Add row to skydb
+	print(f"Adding cid: {stage_res.cid}")
 	accounting_records_table.add_row({
 				'token':token,
 				'cid':stage_res.cid,
