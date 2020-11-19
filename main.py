@@ -515,7 +515,7 @@ async def commit_payload(
 		payloadHash=payload_hash,
 		apiKeyHash=token_hash,
 	))
-	dag['txHash'] = tx_hash_obj[0]['txHash']
+	dag['TxHash'] = tx_hash_obj[0]['txHash']
 	timestamp = datetime.strftime(datetime.now(),"%Y%m%d%H%M%S%f")
 	dag['Timestamp'] = timestamp
 	rest_logger.debug(dag)
@@ -529,7 +529,34 @@ async def commit_payload(
 def get_block_height():
 	return ipfs_table.index-1
 
+def retreive_block(block_height:int, data:bool):
+	row = ipfs_table.fetch_row(row_index=block_height)
+	block = ipfs_client.dag.get(row['cid']).as_json()
+	if data:
+		block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+	return block
+
+
+
 @app.get('/payloads/height')
 async def payload_height(request: Request, response:Response):
 	height = get_block_height()
 	return {"height": height}
+
+@app.get('/payloads/{block_height}')
+async def get_block(request:Request,
+		response:Response,
+		block_height:int,
+		data:Optional[str]=Query(None)
+):
+
+	if (block_height > get_block_height()) or (block_height < 0):
+		return {'error':'Invalid block Height'}
+
+	if data:
+		if data.lower() == 'true':
+			data = True
+		else:
+			data = False
+
+	return retreive_block(block_height, data) 
