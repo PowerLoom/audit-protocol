@@ -54,8 +54,6 @@ with open('settings.json') as f:
 
 
 def main():
-	sqlite_conn = sqlite3.connect('auditprotocol_1.db')
-	sqlite_cursor = sqlite_conn.cursor()
 	r = redis.StrictRedis(
 		host=settings['REDIS']['HOST'],
 		port=settings['REDIS']['PORT'],
@@ -66,9 +64,6 @@ def main():
 	awaited_deals = list()
 	while True:
 		retrieval_worker_logger.debug("Looping...")
-		c = sqlite_cursor.execute("""
-			SELECT requestID, cid, localCID, retrievedFile FROM retrievals_single WHERE completed=0   
-		""")
 		while True:
 			retrieval_worker_logger.debug('Waiting for Lock')
 			v = r.incr('my_lock')
@@ -93,10 +88,6 @@ def main():
 			request_id = rows[retrieval_request]['requestID']
 			ffs_cid = rows[retrieval_request]['cid']
 			local_cid = rows[retrieval_request]['localCID']
-			s = sqlite_cursor.execute("""
-				SELECT token FROM accounting_records WHERE localCID=?
-			""", (local_cid, ))
-			res = s.fetchone()
 			while True:
 				retrieval_worker_logger.debug('Waiting for Lock')
 				v = r.incr('my_lock')
@@ -114,7 +105,6 @@ def main():
 
 			assert len(acc_row) == 1, f"No row found  for localCID: {local_cid}"
 			acc_row = acc_row[next(iter(acc_row.keys()))]
-			token = res[0]
 			token = acc_row['token']
 			retrieval_worker_logger.debug("Retrieving file " + ffs_cid + " from FFS.")
 			file_ = pow_client.ffs.get(ffs_cid, token)
@@ -126,17 +116,10 @@ def main():
 						f_.write(_)
 			except Exception:
 				retrieval_worker_logger.debug('File has alreadby been saved')	
-			sqlite_cursor.execute("""
-				UPDATE retrievals_single SET retrievedFile=?, completed=1 WHERE requestID=?
-			""", ('/'+file_name, request_id))
-			sqlite_conn.commit()
 			retreivals_single_table.update_row(row_index=retrieval_request,
 					data={'retreived_file':'/'+file_name, 'completed':1}
 					)
 		# bulk retrievals
-		c = sqlite_cursor.execute("""
-					SELECT requestID, api_key, token FROM retrievals_bulk WHERE completed=0   
-				""")
 		while True:
 			retrieval_worker_logger.debug('Waiting for Lock')
 			v = r.incr('my_lock')
@@ -158,9 +141,6 @@ def main():
 			api_key = bulk_rows[bulk_retrieval_request]['api_key']
 			ffs_token = bulk_rows[bulk_retrieval_request]['token']
 			retrieval_worker_logger.debug(f"{request_id}, {api_key}, {ffs_token}")
-			records_c = sqlite_cursor.execute('''
-					SELECT cid, localCID, txHash, confirmed FROM accounting_records WHERE token=? 
-				''', (ffs_token,))
 
 			file_name = f'static/{request_id}'
 			fp = open(file_name, 'wb')
@@ -193,10 +173,6 @@ def main():
 				except Exception as e:
 					print(e)
 			fp.close()
-			sqlite_cursor.execute("""
-							UPDATE retrievals_bulk SET retrievedFile=?, completed=1 WHERE requestID=?
-						""", ('/' + file_name, request_id))
-			sqlite_conn.commit()
 			retreivals_bulk_table.update_row(row_index=bulk_retrieval_request, 
 						data={'retreived_file':'/'+file_name, 'completed':1}
 					)

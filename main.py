@@ -133,9 +133,6 @@ async def load_user_from_auth(
 	if not api_key_in_header:
 		return None
 	rest_logger.debug(api_key_in_header)
-	ffs_token_c = request.app.sqlite_cursor.execute("""
-		SELECT token FROM api_keys WHERE apiKey=?
-	""", (api_key_in_header, ))
 	row = None
 	while True:
 		rest_logger.debug("Waiting for Lock")
@@ -147,13 +144,8 @@ async def load_user_from_auth(
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
-		time.sleep(0.1)
-		
-
-	ffs_token = ffs_token_c.fetchone()
-	# rest_logger.debug(ffs_token)
-	if ffs_token:
-		ffs_token = ffs_token[0]
+		time.sleep(0.01)
+	ffs_token = row[next(iter(row.keys()))]['token']
 	return {'token': ffs_token, 'api_key': api_key_in_header}
 
 
@@ -179,12 +171,7 @@ async def create_filecoin_filesystem(
 		rest_logger.debug(new_storage_config)
 	# rest_logger.debug(type(default_config))
 	api_key = str(uuid4())
-	request.app.sqlite_cursor.execute("""
-		INSERT INTO api_keys VALUES (?, ?)
-	""", (new_ffs.token, api_key))
-	
 	api_keys_table.add_row({'token':new_ffs.token,'api_key':api_key})
-	#request.app.sqlite_cursor.connection.commit()
 
 	# Add row to skydb
 	
@@ -219,10 +206,6 @@ async def all_payloads(
 	ffs_token = api_key_extraction['token']
 	return_json = dict()
 	if retrieval_mode:
-		c = request.app.sqlite_cursor.execute("""
-				SELECT requestID, completed FROM retrievals_bulk WHERE token=?
-			""", (ffs_token,))
-		res = c.fetchone()
 		row = None
 		while True:
 			rest_logger.debug("Waiting for Lock")
@@ -232,7 +215,7 @@ async def all_payloads(
 				v = redis_lock.decr('my_lock')
 				break
 			v = redis_lock.decr('my_lock')
-			time.sleep(0.1)
+			time.sleep(0.01)
 
 		if len(row) >= 1:
 			row = row[next(iter(row.keys()))]
@@ -255,11 +238,6 @@ async def all_payloads(
 			request_status = 'InProcess' if int(row['completed']) == 0 else 'Completed'
 		return_json.update({'requestId': request_id, 'requestStatus': request_status})
 	payload_list = list()
-	records_c = request.app.sqlite_cursor.execute('''
-						SELECT cid, localCID, txHash, confirmed, timestamp FROM accounting_records WHERE token=? 
-						ORDER BY timestamp DESC 
-					''', (ffs_token,))
-
 	records_rows = None
 	while True:
 		rest_logger.debug("Waiting for Lock")
@@ -272,7 +250,7 @@ async def all_payloads(
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
-		time.sleep(0.1)
+		time.sleep(0.01)
 	print(records_rows)
 	for row_index in records_rows:
 		payload_obj = {
@@ -299,13 +277,6 @@ async def all_payloads(
 @app.get('/payload/{recordCid:str}')
 async def record(request: Request, response:Response, recordCid: str):
 	# record_chain = contract.getTokenRecordLogs('0x'+keccak(text=tokenId).hex())
-	c = request.app.sqlite_cursor.execute('''
-			SELECT confirmed, cid, token FROM accounting_records WHERE localCID=?
-		''', (recordCid,))
-	res = c.fetchone()
-	confirmed = res[0]
-	real_cid = res[1]
-	ffs_token = res[2]
 	# skydb fetching
 	row = None
 	while True:
@@ -316,7 +287,7 @@ async def record(request: Request, response:Response, recordCid: str):
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
-		time.sleep(0.1)
+		time.sleep(0.01)
 	assert len(row) >= 1, "No row found"
 	index = list(row.keys())[0]
 	row = row[index]
@@ -327,12 +298,6 @@ async def record(request: Request, response:Response, recordCid: str):
 	# check = pow_client.ffs.info(real_cid, ffs_token)
 	# rest_logger.debug(check)
 
-	c = request.app.sqlite_cursor.execute("""
-		SELECT requestID, completed FROM retrievals_single WHERE cid=?
-	""", (real_cid, ))
-	res = c.fetchone()
-
-
 	row = None
 	while True:
 		rest_logger.debug("Waiting for Lock")
@@ -342,7 +307,7 @@ async def record(request: Request, response:Response, recordCid: str):
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
-		time.sleep(0.1)
+		time.sleep(0.01)
 	if row:
 		row = row[next(iter(row.keys()))]
 		request_id = row['requestID']
@@ -393,9 +358,6 @@ async def record(request: Request, response:Response, recordCid: str):
 
 @app.get('/requests/{requestId:str}')
 async def request_status(request: Request, requestId: str):
-	c = request.app.sqlite_cursor.execute('''
-		SELECT * FROM retrievals_single WHERE requestID=?
-	''', (requestId, ))
 
 	row = None
 	while True:
@@ -406,33 +368,46 @@ async def request_status(request: Request, requestId: str):
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
-		time.sleep(0.1)
+		time.sleep(0.01)
 	row = row[next(iter(row.keys()))]
-	res = c.fetchone()
 
 	if row:
 		#return {'requestID': requestId, 'completed': bool(res[4]), "downloadFile": res[3]}
 		return {'requestID':requestId, 'completed': bool(int(row['completed'])), "downloadFile":row['retreived_file']}
 	else:
-		c_bulk = request.app.sqlite_cursor.execute('''
-				SELECT * FROM retrievals_bulk WHERE requestID=?
-			''', (requestId,))
-
 		c_bulk_row = None
 		while True:
 			rest_logger.debug("Waiting for Lock")
-			v = redis_lock.ince('my_lock')
+			v = redis_lock.incr('my_lock')
 			if v == 1:
 				c_bulk_row = retreivals_bulk_table.fetch(condition={'requestID':requestId}, start_index=retreivals_bulk_table.index-1)
 				v = redis_lock.decr('my_lock')
 				break
 			v = redis_lock.decr('my_lock')
-			time.sleep(0.1)
-		res_bulk = c_bulk.fetchone()
+			time.sleep(0.01)
 		return {'requestID': requestId, 'completed': bool(int(c_bulk_row['completed'])), 
 				"downloadFile": c_bulk_row['retreived_file']}
 
 
+@app.post('/stage')
+async def stage_file(
+		request: Request, 
+		response: Response,
+		api_key_extraction=Depends(load_user_from_auth)
+		):
+	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
+	# if request.method == 'POST':
+	req_args = await request.json()
+	payload = req_args['payload']
+	token = api_key_extraction['token']
+	payload_bytes = BytesIO(payload.encode('utf-8'))
+	payload_iter = bytes_to_chunks(payload_bytes)
+	# adds to hot tier, IPFS
+	stage_res = pow_client.ffs.stage(payload_iter, token=token)
+	return {'cid': stage_res.cid}
+
+
+# This function is responsible for committing payload
 @app.post('/')
 # @app.post('/jsonrpc/v1/{appID:str}')
 async def root(
@@ -473,11 +448,6 @@ async def root(
 	rest_logger.debug(tx_hash_obj)
 	local_id = str(uuid4())
 	timestamp = int(time.time())
-	request.app.sqlite_cursor.execute('INSERT INTO accounting_records VALUES '
-									  '(?, ?, ?, ?, ?, ?)',
-									  (token, stage_res.cid, local_id, tx_hash, 0, timestamp))
-	#request.app.sqlite_cursor.connection.commit()
-
 	rest_logger.debug("Adding row to accounting_records_table")
 	# Add row to skydb
 	print(f"Adding cid: {stage_res.cid}")

@@ -13,6 +13,7 @@ import coloredlogs
 import logging
 import sys
 from skydb import SkydbTable
+from skydb.skydb_utils import _value_in
 import time
 
 deal_watcher_logger = logging.getLogger(__name__)
@@ -32,20 +33,23 @@ coloredlogs.install(level='DEBUG', logger=deal_watcher_logger, stream=sys.stdout
 # Tables that are used to store data in the main.py file
 accounting_records_table = SkydbTable(
 			table_name='accounting_records',
-			columns=['token','cid','localCID','txHash','confirmed','timestamp'],
-			seed='qwerasdfzxcv'
+			columns=['c1'],
+			column_split=['token','cid','localCID','txHash','confirmed','timestamp'],
+			seed='abc'
 		)
 
 retreivals_single_table = SkydbTable(
 			table_name='retreivals_single',
-			columns=['requestID','cid','localCID','retreived_file','completed'],
-			seed='qwerasdfzxcv'
+			columns=['c1'],
+			column_split=['requestID','cid','localCID','retreived_file','completed'],
+			seed='abc'
 		)
 
 retreivals_bulk_table = SkydbTable(
 			table_name='retreivals_bulk',
-			columns=['requestID','api_key','token','retreived_file','completed'],
-			seed='qwerasdfzxcv',
+			columns=['c1'],
+			column_split=['requestID','api_key','token','retreived_file','completed'],
+			seed='abc',
 		)
 
 
@@ -83,8 +87,6 @@ def main():
 
 
 def job_checker():
-	sqlite_conn = sqlite3.connect('auditprotocol_1.db')
-	sqlite_cursor = sqlite_conn.cursor()
 
 	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
 	while True:
@@ -102,13 +104,6 @@ def job_checker():
 
 				done_deal_jids.append(deal_jid)
 				# update status
-				sqlite_cursor.execute("""
-					UPDATE accounting_records SET confirmed=1 WHERE cid=?			
-				""", (deal['cid'], ))
-				try:
-					sqlite_cursor.connection.commit()
-				except Exception:
-					print("Exception")
 
 				required_row = None
 				while True:
@@ -117,13 +112,13 @@ def job_checker():
 						v = redis_lock.incr('my_lock')
 						required_row = None
 						if v == 1:
-
-							deal_watcher_logger.debug("Acquired lock: "+deal['cid'])
 							accounting_records_table.calibrate_index()
-							required_row = accounting_records_table.fetch(condition = {'cid':deal['cid']}, 
-													start_index=accounting_records_table.index-1,
-													n_rows=1, 
-													)
+							required_row = accounting_records_table.fetch(
+												condition = {'c1':['cid',deal['cid']]}, 
+												start_index=accounting_records_table.index-1,
+												n_rows=1, 
+												condition_func=_value_in,
+											)
 							v = redis_lock.decr('my_lock')
 							print(required_row)
 							break
@@ -137,7 +132,10 @@ def job_checker():
 				update_row_index = list(required_row.keys())[0]
 
 				# Update status on SkyDB and also log it to console
-				accounting_records_table.update_row(row_index=update_row_index, data={'confirmed':1})
+				update_data = required_row[update_row_index]['c1'].split(';')
+				update_data[accounting_records_table.column_split.index('confirmed')] = 1
+				update_data = ';'.join(update_data)
+				accounting_records_table.update_row(row_index=update_row_index, data={'c1':update_data})
 				deal_watcher_logger.debug(f"Accounting records table updated.!")
 
 			elif j_stat.job.status == 3:
@@ -166,8 +164,10 @@ def job_checker():
 								""", (deal['cid'],))
 
 				# Update status on SkyDB and also log it to console
-				accounting_records_table.update_row(row_index=update_row_index, data={'confirmed':2})
-				sqlite_cursor.connection.commit()
+				update_data = required_row[update_row_index]['c1'].split(';')
+				update_data[accounting_records_table.column_split.index('confirmed')] = 2
+				update_data = ';'.join(update_data)
+				accounting_records_table.update_row(row_index=update_row_index, data={'c1':update_data})
 				deal_watcher_logger.debug(f"Accounting records table updated.!")
 		for each_done_jid in done_deal_jids:
 			del deals[each_done_jid]
