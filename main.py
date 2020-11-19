@@ -184,7 +184,7 @@ async def create_filecoin_filesystem(
 	""", (new_ffs.token, api_key))
 	
 	api_keys_table.add_row({'token':new_ffs.token,'api_key':api_key})
-	request.app.sqlite_cursor.connection.commit()
+	#request.app.sqlite_cursor.connection.commit()
 
 	# Add row to skydb
 	
@@ -242,7 +242,7 @@ async def all_payloads(
 			request.app.sqlite_cursor.execute('''
 				INSERT INTO retrievals_bulk VALUES (?, ?, ?, "", 0)
 			''', (request_id, api_key_extraction['api_key'], ffs_token))
-			request.app.sqlite_cursor.connection.commit()
+			#request.app.sqlite_cursor.connection.commit()
 			retreivals_bulk_table.add_row({
 						'requestID':request_id,
 						'api_key':api_key_extraction['api_key'],
@@ -378,7 +378,7 @@ async def record(request: Request, response:Response, recordCid: str):
 		request.app.sqlite_cursor.execute("""
 			INSERT INTO retrievals_single VALUES (?, ?, ?, "", 0)
 		""", (request_id, real_cid, recordCid))
-		request.app.sqlite_cursor.connection.commit()
+		#request.app.sqlite_cursor.connection.commit()
 
 		retreivals_single_table.add_row({
 					'requestID':request_id,
@@ -476,7 +476,7 @@ async def root(
 	request.app.sqlite_cursor.execute('INSERT INTO accounting_records VALUES '
 									  '(?, ?, ?, ?, ?, ?)',
 									  (token, stage_res.cid, local_id, tx_hash, 0, timestamp))
-	request.app.sqlite_cursor.connection.commit()
+	#request.app.sqlite_cursor.connection.commit()
 
 	rest_logger.debug("Adding row to accounting_records_table")
 	# Add row to skydb
