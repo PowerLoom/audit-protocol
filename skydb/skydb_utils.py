@@ -68,7 +68,7 @@ class SkydbTable(object):
 		the moment.
 		"""
 		try:
-			index, revision = self.registry.get_entry(f"INDEX:{self.table_name}", timeout=5)
+			index, revision = self.registry.get_entry(f"INDEX:{self.table_name}", timeout=30)
 			return int(index), revision
 		except Timeout as T:
 			print("Initializing the index...")

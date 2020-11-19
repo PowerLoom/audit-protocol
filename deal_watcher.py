@@ -159,10 +159,6 @@ def job_checker():
 					time.sleep(0.1)
 				assert len(required_row.keys()) >= 1, "No rows found that match the condition"
 				update_row_index = list(required_row.keys())[0]
-				sqlite_cursor.execute("""
-									UPDATE accounting_records SET confirmed=2 WHERE cid=?			
-								""", (deal['cid'],))
-
 				# Update status on SkyDB and also log it to console
 				update_data = required_row[update_row_index]['c1'].split(';')
 				update_data[accounting_records_table.column_split.index('confirmed')] = 2

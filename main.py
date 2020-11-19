@@ -529,12 +529,40 @@ async def commit_payload(
 def get_block_height():
 	return ipfs_table.index-1
 
-def retreive_block(block_height:int, data:bool):
-	row = ipfs_table.fetch_row(row_index=block_height)
-	block = ipfs_client.dag.get(row['cid']).as_json()
+	
+
+
+@app.get('/payloads')
+async def get_payloads(
+	request: Request,
+	response: Response,
+	from_height:int = Query(None),
+	to_height:int = Query(None),
+	data:Optional[str]=Query(None)
+):
 	if data:
-		block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
-	return block
+		if data.lower() == 'true':
+			data = True
+		else:
+			data = False
+
+	if (from_height < 0) or (to_height > get_block_height()) or (from_height > to_height):
+		return {'error': 'Invalid Height'}
+
+	blocks = {}
+	current_height = to_height
+	prevCid = ""
+	while current_height >= from_height:
+		if not prevCid:
+			prevCid = ipfs_table.fetch_row(row_index=current_height)['cid']
+		block = ipfs_client.dag.get(prevCid)
+		if data:
+			block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+		blocks.update({prevCid:block})
+		prevCid = block['prevCid']
+		current_height = current_height - 1
+
+	return blocks
 
 
 
@@ -559,4 +587,10 @@ async def get_block(request:Request,
 		else:
 			data = False
 
-	return retreive_block(block_height, data) 
+	row = ipfs_table.fetch_row(row_index=block_height)
+	block = ipfs_client.dag.get(row['cid']).as_json()
+	if data:
+		block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+	return {row['cid']:block}
+
+
