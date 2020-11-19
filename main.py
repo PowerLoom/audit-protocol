@@ -594,3 +594,16 @@ async def get_block(request:Request,
 	return {row['cid']:block}
 
 
+@app.get('/payload/{block_height:int}/data')
+async def get_block_data(
+	request:Request,
+	response:Response,
+	block_height:int,
+):
+
+	if (block_height > get_block_height()) or (block_height < 0):
+		return {'error':'Invalid block Height'}
+	row = ipfs_table.fetch_row(row_index=block_height)
+	block = ipfs_client.dag.get(row['cid']).as_json()
+	block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+	return {row['cid']:block['Data']}
