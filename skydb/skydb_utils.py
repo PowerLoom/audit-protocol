@@ -8,9 +8,10 @@ import json
 import nacl.bindings
 
 import threading
+from tenacity import retry, wait_fixed, retry_if_exception_type
+from requests.exceptions import ReadTimeout as ReadTimeoutError
 
 def _equal(condition:dict, key:str, value:str, column_split:list=None) -> bool:
-	print(condition[key], value)
 	return condition[key] == value
 
 def _value_in(condition:dict, key:str, value:str, column_split:list) -> bool:
@@ -58,6 +59,7 @@ class SkydbTable(object):
 			index, revision = self.registry.get_entry(f"INDEX:{self.table_name}", timeout=5)
 			self._index_revision = revision
 			self.index = int(index)
+	
 	
 	def get_index(self) -> int:
 		"""
@@ -135,6 +137,7 @@ class SkydbTable(object):
 				)
 
 
+	@retry(wait=wait_fixed(3), retry=retry_if_exception_type(ReadTimeoutError))
 	def fetch_row(self, row_index:int) -> dict:
 		"""
 		Args:
@@ -151,6 +154,7 @@ class SkydbTable(object):
 
 		return row
 
+	@retry(wait=wait_fixed(3), retry=retry_if_exception_type(ReadTimeoutError))
 	def _fetch(self, condition:dict, n_rows:int, work_index:int, n_skip:int, condition_func):
 		""" 
 		This function is meant to be run as a thread.
@@ -195,6 +199,7 @@ class SkydbTable(object):
 			work_index += n_skip
 
 
+	@retry(wait=wait_fixed(3), retry=retry_if_exception_type(ReadTimeoutError))
 	def fetch(self, condition:dict, start_index:int, n_rows:int=2, num_workers:int=1, condition_func=None) -> dict:
 		"""
 		- This function will fetch a row or bunch of rows, which satifies the condition. The condition can be something like

@@ -7,6 +7,7 @@ aioredis
 aiofiles
 redis
 coloredlogs
+tenacity
 backports.pbkdf2==0.1
 certifi==2020.11.8
 cffi==1.14.3
