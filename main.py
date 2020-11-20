@@ -47,25 +47,25 @@ rest_logger.addHandler(stderr_handler)
 
 # Setup skydb
 api_keys_table = SkydbTable(
-			table_name="api_keys",
+			table_name="api_keys_ASLKE84",
 			columns=["api_key","token"],
 			seed="qwerasdfzxcv"
 		)
 
 accounting_records_table = SkydbTable(
-			table_name='accounting_records',
+			table_name='accounting_records_ASLKE84',
 			columns=['token','cid','localCID','txHash','confirmed','timestamp'],
 			seed='qwerasdfzxcv'
 		)
 
 retreivals_single_table = SkydbTable(
-			table_name='retreivals_single',
+			table_name='retreivals_single_ASLKE84',
 			columns=['requestID','cid','localCID','retreived_file','completed'],
 			seed='qwerasdfzxcv'
 		)
 
 retreivals_bulk_table = SkydbTable(
-			table_name='retreivals_bulk',
+			table_name='retreivals_bulk_ASLKE84',
 			columns=['requestID','api_key','token','retreived_file','completed'],
 			seed='qwerasdfzxcv',
 		)
@@ -130,8 +130,8 @@ async def startup_boilerplate():
 		password=REDIS_CONN_CONF['password'],
 		maxsize=5
 	)
-	app.sqlite_conn = sqlite3.connect('auditprotocol_1.db')
-	app.sqlite_cursor = app.sqlite_conn.cursor()
+	# app.sqlite_conn = sqlite3.connect('auditprotocol_1.db')
+	# app.sqlite_cursor = app.sqlite_conn.cursor()
 
 
 async def load_user_from_auth(
@@ -516,14 +516,14 @@ async def commit_payload(
 	dag['Height'] = ipfs_table.index
 	dag['prevCid'] = prevCid
 	dag['Data'] = snapshot
-	payload_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+	ipfs_cid = snapshot['Cid']
 	token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-	tx_hash_obj = contract.commitRecordHash(**dict(
-		payloadHash=payload_hash,
+	tx_hash_obj = contract.commitRecord(**dict(
+		ipfsCid=ipfs_cid,
 		apiKeyHash=token_hash,
 	))
 	dag['TxHash'] = tx_hash_obj[0]['txHash']
-	timestamp = datetime.strftime(datetime.now(),"%Y%m%d%H%M%S%f")
+	timestamp = datetime.strftime(datetime.now(), "%Y%m%d%H%M%S%f")
 	dag['Timestamp'] = timestamp
 	rest_logger.debug(dag)
 	json_string = json.dumps(dag).encode('utf-8')
@@ -535,8 +535,6 @@ async def commit_payload(
 
 def get_block_height():
 	return ipfs_table.index-1
-
-	
 
 
 @app.get('/payloads')
