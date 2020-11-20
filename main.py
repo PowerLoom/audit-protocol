@@ -496,7 +496,14 @@ async def commit_payload(
 	timestamp = datetime.strftime(datetime.now(),"%Y%m%d%H%M%S%f")
 
 	fs = open(f'files/{timestamp}', 'w')
-	fs.write(payload)
+	if type(payload) is dict:
+		fs.write(json.dumps(payload))
+	else:
+		try:
+			fs.write(str(payload))
+		except:
+			response.status_code = 400
+			return {'success': False, 'error': 'PayloadNotSuppported'}
 	fs.close()
 
 	snapshot = ipfs_client.add('files/'+timestamp)
