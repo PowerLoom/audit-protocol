@@ -5,10 +5,10 @@ from fastapi.security.api_key import APIKeyQuery, APIKeyHeader, APIKey
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse, JSONResponse
-from pygate_grpc.client import PowerGateClient
-from pygate_grpc.ffs import get_file_bytes, bytes_to_chunks, chunks_to_bytes
-from google.protobuf.json_format import MessageToDict
-from pygate_grpc.ffs import bytes_to_chunks
+# from pygate_grpc.client import PowerGateClient
+# from pygate_grpc.ffs import get_file_bytes, bytes_to_chunks, chunks_to_bytes
+# from google.protobuf.json_format import MessageToDict
+# from pygate_grpc.ffs import bytes_to_chunks
 from eth_utils import keccak
 from io import BytesIO
 from maticvigil.EVCore import EVCore
