@@ -555,7 +555,7 @@ async def get_payloads(
 	while current_height >= from_height:
 		if not prevCid:
 			prevCid = ipfs_table.fetch_row(row_index=current_height)['cid']
-		block = ipfs_client.dag.get(prevCid)
+		block = ipfs_client.dag.get(prevCid).as_json()
 		if data:
 			block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
 		blocks.update({prevCid:block})
