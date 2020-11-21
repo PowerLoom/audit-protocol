@@ -403,21 +403,26 @@ def get_block_height():
 	
 
 
-@app.get('/payloads')
+@app.get('/{projectId:int}/payloads')
 async def get_payloads(
 	request: Request,
 	response: Response,
+	projectId:int,
 	from_height:int = Query(None),
 	to_height:int = Query(None),
 	data:Optional[str]=Query(None)
 ):
+	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+			columns=['cid'],
+			seed=settings.seed,
+			verbose=1)
 	if data:
 		if data.lower() == 'true':
 			data = True
 		else:
 			data = False
 
-	if (from_height < 0) or (to_height > get_block_height()) or (from_height > to_height):
+	if (from_height < 0) or (to_height > ipfs_table.index-1) or (from_height > to_height):
 		return {'error': 'Invalid Height'}
 
 	blocks = {}
@@ -476,14 +481,18 @@ async def get_block(request:Request,
 	return {row['cid']:block}
 
 
-@app.get('/payload/{block_height:int}/data')
+@app.get('/{projectId:int}/payload/{block_height:int}/data')
 async def get_block_data(
 	request:Request,
 	response:Response,
+	projectId:int,
 	block_height:int,
 ):
-
-	if (block_height > get_block_height()) or (block_height < 0):
+	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+			columns=['cid'],
+			seed=settings.seed,
+			verbose=1)
+	if (block_height > ipfs_table.index - 1) or (block_height < 0):
 		return {'error':'Invalid block Height'}
 	row = ipfs_table.fetch_row(row_index=block_height)
 	block = ipfs_client.dag.get(row['cid']).as_json()
