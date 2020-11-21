@@ -48,29 +48,29 @@ rest_logger.addHandler(stdout_handler)
 rest_logger.addHandler(stderr_handler)
 
 # Setup skydb
-api_keys_table = SkydbTable(
-			table_name=settings.table_names.api_keys,
-			columns=["api_key","token"],
-			seed="qwerasdfzxcv"
-		)
-
-accounting_records_table = SkydbTable(
-			table_name=settings.table_names.accounting_records,
-			columns=['token','cid','localCID','txHash','confirmed','timestamp'],
-			seed='qwerasdfzxcv'
-		)
-
-retreivals_single_table = SkydbTable(
-			table_name=settings.table_names.retreivals_single,
-			columns=['requestID','cid','localCID','retreived_file','completed'],
-			seed='qwerasdfzxcv'
-		)
-
-retreivals_bulk_table = SkydbTable(
-			table_name=settings.table_names.retreivals_bulk,
-			columns=['requestID','api_key','token','retreived_file','completed'],
-			seed='qwerasdfzxcv',
-		)
+#api_keys_table = SkydbTable(
+#			table_name=settings.table_names.api_keys,
+#			columns=["api_key","token"],
+#			seed="qwerasdfzxcv"
+#		)
+#
+#accounting_records_table = SkydbTable(
+#			table_name=settings.table_names.accounting_records,
+#			columns=['token','cid','localCID','txHash','confirmed','timestamp'],
+#			seed='qwerasdfzxcv'
+#		)
+#
+#retreivals_single_table = SkydbTable(
+#			table_name=settings.table_names.retreivals_single,
+#			columns=['requestID','cid','localCID','retreived_file','completed'],
+#			seed='qwerasdfzxcv'
+#		)
+#
+#retreivals_bulk_table = SkydbTable(
+#			table_name=settings.table_names.retreivals_bulk,
+#			columns=['requestID','api_key','token','retreived_file','completed'],
+#			seed='qwerasdfzxcv',
+#		)
 
 # setup CORS origins stuff
 origins = ["*"]
@@ -438,19 +438,29 @@ async def get_payloads(
 
 
 
-@app.get('/payloads/height')
-async def payload_height(request: Request, response:Response):
-	height = get_block_height()
+@app.get('/{projectId}/payload/height')
+async def payload_height(request: Request, response:Response, projectId:int):
+	ipfs_table = SkydbTable(
+				table_name=f"{settings.dag_table_name}:{projectId}",
+				columns=['cid'],
+				seed=settings.seed
+			)
+	height = ipfs_table.index - 1
 	return {"height": height}
 
-@app.get('/payloads/{block_height}')
+@app.get('/{projectId}/payload/{block_height}')
 async def get_block(request:Request,
 		response:Response,
+		projectId:int,
 		block_height:int,
 		data:Optional[str]=Query(None)
 ):
+	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+			columns=['cid'],
+			seed=settings.seed,
+			verbose=1)
 
-	if (block_height > get_block_height()) or (block_height < 0):
+	if (block_height > ipfs_table.index-1) or (block_height < 0):
 		return {'error':'Invalid block Height'}
 
 	if data:
