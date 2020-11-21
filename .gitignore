@@ -8,3 +8,6 @@ __pycache__/
 static/**
 *.swp
 files/
+
+# Ignore dynaconf secret files
+.secrets.*

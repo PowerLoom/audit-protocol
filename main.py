@@ -24,11 +24,13 @@ import redis
 import time
 from skydb import SkydbTable
 import ipfshttpclient
-import ipfs_settings
+#import settings
+from config import settings
 from datetime import datetime
+print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect()
-ipfs_table = SkydbTable(table_name=ipfs_settings.dag_table_name,columns=['cid'],
-				seed=ipfs_settings.SEED)
+ipfs_table = SkydbTable(table_name=settings.dag_table_name,columns=['cid'],
+				seed=settings.SEED)
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -47,25 +49,25 @@ rest_logger.addHandler(stderr_handler)
 
 # Setup skydb
 api_keys_table = SkydbTable(
-			table_name="api_keys",
+			table_name=settings.table_names.api_keys,
 			columns=["api_key","token"],
 			seed="qwerasdfzxcv"
 		)
 
 accounting_records_table = SkydbTable(
-			table_name='accounting_records',
+			table_name=settings.table_names.accounting_records,
 			columns=['token','cid','localCID','txHash','confirmed','timestamp'],
 			seed='qwerasdfzxcv'
 		)
 
 retreivals_single_table = SkydbTable(
-			table_name='retreivals_single',
+			table_name=settings.table_names.retreivals_single,
 			columns=['requestID','cid','localCID','retreived_file','completed'],
 			seed='qwerasdfzxcv'
 		)
 
 retreivals_bulk_table = SkydbTable(
-			table_name='retreivals_bulk',
+			table_name=settings.table_names.retreivals_bulk,
 			columns=['requestID','api_key','token','retreived_file','completed'],
 			seed='qwerasdfzxcv',
 		)
@@ -91,8 +93,6 @@ contract = evc.generate_contract_sdk(
 	app_name='auditrecords'
 )
 
-with open('settings.json') as f:
-	settings = json.load(f)
 
 REDIS_CONN_CONF = {
 	"host": settings['REDIS']['HOST'],
@@ -187,99 +187,6 @@ async def create_filecoin_filesystem(
 	rest_logger.debug("Added a row to api_keys_table")
 	return {'apiKey': api_key}
 
-
-# @app.get('/payloads')
-# async def all_payloads(
-# 	request: Request,
-# 	response: Response,
-# 	api_key_extraction=Depends(load_user_from_auth),
-# 	retrieval: Optional[str] = Query(None)
-# ):
-# 	rest_logger.debug('Api key extraction')
-# 	rest_logger.debug(api_key_extraction)
-# 	if not api_key_extraction:
-# 		response.status_code = status.HTTP_403_FORBIDDEN
-# 		return {'error': 'Forbidden'}
-# 	if not api_key_extraction['token']:
-# 		response.status_code = status.HTTP_403_FORBIDDEN
-# 		return {'error': 'Forbidden'}
-# 	retrieval_mode = False
-# 	if not retrieval:
-# 		retrieval_mode = False
-# 	else:
-# 		if retrieval == 'true':
-# 			retrieval_mode = True
-# 		elif retrieval == 'false':
-# 			retrieval_mode = False
-# 	ffs_token = api_key_extraction['token']
-# 	return_json = dict()
-# 	if retrieval_mode:
-# 		row = None
-# 		while True:
-# 			rest_logger.debug("Waiting for Lock")
-# 			v = redis_lock.incr('my_lock')
-# 			if v == 1:
-# 				row = retreivals_bulk_table.fetch(condition={'token':ffs_token}, start_index=retreivals_bulk_table.index-1, n_rows=1)
-# 				v = redis_lock.decr('my_lock')
-# 				break
-# 			v = redis_lock.decr('my_lock')
-# 			time.sleep(0.01)
-
-# 		if len(row) >= 1:
-# 			row = row[next(iter(row.keys()))]
-# 		if not row:
-# 			request_id = str(uuid4())
-# 			request_status = 'Queued'
-# 			request.app.sqlite_cursor.execute('''
-# 				INSERT INTO retrievals_bulk VALUES (?, ?, ?, "", 0)
-# 			''', (request_id, api_key_extraction['api_key'], ffs_token))
-# 			#request.app.sqlite_cursor.connection.commit()
-# 			retreivals_bulk_table.add_row({
-# 						'requestID':request_id,
-# 						'api_key':api_key_extraction['api_key'],
-# 						'token':ffs_token,
-# 						'retreived_file':"",
-# 						'completed':0
-# 					})
-# 		else:
-# 			request_id = row['requestID']
-# 			request_status = 'InProcess' if int(row['completed']) == 0 else 'Completed'
-# 		return_json.update({'requestId': request_id, 'requestStatus': request_status})
-# 	payload_list = list()
-# 	records_rows = None
-# 	while True:
-# 		rest_logger.debug("Waiting for Lock")
-# 		v = redis_lock.incr('my_lock')
-# 		if v == 1:
-# 			records_rows = accounting_records_table.fetch(condition={'token':ffs_token}, 
-# 								start_index=accounting_records_table.index-1,
-# 								n_rows=3)
-
-# 			v = redis_lock.decr('my_lock')
-# 			break
-# 		v = redis_lock.decr('my_lock')
-# 		time.sleep(0.01)
-# 	print(records_rows)
-# 	for row_index in records_rows:
-# 		payload_obj = {
-# 			'recordCid': records_rows[row_index]['localCID'],
-# 			'txHash': records_rows[row_index]['txHash'],
-# 			'timestamp': records_rows[row_index]['timestamp']
-# 		}
-# 		confirmed = int(records_rows[row_index]['confirmed'])
-# 		if confirmed == 0:
-# 			# response.status_code = status.HTTP_404_NOT_FOUND
-# 			payload_status = 'PendingPinning'
-# 		elif confirmed == 1:
-# 			payload_status = 'Pinned'
-# 		elif confirmed == 2:
-# 			payload_status = 'PinFailed'
-# 		else:
-# 			payload_status = 'unknown'
-# 		payload_obj['status'] = payload_status
-# 		payload_list.append(payload_obj)
-# 	return_json.update({'payloads': payload_list})
-# 	return return_json
 
 
 @app.get('/payload/{recordCid:str}')
@@ -415,66 +322,6 @@ async def stage_file(
 	return {'cid': stage_res.cid}
 
 
-# # This function is responsible for committing payload
-# @app.post('/')
-# # @app.post('/jsonrpc/v1/{appID:str}')
-# async def root(
-# 		request: Request,
-# 		response: Response,
-# 		api_key_extraction=Depends(load_user_from_auth)
-# ):
-# 	if not api_key_extraction:
-# 		response.status_code = status.HTTP_403_FORBIDDEN
-# 		return {'error': 'Forbidden'}
-# 	if not api_key_extraction['token']:
-# 		response.status_code = status.HTTP_403_FORBIDDEN
-# 		return {'error': 'Forbidden'}
-# 	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
-# 	# if request.method == 'POST':
-# 	req_args = await request.json()
-# 	payload = req_args['payload']
-# 	token = api_key_extraction['token']
-# 	payload_bytes = BytesIO(payload.encode('utf-8'))
-# 	payload_iter = bytes_to_chunks(payload_bytes)
-# 	# adds to hot tier, IPFS
-# 	stage_res = pow_client.ffs.stage(payload_iter, token=token)
-# 	rest_logger.debug('Staging level results:')
-# 	rest_logger.debug(stage_res)
-# 	# uploads to filecoin
-# 	push_res = pow_client.ffs.push(stage_res.cid, token=token)
-# 	rest_logger.debug('Cold tier finalization results:')
-# 	rest_logger.debug(push_res)
-# 	await request.app.redis_pool.publish_json('new_deals', {'cid': stage_res.cid, 'jid': push_res.job_id, 'token': token})
-# 	payload_hash = '0x' + keccak(text=payload).hex()
-# 	token_hash = '0x' + keccak(text=token).hex()
-# 	tx_hash_obj = contract.commitRecordHash(**dict(
-# 		payloadHash=payload_hash,
-# 		apiKeyHash=token_hash
-# 	))
-# 	tx_hash = tx_hash_obj[0]['txHash']
-# 	rest_logger.debug('Committed record append to contract..')
-# 	rest_logger.debug(tx_hash_obj)
-# 	local_id = str(uuid4())
-# 	timestamp = int(time.time())
-# 	rest_logger.debug("Adding row to accounting_records_table")
-# 	# Add row to skydb
-# 	print(f"Adding cid: {stage_res.cid}")
-# 	accounting_records_table.add_row({
-# 				'token':token,
-# 				'cid':stage_res.cid,
-# 				'localCID':local_id,
-# 				'txHash':tx_hash,
-# 				'confirmed':0,
-# 				'timestamp':timestamp
-# 			})
-
-# 	return {'commitTx': tx_hash, 'recordCid': local_id}
-# 	# if request.method == 'GET':
-# 	#	 healthcheck = pow_client.health.check()
-# 	#	 rest_logger.debug('Health check:')
-# 	#	 rest_logger.debug(healthcheck)
-# 	#	 return {'status': healthcheck}
-
 def get_prev_cid():
 	global ipfs_table
 	if ipfs_table.index == 0:
@@ -492,7 +339,7 @@ async def commit_payload(
 	prevCid = get_prev_cid()
 	rest_logger.debug(prevCid)
 
-	dag = ipfs_settings.get_dag_dict()
+	dag = settings.dag_structure.to_dict()
 	timestamp = datetime.strftime(datetime.now(),"%Y%m%d%H%M%S%f")
 
 	fs = open(f'files/{timestamp}', 'w')
