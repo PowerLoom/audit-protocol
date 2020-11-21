@@ -458,7 +458,6 @@ async def get_block(request:Request,
 		response:Response,
 		projectId:int,
 		block_height:int,
-		data:Optional[str]=Query(None)
 ):
 	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
 			columns=['cid'],
@@ -468,16 +467,9 @@ async def get_block(request:Request,
 	if (block_height > ipfs_table.index-1) or (block_height < 0):
 		return {'error':'Invalid block Height'}
 
-	if data:
-		if data.lower() == 'true':
-			data = True
-		else:
-			data = False
 
 	row = ipfs_table.fetch_row(row_index=block_height)
 	block = ipfs_client.dag.get(row['cid']).as_json()
-	if data:
-		block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
 	return {row['cid']:block}
 
 
