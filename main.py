@@ -329,14 +329,34 @@ def get_prev_cid():
 	prev_cid = ipfs_table.fetch_row(row_index=ipfs_table.index-1)['cid']
 	return prev_cid
 
-@app.post('/')
+@app.post('/commit_payload')
 async def commit_payload(
 		request: Request,
 		response: Response,
 ):
 	req_args = await request.json()
-	payload = req_args['payload']
-	prevCid = get_prev_cid()
+	try:
+		payload = req_args['payload']
+		projectId = req_args['projectId']
+	except Exception as e:
+		return {'error': "Either payload or projectId"}
+		 
+	
+	ipfs_table = SkydbTable(
+				table_name=f"{settings.dag_table_name}:{projectId}",
+				columns = ['cid'],
+				seed = settings.seed,
+				verbose=1
+			)
+
+	payload_changed = False
+	prevPayloadCid = None
+
+	if ipfs_table.index == 0:
+		prevCid = ""
+	else:
+		prevCid = ipfs_table.fetch_row(row_index=ipfs_table.index-1)['cid']
+		prevPayloadCid = ipfs_client.dag.get(prevCid).as_json()['Data']['Cid']
 	rest_logger.debug(prevCid)
 
 	dag = settings.dag_structure.to_dict()
@@ -346,10 +366,14 @@ async def commit_payload(
 	fs.write(payload)
 	fs.close()
 
+
 	snapshot = ipfs_client.add('files/'+timestamp)
 	snapshot = snapshot.as_json()
 	snapshot['Cid'] = snapshot['Hash']
 	snapshot['Type'] = "HOT_IPFS"
+	if prevPayloadCid:
+		if prevPayloadCid != snapshot['Cid']:
+			payload_changed = True
 	del snapshot['Name']
 	del snapshot['Hash']
 	rest_logger.debug(snapshot)
@@ -370,7 +394,7 @@ async def commit_payload(
 	data = ipfs_client.dag.put(io.BytesIO(json_string))
 	rest_logger.debug(data['Cid']['/'])
 	ipfs_table.add_row({'cid':data['Cid']['/']})
-	return {'Cid':data['Cid']['/']}
+	return {'Cid':data['Cid']['/'], 'payloadChanged':payload_changed, 'Height':dag['Height']}
 
 
 def get_block_height():
@@ -400,6 +424,7 @@ async def get_payloads(
 	current_height = to_height
 	prevCid = ""
 	while current_height >= from_height:
+		rest_logger.debug("Fetching block at height: "+str(current_height))
 		if not prevCid:
 			prevCid = ipfs_table.fetch_row(row_index=current_height)['cid']
 		block = ipfs_client.dag.get(prevCid).as_json()
