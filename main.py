@@ -14,7 +14,6 @@ from io import BytesIO
 from maticvigil.EVCore import EVCore
 from uuid import uuid4
 import sqlite3
-import fast_settings
 import logging
 import sys
 import json
@@ -89,7 +88,7 @@ app.mount('/static', StaticFiles(directory='static'), name='static')
 
 evc = EVCore(verbose=True)
 contract = evc.generate_contract_sdk(
-	contract_address=fast_settings.config.audit_contract,
+	contract_address=settings.audit_contract,
 	app_name='auditrecords'
 )
 
@@ -157,35 +156,35 @@ async def load_user_from_auth(
 	return {'token': ffs_token, 'api_key': api_key_in_header}
 
 
-@app.post('/create')
-async def create_filecoin_filesystem(
-		request: Request
-):
-	req_json = await request.json()
-	hot_enabled = req_json.get('hotEnabled', True)
-	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
-	new_ffs = pow_client.ffs.create()
-	rest_logger.info('Created new FFS')
-	rest_logger.info(new_ffs)
-	if not hot_enabled:
-		default_config = pow_client.ffs.default_config(new_ffs.token)
-		rest_logger.debug(default_config)
-		new_storage_config = STORAGE_CONFIG
-		new_storage_config['cold']['filecoin']['addr'] = default_config.default_storage_config.cold.filecoin.addr
-		new_storage_config['hot']['enabled'] = False
-		new_storage_config['hot']['allowUnfreeze'] = False
-		pow_client.ffs.set_default_config(json.dumps(new_storage_config), new_ffs.token)
-		rest_logger.debug('Set hot storage to False')
-		rest_logger.debug(new_storage_config)
-	# rest_logger.debug(type(default_config))
-	api_key = str(uuid4())
-	api_keys_table.add_row({'token':new_ffs.token,'api_key':api_key})
-
-	# Add row to skydb
-	
-	api_keys_table.add_row({'api_key':api_key, 'token':new_ffs.token})
-	rest_logger.debug("Added a row to api_keys_table")
-	return {'apiKey': api_key}
+#@app.post('/create')
+#async def create_filecoin_filesystem(
+#		request: Request
+#):
+#	req_json = await request.json()
+#	hot_enabled = req_json.get('hotEnabled', True)
+#	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
+#	new_ffs = pow_client.ffs.create()
+#	rest_logger.info('Created new FFS')
+#	rest_logger.info(new_ffs)
+#	if not hot_enabled:
+#		default_config = pow_client.ffs.default_config(new_ffs.token)
+#		rest_logger.debug(default_config)
+#		new_storage_config = STORAGE_CONFIG
+#		new_storage_config['cold']['filecoin']['addr'] = default_config.default_storage_config.cold.filecoin.addr
+#		new_storage_config['hot']['enabled'] = False
+#		new_storage_config['hot']['allowUnfreeze'] = False
+#		pow_client.ffs.set_default_config(json.dumps(new_storage_config), new_ffs.token)
+#		rest_logger.debug('Set hot storage to False')
+#		rest_logger.debug(new_storage_config)
+#	# rest_logger.debug(type(default_config))
+#	api_key = str(uuid4())
+#	api_keys_table.add_row({'token':new_ffs.token,'api_key':api_key})
+#
+#	# Add row to skydb
+#	
+#	api_keys_table.add_row({'api_key':api_key, 'token':new_ffs.token})
+#	rest_logger.debug("Added a row to api_keys_table")
+#	return {'apiKey': api_key}
 
 
 
@@ -303,23 +302,6 @@ async def request_status(request: Request, requestId: str):
 		return {'requestID': requestId, 'completed': bool(int(c_bulk_row['completed'])), 
 				"downloadFile": c_bulk_row['retreived_file']}
 
-
-@app.post('/stage')
-async def stage_file(
-		request: Request, 
-		response: Response,
-		api_key_extraction=Depends(load_user_from_auth)
-		):
-	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
-	# if request.method == 'POST':
-	req_args = await request.json()
-	payload = req_args['payload']
-	token = api_key_extraction['token']
-	payload_bytes = BytesIO(payload.encode('utf-8'))
-	payload_iter = bytes_to_chunks(payload_bytes)
-	# adds to hot tier, IPFS
-	stage_res = pow_client.ffs.stage(payload_iter, token=token)
-	return {'cid': stage_res.cid}
 
 
 def get_prev_cid():
