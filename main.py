@@ -47,6 +47,7 @@ rest_logger.addHandler(stdout_handler)
 rest_logger.addHandler(stderr_handler)
 
 # Setup skydb
+
 #api_keys_table = SkydbTable(
 #			table_name=settings.table_names.api_keys,
 #			columns=["api_key","token"],
@@ -129,8 +130,8 @@ async def startup_boilerplate():
 		password=REDIS_CONN_CONF['password'],
 		maxsize=5
 	)
-	app.sqlite_conn = sqlite3.connect('auditprotocol_1.db')
-	app.sqlite_cursor = app.sqlite_conn.cursor()
+	# app.sqlite_conn = sqlite3.connect('auditprotocol_1.db')
+	# app.sqlite_cursor = app.sqlite_conn.cursor()
 
 
 async def load_user_from_auth(
@@ -345,7 +346,14 @@ async def commit_payload(
 	timestamp = datetime.strftime(datetime.now(),"%Y%m%d%H%M%S%f")
 
 	fs = open(f'files/{timestamp}', 'w')
-	fs.write(payload)
+	if type(payload) is dict:
+		fs.write(json.dumps(payload))
+	else:
+		try:
+			fs.write(str(payload))
+		except:
+			response.status_code = 400
+			return {'success': False, 'error': 'PayloadNotSuppported'}
 	fs.close()
 
 
@@ -362,14 +370,14 @@ async def commit_payload(
 	dag['Height'] = ipfs_table.index
 	dag['prevCid'] = prevCid
 	dag['Data'] = snapshot
-	payload_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+	ipfs_cid = snapshot['Cid']
 	token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-	tx_hash_obj = contract.commitRecordHash(**dict(
-		payloadHash=payload_hash,
+	tx_hash_obj = contract.commitRecord(**dict(
+		ipfsCid=ipfs_cid,
 		apiKeyHash=token_hash,
 	))
 	dag['TxHash'] = tx_hash_obj[0]['txHash']
-	timestamp = datetime.strftime(datetime.now(),"%Y%m%d%H%M%S%f")
+	timestamp = datetime.strftime(datetime.now(), "%Y%m%d%H%M%S%f")
 	dag['Timestamp'] = timestamp
 	rest_logger.debug(dag)
 	json_string = json.dumps(dag).encode('utf-8')
@@ -381,8 +389,6 @@ async def commit_payload(
 
 def get_block_height():
 	return ipfs_table.index-1
-
-	
 
 
 @app.get('/{projectId:int}/payloads')

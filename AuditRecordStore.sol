@@ -3,11 +3,11 @@ pragma experimental ABIEncoderV2;
 
 contract AuditRecordStore {
     struct PayloadRecord {
-        bytes32 payloadHash;
+        string ipfsCid;
         uint256 timestamp;
     }
 
-    event RecordAppended(bytes32 apiKeyHash, bytes32 recordHash, uint256 indexed timestamp);
+    event RecordAppended(bytes32 apiKeyHash, string ipfsCid, uint256 indexed timestamp);
 
     mapping(bytes32 => PayloadRecord[]) private apiKeyHashToRecords;
 
@@ -16,10 +16,10 @@ contract AuditRecordStore {
 
     }
 
-    function commitRecordHash(bytes32 payloadHash, bytes32 apiKeyHash) public {
-        PayloadRecord memory a = PayloadRecord(payloadHash, now);
+    function commitRecord(string memory ipfsCid, bytes32 apiKeyHash) public {
+        PayloadRecord memory a = PayloadRecord(ipfsCid, now);
         apiKeyHashToRecords[apiKeyHash].push(a);
-        emit RecordAppended(apiKeyHash, payloadHash, now);
+        emit RecordAppended(apiKeyHash, ipfsCid, now);
     }
 
     /*
