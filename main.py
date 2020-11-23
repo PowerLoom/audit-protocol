@@ -389,20 +389,23 @@ async def get_payloads(
 	if (from_height < 0) or (to_height > ipfs_table.index-1) or (from_height > to_height):
 		return {'error': 'Invalid Height'}
 
-	blocks = {}
+	blocks = list()
 	current_height = to_height
-	prevCid = ""
+	prev_dag_cid = ""
 	while current_height >= from_height:
 		rest_logger.debug("Fetching block at height: "+str(current_height))
-		if not prevCid:
-			prevCid = ipfs_table.fetch_row(row_index=current_height)['cid']
-		block = ipfs_client.dag.get(prevCid).as_json()
+		if not prev_dag_cid:
+			prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
+		block = ipfs_client.dag.get(prev_dag_cid).as_json()
+		formatted_block = dict()
+		formatted_block['dagCid'] = prev_dag_cid
+		formatted_block.update({k: v for k, v in block.items()})
+		formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
 		if data:
-			block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
-		blocks.update({prevCid:block})
-		prevCid = block['prevCid']
+			formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+		blocks.append(formatted_block)
+		prev_dag_cid = formatted_block['prevDagCid']
 		current_height = current_height - 1
-
 	return blocks
 
 
