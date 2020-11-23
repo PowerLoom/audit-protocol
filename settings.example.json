@@ -1,8 +1,30 @@
 {
-  "REDIS": {
-    "HOST": "127.0.0.1",
-    "PORT": 6379,
-    "DB": 0,
-    "PASSWORD": null
-  }
+	"snapshot_interval": 4,
+	"dag_table_name": "DAG_CID",
+	"seed": "THISISRANDOMSEED",
+	"dag_structure" : {
+			"Height":-1,
+			"prevCid":"",
+			"Data": {
+					"Cid":"",
+					"Type":""
+				},
+			"TxHash":"",
+			"Timestamp":""
+			},
+	  "REDIS": {
+		"HOST": "127.0.0.1",
+		"PORT": 6379,
+		"DB": 0,
+		"PASSWORD": null
+	  },
+
+	"table_names": {
+		"api_keys": "api_keys",
+		"accounting_records": "accounting_records",
+		"retreivals_single":"retreivals_single",
+		"retreivals_bulk":"retreivals_bulk"
+	},
+    "audit_contract" : "0x25d37e41efb83a1da244abc5b5562f72304a4e2f"
+	
 }

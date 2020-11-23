@@ -2,6 +2,7 @@ fastapi
 uvicorn
 # pygate_grpc
 git+https://github.com/blockvigil/maticvigil-python-sdk.git
+git+https://github.com/powerloom/py-skydb.git
 eth_utils
 aioredis
 aiofiles
@@ -9,6 +10,7 @@ redis
 coloredlogs
 tenacity
 ipfshttpclient
+dynaconf==3.1.2
 backports.pbkdf2==0.1
 certifi==2020.11.8
 cffi==1.14.3
