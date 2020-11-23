@@ -46,32 +46,6 @@ rest_logger.setLevel(logging.DEBUG)
 rest_logger.addHandler(stdout_handler)
 rest_logger.addHandler(stderr_handler)
 
-# Setup skydb
-
-#api_keys_table = SkydbTable(
-#			table_name=settings.table_names.api_keys,
-#			columns=["api_key","token"],
-#			seed="qwerasdfzxcv"
-#		)
-#
-#accounting_records_table = SkydbTable(
-#			table_name=settings.table_names.accounting_records,
-#			columns=['token','cid','localCID','txHash','confirmed','timestamp'],
-#			seed='qwerasdfzxcv'
-#		)
-#
-#retreivals_single_table = SkydbTable(
-#			table_name=settings.table_names.retreivals_single,
-#			columns=['requestID','cid','localCID','retreived_file','completed'],
-#			seed='qwerasdfzxcv'
-#		)
-#
-#retreivals_bulk_table = SkydbTable(
-#			table_name=settings.table_names.retreivals_bulk,
-#			columns=['requestID','api_key','token','retreived_file','completed'],
-#			seed='qwerasdfzxcv',
-#		)
-
 # setup CORS origins stuff
 origins = ["*"]
 
@@ -333,42 +307,38 @@ async def commit_payload(
 			)
 
 	payload_changed = False
-	prevPayloadCid = None
+	prev_payload_cid = None
 
 	if ipfs_table.index == 0:
-		prevCid = ""
+		prev_cid = ""
 	else:
-		prevCid = ipfs_table.fetch_row(row_index=ipfs_table.index-1)['cid']
-		prevPayloadCid = ipfs_client.dag.get(prevCid).as_json()['Data']['Cid']
-	rest_logger.debug(prevCid)
+		prev_cid = ipfs_table.fetch_row(row_index=ipfs_table.index-1)['cid']
+		prev_payload_cid = ipfs_client.dag.get(prev_cid).as_json()['Data']['Cid']
+	rest_logger.debug('Previous IPLD CID in the DAG: ')
+	rest_logger.debug(prev_cid)
 
 	dag = settings.dag_structure.to_dict()
-	timestamp = datetime.strftime(datetime.now(),"%Y%m%d%H%M%S%f")
+	timestamp = datetime.strftime(datetime.now(), "%Y%m%d%H%M%S%f")
 
-	fs = open(f'files/{timestamp}', 'w')
 	if type(payload) is dict:
-		fs.write(json.dumps(payload))
+		snapshot_cid = ipfs_client.add_json(payload)
 	else:
 		try:
-			fs.write(str(payload))
+			snapshot_cid = ipfs_client.add_str(str(payload))
 		except:
 			response.status_code = 400
 			return {'success': False, 'error': 'PayloadNotSuppported'}
-	fs.close()
-
-
-	snapshot = ipfs_client.add('files/'+timestamp)
-	snapshot = snapshot.as_json()
-	snapshot['Cid'] = snapshot['Hash']
+	rest_logger.debug('Payload CID')
+	rest_logger.debug(snapshot_cid)
+	snapshot = dict()
+	snapshot['Cid'] = snapshot_cid
 	snapshot['Type'] = "HOT_IPFS"
-	if prevPayloadCid:
-		if prevPayloadCid != snapshot['Cid']:
+	if prev_payload_cid:
+		if prev_payload_cid != snapshot['Cid']:
 			payload_changed = True
-	del snapshot['Name']
-	del snapshot['Hash']
 	rest_logger.debug(snapshot)
 	dag['Height'] = ipfs_table.index
-	dag['prevCid'] = prevCid
+	dag['prevCid'] = prev_cid
 	dag['Data'] = snapshot
 	ipfs_cid = snapshot['Cid']
 	token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
@@ -382,9 +352,15 @@ async def commit_payload(
 	rest_logger.debug(dag)
 	json_string = json.dumps(dag).encode('utf-8')
 	data = ipfs_client.dag.put(io.BytesIO(json_string))
+	rest_logger.debug(data)
 	rest_logger.debug(data['Cid']['/'])
-	ipfs_table.add_row({'cid':data['Cid']['/']})
-	return {'Cid':data['Cid']['/'], 'payloadChanged':payload_changed, 'Height':dag['Height']}
+	ipfs_table.add_row({'cid': data['Cid']['/']})
+	return {
+		'Cid': data['Cid']['/'],
+		# 'payloadCid': snapshot['Cid'],
+		'payloadChanged': payload_changed,
+		'Height': dag['Height']
+	}
 
 
 def get_block_height():

@@ -10,6 +10,7 @@ redis
 coloredlogs
 tenacity
 ipfshttpclient
+dynaconf==3.1.2
 backports.pbkdf2==0.1
 certifi==2020.11.8
 cffi==1.14.3
