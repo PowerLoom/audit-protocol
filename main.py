@@ -318,7 +318,7 @@ async def commit_payload(
 	rest_logger.debug(prev_cid)
 
 	dag = settings.dag_structure.to_dict()
-	timestamp = datetime.strftime(datetime.now(), "%Y%m%d%H%M%S%f")
+	timestamp = str(int(time.time()))
 
 	if type(payload) is dict:
 		snapshot_cid = ipfs_client.add_json(payload)
@@ -347,7 +347,7 @@ async def commit_payload(
 		apiKeyHash=token_hash,
 	))
 	dag['TxHash'] = tx_hash_obj[0]['txHash']
-	timestamp = datetime.strftime(datetime.now(), "%Y%m%d%H%M%S%f")
+	timestamp = str(int(time.time()))
 	dag['Timestamp'] = timestamp
 	rest_logger.debug(dag)
 	json_string = json.dumps(dag).encode('utf-8')
