@@ -9,6 +9,7 @@ aiofiles
 redis
 coloredlogs
 tenacity
+git+https://github.com/ipfs/py-ipfs-http-client.git
 ipfshttpclient
 dynaconf==3.1.2
 backports.pbkdf2==0.1
