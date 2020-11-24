@@ -1,5 +1,6 @@
 from typing import Optional, Union
-from fastapi import Depends, FastAPI, WebSocket, HTTPException, Security, Request, Response, BackgroundTasks, Cookie, Query, WebSocketDisconnect
+from fastapi import Depends, FastAPI, WebSocket, HTTPException, Security, Request, Response, BackgroundTasks, Cookie, \
+	Query, WebSocketDisconnect
 from fastapi import status, Header
 from fastapi.security.api_key import APIKeyQuery, APIKeyHeader, APIKey
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,14 +24,14 @@ import redis
 import time
 from skydb import SkydbTable
 import ipfshttpclient
-#import settings
+# import settings
 from config import settings
 from datetime import datetime
+
 print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect()
-ipfs_table = SkydbTable(table_name=settings.dag_table_name,columns=['cid'],
-				seed=settings.SEED)
-
+ipfs_table = SkydbTable(table_name=settings.dag_table_name, columns=['cid'],
+						seed=settings.SEED)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -67,7 +68,6 @@ contract = evc.generate_contract_sdk(
 	app_name='auditrecords'
 )
 
-
 REDIS_CONN_CONF = {
 	"host": settings['REDIS']['HOST'],
 	"port": settings['REDIS']['PORT'],
@@ -76,36 +76,38 @@ REDIS_CONN_CONF = {
 }
 #
 STORAGE_CONFIG = {
-  "hot": {
-	"enabled": True,
-	"allowUnfreeze": True,
-	"ipfs": {
-	  "addTimeout": 30
+	"hot": {
+		"enabled": True,
+		"allowUnfreeze": True,
+		"ipfs": {
+			"addTimeout": 30
+		}
+	},
+	"cold": {
+		"enabled": True,
+		"filecoin": {
+			"repFactor": 1,
+			"dealMinDuration": 518400,
+			"renew": {
+			},
+			"addr": "placeholderstring"
+		}
 	}
-  },
-  "cold": {
-	"enabled": True,
-	"filecoin": {
-	  "repFactor": 1,
-	  "dealMinDuration": 518400,
-	  "renew": {
-	  },
-	  "addr": "placeholderstring"
-	}
-  }
 }
 
 
 @app.on_event('startup')
 async def startup_boilerplate():
-	app.redis_pool: aioredis.Redis = await aioredis.create_redis_pool(
+	app.redis_pool = await aioredis.create_pool(
 		address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
 		db=REDIS_CONN_CONF['db'],
 		password=REDIS_CONN_CONF['password'],
 		maxsize=5
 	)
-	# app.sqlite_conn = sqlite3.connect('auditprotocol_1.db')
-	# app.sqlite_cursor = app.sqlite_conn.cursor()
+
+
+# app.sqlite_conn = sqlite3.connect('auditprotocol_1.db')
+# app.sqlite_cursor = app.sqlite_conn.cursor()
 
 
 async def load_user_from_auth(
@@ -120,9 +122,9 @@ async def load_user_from_auth(
 		rest_logger.debug("Waiting for Lock")
 		v = redis_lock.incr('my_lock')
 		if v == 1:
-			row = api_keys_table.fetch(condition={'api_key':api_key_in_header}, 
-					start_index=api_keys_table.index-1,
-					n_rows=1)
+			row = api_keys_table.fetch(condition={'api_key': api_key_in_header},
+									   start_index=api_keys_table.index - 1,
+									   n_rows=1)
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
@@ -131,10 +133,10 @@ async def load_user_from_auth(
 	return {'token': ffs_token, 'api_key': api_key_in_header}
 
 
-#@app.post('/create')
-#async def create_filecoin_filesystem(
+# @app.post('/create')
+# async def create_filecoin_filesystem(
 #		request: Request
-#):
+# ):
 #	req_json = await request.json()
 #	hot_enabled = req_json.get('hotEnabled', True)
 #	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
@@ -162,9 +164,8 @@ async def load_user_from_auth(
 #	return {'apiKey': api_key}
 
 
-
 @app.get('/payload/{recordCid:str}')
-async def record(request: Request, response:Response, recordCid: str):
+async def record(request: Request, response: Response, recordCid: str):
 	# record_chain = contract.getTokenRecordLogs('0x'+keccak(text=tokenId).hex())
 	# skydb fetching
 	row = None
@@ -172,7 +173,8 @@ async def record(request: Request, response:Response, recordCid: str):
 		rest_logger.debug("Waiting for Lock")
 		v = redis_lock.incr('my_lock')
 		if v == 1:
-			row = accounting_records_table.fetch(condition={'localCID':recordCid}, start_index=accounting_records_table.index-1, n_rows=1)
+			row = accounting_records_table.fetch(condition={'localCID': recordCid},
+												 start_index=accounting_records_table.index - 1, n_rows=1)
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
@@ -192,7 +194,8 @@ async def record(request: Request, response:Response, recordCid: str):
 		rest_logger.debug("Waiting for Lock")
 		v = redis_lock.incr('my_lock')
 		if v == 1:
-			row = retreivals_single_table.fetch(condition={'cid':real_cid}, start_index=retreivals_single_table.index-1, n_rows=1)
+			row = retreivals_single_table.fetch(condition={'cid': real_cid},
+												start_index=retreivals_single_table.index - 1, n_rows=1)
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
@@ -232,28 +235,28 @@ async def record(request: Request, response:Response, recordCid: str):
 		request.app.sqlite_cursor.execute("""
 			INSERT INTO retrievals_single VALUES (?, ?, ?, "", 0)
 		""", (request_id, real_cid, recordCid))
-		#request.app.sqlite_cursor.connection.commit()
+		# request.app.sqlite_cursor.connection.commit()
 
 		retreivals_single_table.add_row({
-					'requestID':request_id,
-					'cid':real_cid,
-					'localCID':recordCid,
-					'retreived_file':"",
-					'completed':0
-				})
+			'requestID': request_id,
+			'cid': real_cid,
+			'localCID': recordCid,
+			'retreived_file': "",
+			'completed': 0
+		})
 
 	return {'requestId': request_id, 'requestStatus': request_status, 'payloadStatus': payload_status}
 
 
 @app.get('/requests/{requestId:str}')
 async def request_status(request: Request, requestId: str):
-
 	row = None
 	while True:
 		rest_logger.debug("Waiting for Lock")
 		v = redis_lock.incr('my_lock')
 		if v == 1:
-			row = retreivals_single_table.fetch(condition={'requestID':requestId}, start_index=retreivals_single_table.index-1, n_rows=1)
+			row = retreivals_single_table.fetch(condition={'requestID': requestId},
+												start_index=retreivals_single_table.index - 1, n_rows=1)
 			v = redis_lock.decr('my_lock')
 			break
 		v = redis_lock.decr('my_lock')
@@ -261,30 +264,31 @@ async def request_status(request: Request, requestId: str):
 	row = row[next(iter(row.keys()))]
 
 	if row:
-		#return {'requestID': requestId, 'completed': bool(res[4]), "downloadFile": res[3]}
-		return {'requestID':requestId, 'completed': bool(int(row['completed'])), "downloadFile":row['retreived_file']}
+		# return {'requestID': requestId, 'completed': bool(res[4]), "downloadFile": res[3]}
+		return {'requestID': requestId, 'completed': bool(int(row['completed'])), "downloadFile": row['retreived_file']}
 	else:
 		c_bulk_row = None
 		while True:
 			rest_logger.debug("Waiting for Lock")
 			v = redis_lock.incr('my_lock')
 			if v == 1:
-				c_bulk_row = retreivals_bulk_table.fetch(condition={'requestID':requestId}, start_index=retreivals_bulk_table.index-1)
+				c_bulk_row = retreivals_bulk_table.fetch(condition={'requestID': requestId},
+														 start_index=retreivals_bulk_table.index - 1)
 				v = redis_lock.decr('my_lock')
 				break
 			v = redis_lock.decr('my_lock')
 			time.sleep(0.01)
-		return {'requestID': requestId, 'completed': bool(int(c_bulk_row['completed'])), 
+		return {'requestID': requestId, 'completed': bool(int(c_bulk_row['completed'])),
 				"downloadFile": c_bulk_row['retreived_file']}
-
 
 
 def get_prev_cid():
 	global ipfs_table
 	if ipfs_table.index == 0:
 		return ""
-	prev_cid = ipfs_table.fetch_row(row_index=ipfs_table.index-1)['cid']
+	prev_cid = ipfs_table.fetch_row(row_index=ipfs_table.index - 1)['cid']
 	return prev_cid
+
 
 @app.post('/commit_payload')
 async def commit_payload(
@@ -294,31 +298,46 @@ async def commit_payload(
 	req_args = await request.json()
 	try:
 		payload = req_args['payload']
-		projectId = req_args['projectId']
+		project_id = req_args['projectId']
 	except Exception as e:
 		return {'error': "Either payload or projectId"}
-		 
-	
-	ipfs_table = SkydbTable(
-				table_name=f"{settings.dag_table_name}:{projectId}",
-				columns = ['cid'],
-				seed = settings.seed,
-				verbose=1
-			)
-
-	payload_changed = False
+	prev_dag_cid = ""
 	prev_payload_cid = None
+	block_height = 0
+	if settings.METADATA_CACHE == 'skydb':
+		ipfs_table = SkydbTable(
+			table_name=f"{settings.dag_table_name}:{project_id}",
+			columns=['cid'],
+			seed=settings.seed,
+			verbose=1
+		)
+		if ipfs_table.index == 0:
+			prev_dag_cid = ""
+		else:
+			prev_dag_cid = ipfs_table.fetch_row(row_index=ipfs_table.index - 1)['cid']
+		block_height = ipfs_table.index
 
-	if ipfs_table.index == 0:
-		prev_cid = ""
-	else:
-		prev_cid = ipfs_table.fetch_row(row_index=ipfs_table.index-1)['cid']
-		prev_payload_cid = ipfs_client.dag.get(prev_cid).as_json()['Data']['Cid']
+	elif settings.METADATA_CACHE == 'redis':
+		redis_conn_raw = await request.app.redis_pool.acquire()
+		redis_conn = aioredis.Redis(redis_conn_raw)
+		last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
+		r = await redis_conn.get(last_known_dag_cid_key)
+		if r:
+			prev_dag_cid = r.decode('utf-8')
+			last_block_height_key = f'projectID:{project_id}:blockHeight'
+			r2 = await redis_conn.get(last_block_height_key)
+			if r2:
+				block_height = int(r2)
+
+	if prev_dag_cid != "":
+		prev_payload_cid = ipfs_client.dag.get(prev_dag_cid).as_json()['Data']['Cid']
+	payload_changed = False
+
 	rest_logger.debug('Previous IPLD CID in the DAG: ')
-	rest_logger.debug(prev_cid)
+	rest_logger.debug(prev_dag_cid)
 
 	dag = settings.dag_structure.to_dict()
-	timestamp = str(int(time.time()))
+	timestamp = int(time.time())
 
 	if type(payload) is dict:
 		snapshot_cid = ipfs_client.add_json(payload)
@@ -337,8 +356,8 @@ async def commit_payload(
 		if prev_payload_cid != snapshot['Cid']:
 			payload_changed = True
 	rest_logger.debug(snapshot)
-	dag['Height'] = ipfs_table.index
-	dag['prevCid'] = prev_cid
+	dag['Height'] = block_height
+	dag['prevCid'] = prev_dag_cid
 	dag['Data'] = snapshot
 	ipfs_cid = snapshot['Cid']
 	token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
@@ -354,7 +373,13 @@ async def commit_payload(
 	data = ipfs_client.dag.put(io.BytesIO(json_string))
 	rest_logger.debug(data)
 	rest_logger.debug(data['Cid']['/'])
-	ipfs_table.add_row({'cid': data['Cid']['/']})
+	# persist last known cid in redis or skydb
+	if settings.METADATA_CACHE == 'skydb':
+		ipfs_table.add_row({'cid': data['Cid']['/']})
+	elif settings.METADATA_CACHE == 'redis':
+		await redis_conn.set(f'projectID:{project_id}:lastDagCid', data['Cid']['/'])
+		await redis_conn.set(f'projectID:{project_id}:blockHeight', block_height + 1)
+		request.app.redis_pool.release(redis_conn_raw)
 	return {
 		'Cid': data['Cid']['/'],
 		# 'payloadCid': snapshot['Cid'],
@@ -364,38 +389,57 @@ async def commit_payload(
 
 
 def get_block_height():
-	return ipfs_table.index-1
+	return ipfs_table.index - 1
 
 
 @app.get('/{projectId:int}/payloads')
 async def get_payloads(
-	request: Request,
-	response: Response,
-	projectId:int,
-	from_height:int = Query(None),
-	to_height:int = Query(None),
-	data:Optional[str]=Query(None)
+		request: Request,
+		response: Response,
+		projectId: int,
+		from_height: int = Query(None),
+		to_height: int = Query(None),
+		data: Optional[str] = Query(None)
 ):
-	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-			columns=['cid'],
-			seed=settings.seed,
-			verbose=1)
+	max_block_height = None
+	if settings.METADATA_CACHE == 'skydb':
+		ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+								columns=['cid'],
+								seed=settings.seed,
+								verbose=1)
+		max_block_height = ipfs_table.index - 1
+	elif settings.METADATA_CACHE == 'redis':
+		redis_conn_raw = await request.app.redis_pool.acquire()
+		redis_conn = aioredis.Redis(redis_conn_raw)
+		h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
+		if not h:
+			max_block_height = 0
+		else:
+			max_block_height = int(h.decode('utf-8')) - 1
 	if data:
 		if data.lower() == 'true':
 			data = True
 		else:
 			data = False
 
-	if (from_height < 0) or (to_height > ipfs_table.index-1) or (from_height > to_height):
+	if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
 		return {'error': 'Invalid Height'}
 
 	blocks = list()
 	current_height = to_height
 	prev_dag_cid = ""
 	while current_height >= from_height:
-		rest_logger.debug("Fetching block at height: "+str(current_height))
+		rest_logger.debug("Fetching block at height: " + str(current_height))
 		if not prev_dag_cid:
-			prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
+			if settings.METADATA_CACHE == 'skydb':
+				prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
+			elif settings.METADATA_CACHE == 'redis':
+				last_known_dag_cid_key = f'projectID:{projectId}:lastDagCid'
+				r = await redis_conn.get(last_known_dag_cid_key)
+				if r:
+					prev_dag_cid = r.decode('utf-8')
+				else:
+					return {'error': 'NoRecordsFound'}
 		block = ipfs_client.dag.get(prev_dag_cid).as_json()
 		formatted_block = dict()
 		formatted_block['dagCid'] = prev_dag_cid
@@ -406,54 +450,55 @@ async def get_payloads(
 		blocks.append(formatted_block)
 		prev_dag_cid = formatted_block['prevDagCid']
 		current_height = current_height - 1
+	if settings.METADATA_CACHE == 'redis':
+		request.app.redis_pool.release(redis_conn_raw)
 	return blocks
 
 
-
 @app.get('/{projectId}/payload/height')
-async def payload_height(request: Request, response:Response, projectId:int):
+async def payload_height(request: Request, response: Response, projectId: int):
 	ipfs_table = SkydbTable(
-				table_name=f"{settings.dag_table_name}:{projectId}",
-				columns=['cid'],
-				seed=settings.seed
-			)
+		table_name=f"{settings.dag_table_name}:{projectId}",
+		columns=['cid'],
+		seed=settings.seed
+	)
 	height = ipfs_table.index - 1
 	return {"height": height}
 
+
 @app.get('/{projectId}/payload/{block_height}')
-async def get_block(request:Request,
-		response:Response,
-		projectId:int,
-		block_height:int,
-):
+async def get_block(request: Request,
+					response: Response,
+					projectId: int,
+					block_height: int,
+					):
 	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-			columns=['cid'],
-			seed=settings.seed,
-			verbose=1)
+							columns=['cid'],
+							seed=settings.seed,
+							verbose=1)
 
-	if (block_height > ipfs_table.index-1) or (block_height < 0):
-		return {'error':'Invalid block Height'}
-
+	if (block_height > ipfs_table.index - 1) or (block_height < 0):
+		return {'error': 'Invalid block Height'}
 
 	row = ipfs_table.fetch_row(row_index=block_height)
 	block = ipfs_client.dag.get(row['cid']).as_json()
-	return {row['cid']:block}
+	return {row['cid']: block}
 
 
 @app.get('/{projectId:int}/payload/{block_height:int}/data')
 async def get_block_data(
-	request:Request,
-	response:Response,
-	projectId:int,
-	block_height:int,
+		request: Request,
+		response: Response,
+		projectId: int,
+		block_height: int,
 ):
 	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-			columns=['cid'],
-			seed=settings.seed,
-			verbose=1)
+							columns=['cid'],
+							seed=settings.seed,
+							verbose=1)
 	if (block_height > ipfs_table.index - 1) or (block_height < 0):
-		return {'error':'Invalid block Height'}
+		return {'error': 'Invalid block Height'}
 	row = ipfs_table.fetch_row(row_index=block_height)
 	block = ipfs_client.dag.get(row['cid']).as_json()
 	block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
-	return {row['cid']:block['Data']}
+	return {row['cid']: block['Data']}
