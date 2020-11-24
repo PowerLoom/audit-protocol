@@ -428,6 +428,7 @@ async def get_payloads(
 	blocks = list()
 	current_height = to_height
 	prev_dag_cid = ""
+	prev_payload_cid = None
 	while current_height >= from_height:
 		rest_logger.debug("Fetching block at height: " + str(current_height))
 		if not prev_dag_cid:
@@ -447,6 +448,12 @@ async def get_payloads(
 		formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
 		if data:
 			formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+		if prev_payload_cid:
+			if prev_payload_cid != block['Data']['Cid']:
+				formatted_block['payloadChanged'] = True
+			else:
+				formatted_block['payloadChanged'] = False
+		prev_payload_cid = block['Data']['Cid']
 		blocks.append(formatted_block)
 		prev_dag_cid = formatted_block['prevDagCid']
 		current_height = current_height - 1
@@ -455,15 +462,23 @@ async def get_payloads(
 	return blocks
 
 
-@app.get('/{projectId}/payload/height')
+@app.get('/{projectId}/payloads/height')
 async def payload_height(request: Request, response: Response, projectId: int):
-	ipfs_table = SkydbTable(
-		table_name=f"{settings.dag_table_name}:{projectId}",
-		columns=['cid'],
-		seed=settings.seed
-	)
-	height = ipfs_table.index - 1
-	return {"height": height}
+	if settings.METADATA_CACHE == 'skydb':
+		ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+								columns=['cid'],
+								seed=settings.seed)
+		max_block_height = ipfs_table.index - 1
+	elif settings.METADATA_CACHE == 'redis':
+		redis_conn_raw = await request.app.redis_pool.acquire()
+		redis_conn = aioredis.Redis(redis_conn_raw)
+		h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
+		if not h:
+			max_block_height = 0
+		else:
+			max_block_height = int(h.decode('utf-8')) - 1
+
+	return {"height": max_block_height}
 
 
 @app.get('/{projectId}/payload/{block_height}')

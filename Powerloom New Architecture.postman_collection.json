@@ -145,7 +145,7 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/2/payload/height",
+					"raw": "http://localhost:9000/2/payloads/height",
 					"protocol": "http",
 					"host": [
 						"localhost"
