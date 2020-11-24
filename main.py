@@ -378,6 +378,11 @@ async def commit_payload(
 		ipfs_table.add_row({'cid': data['Cid']['/']})
 	elif settings.METADATA_CACHE == 'redis':
 		await redis_conn.set(f'projectID:{project_id}:lastDagCid', data['Cid']['/'])
+		await redis_conn.zadd(
+			key=f'projectID:{project_id}:Cids',
+			score=block_height,
+			member=data['Cid']['/']
+		)
 		await redis_conn.set(f'projectID:{project_id}:blockHeight', block_height + 1)
 		request.app.redis_pool.release(redis_conn_raw)
 	return {
@@ -429,16 +434,22 @@ async def get_payloads(
 	current_height = to_height
 	prev_dag_cid = ""
 	prev_payload_cid = None
+	idx = 0
 	while current_height >= from_height:
 		rest_logger.debug("Fetching block at height: " + str(current_height))
 		if not prev_dag_cid:
 			if settings.METADATA_CACHE == 'skydb':
 				prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
 			elif settings.METADATA_CACHE == 'redis':
-				last_known_dag_cid_key = f'projectID:{projectId}:lastDagCid'
-				r = await redis_conn.get(last_known_dag_cid_key)
+				project_cids_key_zset = f'projectID:{projectId}:Cids'
+				r = await redis_conn.zrangebyscore(
+					key=project_cids_key_zset,
+					min=current_height,
+					max=current_height,
+					withscores=False
+				)
 				if r:
-					prev_dag_cid = r.decode('utf-8')
+					prev_dag_cid = r[0].decode('utf-8')
 				else:
 					return {'error': 'NoRecordsFound'}
 		block = ipfs_client.dag.get(prev_dag_cid).as_json()
@@ -450,13 +461,14 @@ async def get_payloads(
 			formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
 		if prev_payload_cid:
 			if prev_payload_cid != block['Data']['Cid']:
-				formatted_block['payloadChanged'] = True
+				blocks[idx-1]['payloadChanged'] = True
 			else:
-				formatted_block['payloadChanged'] = False
+				blocks[idx-1]['payloadChanged'] = False
 		prev_payload_cid = block['Data']['Cid']
 		blocks.append(formatted_block)
 		prev_dag_cid = formatted_block['prevDagCid']
 		current_height = current_height - 1
+		idx += 1
 	if settings.METADATA_CACHE == 'redis':
 		request.app.redis_pool.release(redis_conn_raw)
 	return blocks
@@ -477,6 +489,7 @@ async def payload_height(request: Request, response: Response, projectId: int):
 			max_block_height = 0
 		else:
 			max_block_height = int(h.decode('utf-8')) - 1
+		request.app.redis_pool.release(redis_conn_raw)
 
 	return {"height": max_block_height}
 
