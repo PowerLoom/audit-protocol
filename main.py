@@ -462,6 +462,39 @@ async def get_payloads(
 		if prev_payload_cid:
 			if prev_payload_cid != block['Data']['Cid']:
 				blocks[idx-1]['payloadChanged'] = True
+				diff_key = f"CidDiff:{prev_payload_cid}:{block['Data']['Cid']}"
+				diff_b = await redis_conn.get(diff_key)
+				diff_map = dict()
+				if not diff_b:
+					# diff not cached already
+					rest_logger.debug('Diff not cached | New CID | Old CID')
+					rest_logger.debug(blocks[idx-1]['Data']['Cid'])
+					rest_logger.debug(block['Data']['Cid'])
+					if 'payload' in formatted_block['Data'].keys():
+						prev_data = formatted_block['Data']['payload']
+					else:
+						prev_data = ipfs_client.cat(block['Data']['Cid']).decode()
+					prev_data = json.loads(prev_data)
+					if 'payload' in blocks[idx-1]['Data'].keys():
+						cur_data = blocks[idx-1]['Data']['payload']
+					else:
+						cur_data = ipfs_client.cat(blocks[idx-1]['Data']['Cid']).decode()
+					cur_data = json.loads(cur_data)
+					# calculate diff
+					for k, v in cur_data.items():
+						if v != prev_data[k]:
+							diff_map[k] = {'old': prev_data[k], 'new': v}
+					rest_logger.debug('Found diff in first time calculation')
+					rest_logger.debug(diff_map)
+					# cache in redis
+					await redis_conn.set(diff_key, json.dumps(diff_map))
+				else:
+					diff_map = json.loads(diff_b)
+					rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
+					rest_logger.debug(blocks[idx - 1]['Data']['Cid'])
+					rest_logger.debug(block['Data']['Cid'])
+					rest_logger.debug(diff_map)
+				blocks[idx-1]['diff'] = diff_map
 			else:
 				blocks[idx-1]['payloadChanged'] = False
 		prev_payload_cid = block['Data']['Cid']
