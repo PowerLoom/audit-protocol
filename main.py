@@ -1,20 +1,10 @@
 from typing import Optional, Union
 from fastapi import Depends, FastAPI, WebSocket, HTTPException, Security, Request, Response, BackgroundTasks, Cookie, \
-	Query, WebSocketDisconnect
-from fastapi import status, Header
-from fastapi.security.api_key import APIKeyQuery, APIKeyHeader, APIKey
+    Query, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from starlette.responses import RedirectResponse, JSONResponse
-# from pygate_grpc.client import PowerGateClient
-# from pygate_grpc.ffs import get_file_bytes, bytes_to_chunks, chunks_to_bytes
-# from google.protobuf.json_format import MessageToDict
-# from pygate_grpc.ffs import bytes_to_chunks
 from eth_utils import keccak
-from io import BytesIO
 from maticvigil.EVCore import EVCore
-from uuid import uuid4
-import sqlite3
 import logging
 import sys
 import json
@@ -24,14 +14,10 @@ import redis
 import time
 from skydb import SkydbTable
 import ipfshttpclient
-# import settings
 from config import settings
-from datetime import datetime
 
 print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect()
-ipfs_table = SkydbTable(table_name=settings.dag_table_name, columns=['cid'],
-						seed=settings.SEED)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -54,512 +40,381 @@ redis_lock = redis.Redis()
 
 app = FastAPI(docs_url=None, openapi_url=None, redoc_url=None)
 app.add_middleware(
-	CORSMiddleware,
-	allow_origins=origins,
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
 )
 app.mount('/static', StaticFiles(directory='static'), name='static')
 
 evc = EVCore(verbose=True)
 contract = evc.generate_contract_sdk(
-	contract_address=settings.audit_contract,
-	app_name='auditrecords'
+    contract_address=settings.audit_contract,
+    app_name='auditrecords'
 )
 
 REDIS_CONN_CONF = {
-	"host": settings['REDIS']['HOST'],
-	"port": settings['REDIS']['PORT'],
-	"password": settings['REDIS']['PASSWORD'],
-	"db": settings['REDIS']['DB']
+    "host": settings['REDIS']['HOST'],
+    "port": settings['REDIS']['PORT'],
+    "password": settings['REDIS']['PASSWORD'],
+    "db": settings['REDIS']['DB']
 }
 #
 STORAGE_CONFIG = {
-	"hot": {
-		"enabled": True,
-		"allowUnfreeze": True,
-		"ipfs": {
-			"addTimeout": 30
-		}
-	},
-	"cold": {
-		"enabled": True,
-		"filecoin": {
-			"repFactor": 1,
-			"dealMinDuration": 518400,
-			"renew": {
-			},
-			"addr": "placeholderstring"
-		}
-	}
+    "hot": {
+        "enabled": True,
+        "allowUnfreeze": True,
+        "ipfs": {
+            "addTimeout": 30
+        }
+    },
+    "cold": {
+        "enabled": True,
+        "filecoin": {
+            "repFactor": 1,
+            "dealMinDuration": 518400,
+            "renew": {
+            },
+            "addr": "placeholderstring"
+        }
+    }
 }
 
 
 @app.on_event('startup')
 async def startup_boilerplate():
-	app.redis_pool = await aioredis.create_pool(
-		address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
-		db=REDIS_CONN_CONF['db'],
-		password=REDIS_CONN_CONF['password'],
-		maxsize=5
-	)
-
-
-# app.sqlite_conn = sqlite3.connect('auditprotocol_1.db')
-# app.sqlite_cursor = app.sqlite_conn.cursor()
-
-
-async def load_user_from_auth(
-		request: Request = None
-) -> Union[dict, None]:
-	api_key_in_header = request.headers['Auth-Token'] if 'Auth-Token' in request.headers else None
-	if not api_key_in_header:
-		return None
-	rest_logger.debug(api_key_in_header)
-	row = None
-	while True:
-		rest_logger.debug("Waiting for Lock")
-		v = redis_lock.incr('my_lock')
-		if v == 1:
-			row = api_keys_table.fetch(condition={'api_key': api_key_in_header},
-									   start_index=api_keys_table.index - 1,
-									   n_rows=1)
-			v = redis_lock.decr('my_lock')
-			break
-		v = redis_lock.decr('my_lock')
-		time.sleep(0.01)
-	ffs_token = row[next(iter(row.keys()))]['token']
-	return {'token': ffs_token, 'api_key': api_key_in_header}
-
-
-# @app.post('/create')
-# async def create_filecoin_filesystem(
-#		request: Request
-# ):
-#	req_json = await request.json()
-#	hot_enabled = req_json.get('hotEnabled', True)
-#	pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
-#	new_ffs = pow_client.ffs.create()
-#	rest_logger.info('Created new FFS')
-#	rest_logger.info(new_ffs)
-#	if not hot_enabled:
-#		default_config = pow_client.ffs.default_config(new_ffs.token)
-#		rest_logger.debug(default_config)
-#		new_storage_config = STORAGE_CONFIG
-#		new_storage_config['cold']['filecoin']['addr'] = default_config.default_storage_config.cold.filecoin.addr
-#		new_storage_config['hot']['enabled'] = False
-#		new_storage_config['hot']['allowUnfreeze'] = False
-#		pow_client.ffs.set_default_config(json.dumps(new_storage_config), new_ffs.token)
-#		rest_logger.debug('Set hot storage to False')
-#		rest_logger.debug(new_storage_config)
-#	# rest_logger.debug(type(default_config))
-#	api_key = str(uuid4())
-#	api_keys_table.add_row({'token':new_ffs.token,'api_key':api_key})
-#
-#	# Add row to skydb
-#	
-#	api_keys_table.add_row({'api_key':api_key, 'token':new_ffs.token})
-#	rest_logger.debug("Added a row to api_keys_table")
-#	return {'apiKey': api_key}
-
-
-@app.get('/payload/{recordCid:str}')
-async def record(request: Request, response: Response, recordCid: str):
-	# record_chain = contract.getTokenRecordLogs('0x'+keccak(text=tokenId).hex())
-	# skydb fetching
-	row = None
-	while True:
-		rest_logger.debug("Waiting for Lock")
-		v = redis_lock.incr('my_lock')
-		if v == 1:
-			row = accounting_records_table.fetch(condition={'localCID': recordCid},
-												 start_index=accounting_records_table.index - 1, n_rows=1)
-			v = redis_lock.decr('my_lock')
-			break
-		v = redis_lock.decr('my_lock')
-		time.sleep(0.01)
-	assert len(row) >= 1, "No row found"
-	index = list(row.keys())[0]
-	row = row[index]
-	confirmed = int(row['confirmed'])
-	real_cid = row['cid']
-	ffs_token = row['token']
-	# pow_client = PowerGateClient(fast_settings.config.powergate_url, False)
-	# check = pow_client.ffs.info(real_cid, ffs_token)
-	# rest_logger.debug(check)
-
-	row = None
-	while True:
-		rest_logger.debug("Waiting for Lock")
-		v = redis_lock.incr('my_lock')
-		if v == 1:
-			row = retreivals_single_table.fetch(condition={'cid': real_cid},
-												start_index=retreivals_single_table.index - 1, n_rows=1)
-			v = redis_lock.decr('my_lock')
-			break
-		v = redis_lock.decr('my_lock')
-		time.sleep(0.01)
-	if row:
-		row = row[next(iter(row.keys()))]
-		request_id = row['requestID']
-		request_status = int(row['completed'])
-		if request_status == 0:
-			request_status = 'InProcess'
-		else:
-			request_status = 'Completed'
-	else:
-		request_id = str(uuid4())
-		request_status = 'Queued'
-	# if real_cid in check.info.pins:
-	#	 rest_logger.info('CID Found in Pinned!')
-	#
-	#	 rest_logger.debug("Retrieving file " + real_cid + " from FFS.")
-	#	 file_ = pow_client.ffs.get(real_cid, ffs_token)
-	#	 file_name = f'static/{request_id}'
-	#	 rest_logger.debug('Saving to ' + file_name)
-	#	 with open(file_name, 'wb') as f_:
-	#		 for _ in file_:
-	#			 f_.write(_)
-	#	 return {'requestId': request_id, 'downloadFile': file_name}
-	if confirmed == 0:
-		# response.status_code = status.HTTP_404_NOT_FOUND
-		payload_status = 'PendingPinning'
-	elif confirmed == 1:
-		payload_status = 'Pinned'
-	elif confirmed == 2:
-		payload_status = 'PinFailed'
-	else:
-		payload_status = 'unknown'
-	if confirmed in range(0, 2):
-		request.app.sqlite_cursor.execute("""
-			INSERT INTO retrievals_single VALUES (?, ?, ?, "", 0)
-		""", (request_id, real_cid, recordCid))
-		# request.app.sqlite_cursor.connection.commit()
-
-		retreivals_single_table.add_row({
-			'requestID': request_id,
-			'cid': real_cid,
-			'localCID': recordCid,
-			'retreived_file': "",
-			'completed': 0
-		})
-
-	return {'requestId': request_id, 'requestStatus': request_status, 'payloadStatus': payload_status}
-
-
-@app.get('/requests/{requestId:str}')
-async def request_status(request: Request, requestId: str):
-	row = None
-	while True:
-		rest_logger.debug("Waiting for Lock")
-		v = redis_lock.incr('my_lock')
-		if v == 1:
-			row = retreivals_single_table.fetch(condition={'requestID': requestId},
-												start_index=retreivals_single_table.index - 1, n_rows=1)
-			v = redis_lock.decr('my_lock')
-			break
-		v = redis_lock.decr('my_lock')
-		time.sleep(0.01)
-	row = row[next(iter(row.keys()))]
-
-	if row:
-		# return {'requestID': requestId, 'completed': bool(res[4]), "downloadFile": res[3]}
-		return {'requestID': requestId, 'completed': bool(int(row['completed'])), "downloadFile": row['retreived_file']}
-	else:
-		c_bulk_row = None
-		while True:
-			rest_logger.debug("Waiting for Lock")
-			v = redis_lock.incr('my_lock')
-			if v == 1:
-				c_bulk_row = retreivals_bulk_table.fetch(condition={'requestID': requestId},
-														 start_index=retreivals_bulk_table.index - 1)
-				v = redis_lock.decr('my_lock')
-				break
-			v = redis_lock.decr('my_lock')
-			time.sleep(0.01)
-		return {'requestID': requestId, 'completed': bool(int(c_bulk_row['completed'])),
-				"downloadFile": c_bulk_row['retreived_file']}
-
-
-def get_prev_cid():
-	global ipfs_table
-	if ipfs_table.index == 0:
-		return ""
-	prev_cid = ipfs_table.fetch_row(row_index=ipfs_table.index - 1)['cid']
-	return prev_cid
+    app.redis_pool = await aioredis.create_pool(
+        address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
+        db=REDIS_CONN_CONF['db'],
+        password=REDIS_CONN_CONF['password'],
+        maxsize=5
+    )
 
 
 @app.post('/commit_payload')
 async def commit_payload(
-		request: Request,
-		response: Response,
+        request: Request,
+        response: Response,
 ):
-	req_args = await request.json()
-	try:
-		payload = req_args['payload']
-		project_id = req_args['projectId']
-	except Exception as e:
-		return {'error': "Either payload or projectId"}
-	prev_dag_cid = ""
-	prev_payload_cid = None
-	block_height = 0
-	if settings.METADATA_CACHE == 'skydb':
-		ipfs_table = SkydbTable(
-			table_name=f"{settings.dag_table_name}:{project_id}",
-			columns=['cid'],
-			seed=settings.seed,
-			verbose=1
-		)
-		if ipfs_table.index == 0:
-			prev_dag_cid = ""
-		else:
-			prev_dag_cid = ipfs_table.fetch_row(row_index=ipfs_table.index - 1)['cid']
-		block_height = ipfs_table.index
+    req_args = await request.json()
+    try:
+        payload = req_args['payload']
+        project_id = req_args['projectId']
+    except Exception as e:
+        return {'error': "Either payload or projectId"}
+    prev_dag_cid = ""
+    prev_payload_cid = None
+    block_height = 0
+    ipfs_table = None
+    redis_conn = None
+    redis_conn_raw = None
+    if settings.METADATA_CACHE == 'skydb':
+        ipfs_table = SkydbTable(
+            table_name=f"{settings.dag_table_name}:{project_id}",
+            columns=['cid'],
+            seed=settings.seed,
+            verbose=1
+        )
+        if ipfs_table.index == 0:
+            prev_dag_cid = ""
+        else:
+            prev_dag_cid = ipfs_table.fetch_row(row_index=ipfs_table.index - 1)['cid']
+        block_height = ipfs_table.index
 
-	elif settings.METADATA_CACHE == 'redis':
-		redis_conn_raw = await request.app.redis_pool.acquire()
-		redis_conn = aioredis.Redis(redis_conn_raw)
-		last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
-		r = await redis_conn.get(last_known_dag_cid_key)
-		if r:
-			prev_dag_cid = r.decode('utf-8')
-			last_block_height_key = f'projectID:{project_id}:blockHeight'
-			r2 = await redis_conn.get(last_block_height_key)
-			if r2:
-				block_height = int(r2)
+    elif settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
+        r = await redis_conn.get(last_known_dag_cid_key)
+        if r:
+            prev_dag_cid = r.decode('utf-8')
+            last_block_height_key = f'projectID:{project_id}:blockHeight'
+            r2 = await redis_conn.get(last_block_height_key)
+            if r2:
+                block_height = int(r2)
 
-	if prev_dag_cid != "":
-		prev_payload_cid = ipfs_client.dag.get(prev_dag_cid).as_json()['Data']['Cid']
-	payload_changed = False
+    if prev_dag_cid != "":
+        prev_payload_cid = ipfs_client.dag.get(prev_dag_cid).as_json()['Data']['Cid']
+    payload_changed = False
 
-	rest_logger.debug('Previous IPLD CID in the DAG: ')
-	rest_logger.debug(prev_dag_cid)
+    rest_logger.debug('Previous IPLD CID in the DAG: ')
+    rest_logger.debug(prev_dag_cid)
 
-	dag = settings.dag_structure.to_dict()
-	timestamp = int(time.time())
-
-	if type(payload) is dict:
-		snapshot_cid = ipfs_client.add_json(payload)
-	else:
-		try:
-			snapshot_cid = ipfs_client.add_str(str(payload))
-		except:
-			response.status_code = 400
-			return {'success': False, 'error': 'PayloadNotSuppported'}
-	rest_logger.debug('Payload CID')
-	rest_logger.debug(snapshot_cid)
-	snapshot = dict()
-	snapshot['Cid'] = snapshot_cid
-	snapshot['Type'] = "HOT_IPFS"
-	if prev_payload_cid:
-		if prev_payload_cid != snapshot['Cid']:
-			payload_changed = True
-	rest_logger.debug(snapshot)
-	dag['Height'] = block_height
-	dag['prevCid'] = prev_dag_cid
-	dag['Data'] = snapshot
-	ipfs_cid = snapshot['Cid']
-	token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-	tx_hash_obj = contract.commitRecord(**dict(
-		ipfsCid=ipfs_cid,
-		apiKeyHash=token_hash,
-	))
-	dag['TxHash'] = tx_hash_obj[0]['txHash']
-	timestamp = str(int(time.time()))
-	dag['Timestamp'] = timestamp
-	rest_logger.debug(dag)
-	json_string = json.dumps(dag).encode('utf-8')
-	data = ipfs_client.dag.put(io.BytesIO(json_string))
-	rest_logger.debug(data)
-	rest_logger.debug(data['Cid']['/'])
-	# persist last known cid in redis or skydb
-	if settings.METADATA_CACHE == 'skydb':
-		ipfs_table.add_row({'cid': data['Cid']['/']})
-	elif settings.METADATA_CACHE == 'redis':
-		await redis_conn.set(f'projectID:{project_id}:lastDagCid', data['Cid']['/'])
-		await redis_conn.zadd(
-			key=f'projectID:{project_id}:Cids',
-			score=block_height,
-			member=data['Cid']['/']
-		)
-		await redis_conn.set(f'projectID:{project_id}:blockHeight', block_height + 1)
-		request.app.redis_pool.release(redis_conn_raw)
-	return {
-		'Cid': data['Cid']['/'],
-		# 'payloadCid': snapshot['Cid'],
-		'payloadChanged': payload_changed,
-		'Height': dag['Height']
-	}
-
-
-def get_block_height():
-	return ipfs_table.index - 1
+    dag = settings.dag_structure.to_dict()
+    if type(payload) is dict:
+        snapshot_cid = ipfs_client.add_json(payload)
+    else:
+        try:
+            snapshot_cid = ipfs_client.add_str(str(payload))
+        except:
+            response.status_code = 400
+            return {'success': False, 'error': 'PayloadNotSuppported'}
+    rest_logger.debug('Payload CID')
+    rest_logger.debug(snapshot_cid)
+    snapshot = dict()
+    snapshot['Cid'] = snapshot_cid
+    snapshot['Type'] = "HOT_IPFS"
+    if prev_payload_cid:
+        if prev_payload_cid != snapshot['Cid']:
+            payload_changed = True
+    rest_logger.debug(snapshot)
+    dag['Height'] = block_height
+    dag['prevCid'] = prev_dag_cid
+    dag['Data'] = snapshot
+    ipfs_cid = snapshot['Cid']
+    token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+    tx_hash_obj = contract.commitRecord(**dict(
+        ipfsCid=ipfs_cid,
+        apiKeyHash=token_hash,
+    ))
+    dag['TxHash'] = tx_hash_obj[0]['txHash']
+    timestamp = str(int(time.time()))
+    dag['Timestamp'] = timestamp
+    rest_logger.debug(dag)
+    json_string = json.dumps(dag).encode('utf-8')
+    data = ipfs_client.dag.put(io.BytesIO(json_string))
+    rest_logger.debug(data)
+    rest_logger.debug(data['Cid']['/'])
+    # persist last known cid in redis or skydb
+    if settings.METADATA_CACHE == 'skydb':
+        ipfs_table.add_row({'cid': data['Cid']['/']})
+    elif settings.METADATA_CACHE == 'redis':
+        await redis_conn.set(f'projectID:{project_id}:lastDagCid', data['Cid']['/'])
+        await redis_conn.zadd(
+            key=f'projectID:{project_id}:Cids',
+            score=block_height,
+            member=data['Cid']['/']
+        )
+        await redis_conn.set(f'projectID:{project_id}:blockHeight', block_height + 1)
+        request.app.redis_pool.release(redis_conn_raw)
+    return {
+        'Cid': data['Cid']['/'],
+        # 'payloadCid': snapshot['Cid'],
+        'payloadChanged': payload_changed,
+        'Height': dag['Height']
+    }
 
 
 @app.get('/{projectId:int}/payloads')
 async def get_payloads(
-		request: Request,
-		response: Response,
-		projectId: int,
-		from_height: int = Query(None),
-		to_height: int = Query(None),
-		data: Optional[str] = Query(None)
+        request: Request,
+        response: Response,
+        projectId: int,
+        from_height: int = Query(None),
+        to_height: int = Query(None),
+        data: Optional[str] = Query(None)
 ):
-	max_block_height = None
-	if settings.METADATA_CACHE == 'skydb':
-		ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-								columns=['cid'],
-								seed=settings.seed,
-								verbose=1)
-		max_block_height = ipfs_table.index - 1
-	elif settings.METADATA_CACHE == 'redis':
-		redis_conn_raw = await request.app.redis_pool.acquire()
-		redis_conn = aioredis.Redis(redis_conn_raw)
-		h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
-		if not h:
-			max_block_height = 0
-		else:
-			max_block_height = int(h.decode('utf-8')) - 1
-	if data:
-		if data.lower() == 'true':
-			data = True
-		else:
-			data = False
+    ipfs_table = None
+    max_block_height = None
+    redis_conn_raw = None
+    redis_conn = None
+    if settings.METADATA_CACHE == 'skydb':
+        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+                                columns=['cid'],
+                                seed=settings.seed,
+                                verbose=1)
+        max_block_height = ipfs_table.index - 1
+    elif settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
+        if not h:
+            max_block_height = 0
+        else:
+            max_block_height = int(h.decode('utf-8')) - 1
+    if data:
+        if data.lower() == 'true':
+            data = True
+        else:
+            data = False
 
-	if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
-		return {'error': 'Invalid Height'}
+    if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
+        return {'error': 'Invalid Height'}
 
-	blocks = list()
-	current_height = to_height
-	prev_dag_cid = ""
-	prev_payload_cid = None
-	idx = 0
-	while current_height >= from_height:
-		rest_logger.debug("Fetching block at height: " + str(current_height))
-		if not prev_dag_cid:
-			if settings.METADATA_CACHE == 'skydb':
-				prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
-			elif settings.METADATA_CACHE == 'redis':
-				project_cids_key_zset = f'projectID:{projectId}:Cids'
-				r = await redis_conn.zrangebyscore(
-					key=project_cids_key_zset,
-					min=current_height,
-					max=current_height,
-					withscores=False
-				)
-				if r:
-					prev_dag_cid = r[0].decode('utf-8')
-				else:
-					return {'error': 'NoRecordsFound'}
-		block = ipfs_client.dag.get(prev_dag_cid).as_json()
-		formatted_block = dict()
-		formatted_block['dagCid'] = prev_dag_cid
-		formatted_block.update({k: v for k, v in block.items()})
-		formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
-		if data:
-			formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
-		if prev_payload_cid:
-			if prev_payload_cid != block['Data']['Cid']:
-				blocks[idx-1]['payloadChanged'] = True
-				diff_key = f"CidDiff:{prev_payload_cid}:{block['Data']['Cid']}"
-				diff_b = await redis_conn.get(diff_key)
-				diff_map = dict()
-				if not diff_b:
-					# diff not cached already
-					rest_logger.debug('Diff not cached | New CID | Old CID')
-					rest_logger.debug(blocks[idx-1]['Data']['Cid'])
-					rest_logger.debug(block['Data']['Cid'])
-					if 'payload' in formatted_block['Data'].keys():
-						prev_data = formatted_block['Data']['payload']
-					else:
-						prev_data = ipfs_client.cat(block['Data']['Cid']).decode()
-					prev_data = json.loads(prev_data)
-					if 'payload' in blocks[idx-1]['Data'].keys():
-						cur_data = blocks[idx-1]['Data']['payload']
-					else:
-						cur_data = ipfs_client.cat(blocks[idx-1]['Data']['Cid']).decode()
-					cur_data = json.loads(cur_data)
-					# calculate diff
-					for k, v in cur_data.items():
-						if v != prev_data[k]:
-							diff_map[k] = {'old': prev_data[k], 'new': v}
-					rest_logger.debug('Found diff in first time calculation')
-					rest_logger.debug(diff_map)
-					# cache in redis
-					await redis_conn.set(diff_key, json.dumps(diff_map))
-				else:
-					diff_map = json.loads(diff_b)
-					rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
-					rest_logger.debug(blocks[idx - 1]['Data']['Cid'])
-					rest_logger.debug(block['Data']['Cid'])
-					rest_logger.debug(diff_map)
-				blocks[idx-1]['diff'] = diff_map
-			else:
-				blocks[idx-1]['payloadChanged'] = False
-		prev_payload_cid = block['Data']['Cid']
-		blocks.append(formatted_block)
-		prev_dag_cid = formatted_block['prevDagCid']
-		current_height = current_height - 1
-		idx += 1
-	if settings.METADATA_CACHE == 'redis':
-		request.app.redis_pool.release(redis_conn_raw)
-	return blocks
+    blocks = list()
+    current_height = to_height
+    prev_dag_cid = ""
+    prev_payload_cid = None
+    idx = 0
+    while current_height >= from_height:
+        rest_logger.debug("Fetching block at height: " + str(current_height))
+        if not prev_dag_cid:
+            if settings.METADATA_CACHE == 'skydb':
+                prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
+            elif settings.METADATA_CACHE == 'redis':
+                project_cids_key_zset = f'projectID:{projectId}:Cids'
+                r = await redis_conn.zrangebyscore(
+                    key=project_cids_key_zset,
+                    min=current_height,
+                    max=current_height,
+                    withscores=False
+                )
+                if r:
+                    prev_dag_cid = r[0].decode('utf-8')
+                else:
+                    return {'error': 'NoRecordsFound'}
+        block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        formatted_block = dict()
+        formatted_block['dagCid'] = prev_dag_cid
+        formatted_block.update({k: v for k, v in block.items()})
+        formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
+        if data:
+            formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+        if prev_payload_cid:
+            if prev_payload_cid != block['Data']['Cid']:
+                blocks[idx-1]['payloadChanged'] = True
+                diff_key = f"CidDiff:{prev_payload_cid}:{block['Data']['Cid']}"
+                diff_b = await redis_conn.get(diff_key)
+                diff_map = dict()
+                if not diff_b:
+                    # diff not cached already
+                    rest_logger.debug('Diff not cached | New CID | Old CID')
+                    rest_logger.debug(blocks[idx-1]['Data']['Cid'])
+                    rest_logger.debug(block['Data']['Cid'])
+                    if 'payload' in formatted_block['Data'].keys():
+                        prev_data = formatted_block['Data']['payload']
+                    else:
+                        prev_data = ipfs_client.cat(block['Data']['Cid']).decode()
+                    prev_data = json.loads(prev_data)
+                    if 'payload' in blocks[idx-1]['Data'].keys():
+                        cur_data = blocks[idx-1]['Data']['payload']
+                    else:
+                        cur_data = ipfs_client.cat(blocks[idx-1]['Data']['Cid']).decode()
+                    cur_data = json.loads(cur_data)
+                    # calculate diff
+                    for k, v in cur_data.items():
+                        if v != prev_data[k]:
+                            diff_map[k] = {'old': prev_data[k], 'new': v}
+                    rest_logger.debug('Found diff in first time calculation')
+                    rest_logger.debug(diff_map)
+                    # cache in redis
+                    await redis_conn.set(diff_key, json.dumps(diff_map))
+                else:
+                    diff_map = json.loads(diff_b)
+                    rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
+                    rest_logger.debug(blocks[idx - 1]['Data']['Cid'])
+                    rest_logger.debug(block['Data']['Cid'])
+                    rest_logger.debug(diff_map)
+                blocks[idx-1]['diff'] = diff_map
+            else:
+                blocks[idx-1]['payloadChanged'] = False
+        prev_payload_cid = block['Data']['Cid']
+        blocks.append(formatted_block)
+        prev_dag_cid = formatted_block['prevDagCid']
+        current_height = current_height - 1
+        idx += 1
+    if settings.METADATA_CACHE == 'redis':
+        request.app.redis_pool.release(redis_conn_raw)
+    return blocks
 
 
 @app.get('/{projectId}/payloads/height')
 async def payload_height(request: Request, response: Response, projectId: int):
-	if settings.METADATA_CACHE == 'skydb':
-		ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-								columns=['cid'],
-								seed=settings.seed)
-		max_block_height = ipfs_table.index - 1
-	elif settings.METADATA_CACHE == 'redis':
-		redis_conn_raw = await request.app.redis_pool.acquire()
-		redis_conn = aioredis.Redis(redis_conn_raw)
-		h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
-		if not h:
-			max_block_height = 0
-		else:
-			max_block_height = int(h.decode('utf-8')) - 1
-		request.app.redis_pool.release(redis_conn_raw)
+    max_block_height = -1
+    if settings.METADATA_CACHE == 'skydb':
+        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+                                columns=['cid'],
+                                seed=settings.seed)
+        max_block_height = ipfs_table.index - 1
+    elif settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
+        if not h:
+            max_block_height = 0
+        else:
+            max_block_height = int(h.decode('utf-8')) - 1
+        request.app.redis_pool.release(redis_conn_raw)
 
-	return {"height": max_block_height}
+    return {"height": max_block_height}
 
 
 @app.get('/{projectId}/payload/{block_height}')
 async def get_block(request: Request,
-					response: Response,
-					projectId: int,
-					block_height: int,
-					):
-	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-							columns=['cid'],
-							seed=settings.seed,
-							verbose=1)
+                    response: Response,
+                    projectId: int,
+                    block_height: int,
+                    ):
+    if settings.METADATA_CACHE == 'skydb':
+        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+                                columns=['cid'],
+                                seed=settings.seed,
+                                verbose=1)
 
-	if (block_height > ipfs_table.index - 1) or (block_height < 0):
-		return {'error': 'Invalid block Height'}
+        if (block_height > ipfs_table.index - 1) or (block_height < 0):
+            response.status_code = 400
+            return {'error': 'Invalid block Height'}
 
-	row = ipfs_table.fetch_row(row_index=block_height)
-	block = ipfs_client.dag.get(row['cid']).as_json()
-	return {row['cid']: block}
+            row = ipfs_table.fetch_row(row_index=block_height)
+            block = ipfs_client.dag.get(row['cid']).as_json()
+            return {row['cid']: block}
+    elif settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        max_block_height = await redis_conn.get(f"projectID:{projectId}:blockHeight")
+        if not max_block_height:
+            response.status_code = 400
+            return {'error': 'Block does not exist at this block height'}
+        max_block_height = int(max_block_height.decode('utf-8'))-1
+        rest_logger.debug(max_block_height)
+        if block_height > max_block_height:
+            response.status_code = 400
+            return {'error': 'Invalid Block Height'}
+
+        project_cids_key_zset = f'projectID:{projectId}:Cids'
+        r = await redis_conn.zrangebyscore(
+            key=project_cids_key_zset,
+            min=block_height,
+            max=block_height,
+            withscores=False
+        )
+        prev_dag_cid = r[0].decode('utf-8')
+        block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        return {prev_dag_cid: block}
 
 
 @app.get('/{projectId:int}/payload/{block_height:int}/data')
 async def get_block_data(
-		request: Request,
-		response: Response,
-		projectId: int,
-		block_height: int,
+        request: Request,
+        response: Response,
+        projectId: int,
+        block_height: int,
 ):
-	ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-							columns=['cid'],
-							seed=settings.seed,
-							verbose=1)
-	if (block_height > ipfs_table.index - 1) or (block_height < 0):
-		return {'error': 'Invalid block Height'}
-	row = ipfs_table.fetch_row(row_index=block_height)
-	block = ipfs_client.dag.get(row['cid']).as_json()
-	block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
-	return {row['cid']: block['Data']}
+    if settings.METADATA_CACHE == 'skydb':
+        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+                                columns=['cid'],
+                                seed=settings.seed,
+                                verbose=1)
+        if (block_height > ipfs_table.index - 1) or (block_height < 0):
+            return {'error': 'Invalid block Height'}
+        row = ipfs_table.fetch_row(row_index=block_height)
+        block = ipfs_client.dag.get(row['cid']).as_json()
+        block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+        return {row['cid']: block['Data']}
+
+    elif settings.METADATA_CACHE == "redis":
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        max_block_height = await redis_conn.get(f"projectID:{projectId}:blockHeight")
+        if not max_block_height:
+            response.status_code = 400
+            return {'error': 'Invalid Block Height'}
+        max_block_height = int(max_block_height.decode('utf-8'))-1
+        if block_height > max_block_height:
+            response.status_code = 400
+            return {'error': 'Invalid Block Height'}
+
+        project_cids_key_zset = f'projectID:{projectId}:Cids'
+        r = await redis_conn.zrangebyscore(
+            key=project_cids_key_zset,
+            min=block_height,
+            max=block_height,
+            withscores=False
+        )
+        prev_dag_cid = r[0].decode('utf-8')
+        block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        payload = block['Data']
+        payload['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+        return {prev_dag_cid: payload}
+
