@@ -97,6 +97,12 @@ async def commit_payload(
         request: Request,
         response: Response,
 ):
+    """"
+        - This endpoint accepts the payload and adds it to ipfs.
+        - The cid retrieved after adding to ipfs is committed to a Smart Contract and once the transaction goes
+        through a webhook listener will catch that event and update the DAG with the latest block along with the timestamp
+        of when the cid of the payload was committed.
+    """
     req_args = await request.json()
     try:
         payload = req_args['payload']
@@ -123,17 +129,23 @@ async def commit_payload(
         block_height = ipfs_table.index
 
     elif settings.METADATA_CACHE == 'redis':
+        """ Fetch the cid of latest DAG block along with the latest block height. """
         redis_conn_raw = await request.app.redis_pool.acquire()
         redis_conn = aioredis.Redis(redis_conn_raw)
         last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
         r = await redis_conn.get(last_known_dag_cid_key)
         if r:
+            """ Retrieve the height of the latest block only if the DAG projectId is not empty """
             prev_dag_cid = r.decode('utf-8')
             last_block_height_key = f'projectID:{project_id}:blockHeight'
             r2 = await redis_conn.get(last_block_height_key)
             if r2:
                 block_height = int(r2)
 
+    """ 
+        - If the prev_dag_cid is empty, then it means that this is the first block that
+        will be added to the DAG of the projectId.
+    """
     if prev_dag_cid != "":
         prev_payload_cid = ipfs_client.dag.get(prev_dag_cid).as_json()['Data']['Cid']
     payload_changed = False
@@ -141,7 +153,10 @@ async def commit_payload(
     rest_logger.debug('Previous IPLD CID in the DAG: ')
     rest_logger.debug(prev_dag_cid)
 
-    dag = settings.dag_structure.to_dict()
+    """ The DAG will be created in the Webhook listener script """
+    # dag = settings.dag_structure.to_dict()
+
+    """ Add the Payload to IPFS """
     if type(payload) is dict:
         snapshot_cid = ipfs_client.add_json(payload)
     else:
@@ -155,44 +170,54 @@ async def commit_payload(
     snapshot = dict()
     snapshot['Cid'] = snapshot_cid
     snapshot['Type'] = "HOT_IPFS"
+    """ Check if the payload has changed. """
     if prev_payload_cid:
         if prev_payload_cid != snapshot['Cid']:
             payload_changed = True
     rest_logger.debug(snapshot)
-    dag['Height'] = block_height
-    dag['prevCid'] = prev_dag_cid
-    dag['Data'] = snapshot
+
+    #dag['Height'] = block_height
+    #dag['prevCid'] = prev_dag_cid
+    #dag['Data'] = snapshot
     ipfs_cid = snapshot['Cid']
     token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
     tx_hash_obj = contract.commitRecord(**dict(
         ipfsCid=ipfs_cid,
         apiKeyHash=token_hash,
     ))
-    dag['TxHash'] = tx_hash_obj[0]['txHash']
-    timestamp = str(int(time.time()))
-    dag['Timestamp'] = timestamp
-    rest_logger.debug(dag)
-    json_string = json.dumps(dag).encode('utf-8')
-    data = ipfs_client.dag.put(io.BytesIO(json_string))
-    rest_logger.debug(data)
-    rest_logger.debug(data['Cid']['/'])
+
+    """ Put this transaction hash on redis so that webhook listener can access it when listening to events"""
+    hash_key = f"TRANSACTION:{project_id}:{tx_hash_obj[0]['txHash']}"
+    hash_field = f"DAG_BLOCK_CREATED"
+    r = await redis_conn.hset(
+        key=hash_key,
+        field=hash_field,
+        value=0,
+    )
+    #dag['TxHash'] = tx_hash_obj[0]['txHash']
+    #timestamp = str(int(time.time()))
+    #dag['Timestamp'] = timestamp
+    #rest_logger.debug(dag)
+    #json_string = json.dumps(dag).encode('utf-8')
+    #data = ipfs_client.dag.put(io.BytesIO(json_string))
+    #rest_logger.debug(data)
+    #rest_logger.debug(data['Cid']['/'])
     # persist last known cid in redis or skydb
-    if settings.METADATA_CACHE == 'skydb':
-        ipfs_table.add_row({'cid': data['Cid']['/']})
-    elif settings.METADATA_CACHE == 'redis':
-        await redis_conn.set(f'projectID:{project_id}:lastDagCid', data['Cid']['/'])
-        await redis_conn.zadd(
-            key=f'projectID:{project_id}:Cids',
-            score=block_height,
-            member=data['Cid']['/']
-        )
-        await redis_conn.set(f'projectID:{project_id}:blockHeight', block_height + 1)
-        request.app.redis_pool.release(redis_conn_raw)
+    #if settings.METADATA_CACHE == 'skydb':
+    #    ipfs_table.add_row({'cid': data['Cid']['/']})
+    #elif settings.METADATA_CACHE == 'redis':
+    #    await redis_conn.set(f'projectID:{project_id}:lastDagCid', data['Cid']['/'])
+    #    await redis_conn.zadd(
+    #        key=f'projectID:{project_id}:Cids',
+    #        score=block_height,
+    #        member=data['Cid']['/']
+    #    )
+    #    await redis_conn.set(f'projectID:{project_id}:blockHeight', block_height + 1)
+    #    request.app.redis_pool.release(redis_conn_raw)
     return {
-        'Cid': data['Cid']['/'],
-        # 'payloadCid': snapshot['Cid'],
+        'Cid': snapshot['Cid'],
+        'tentative_height': block_height,
         'payloadChanged': payload_changed,
-        'Height': dag['Height']
     }
 
 
