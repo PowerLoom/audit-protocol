@@ -187,18 +187,33 @@ async def commit_payload(
     ))
 
     """ Put this transaction hash on redis so that webhook listener can access it when listening to events"""
-    hash_key = f"TRANSACTION:{project_id}:{tx_hash_obj[0]['txHash']}"
-    hash_field = f"DAG_BLOCK_CREATED"
+    hash_key = f"TRANSACTION:{tx_hash_obj[0]['txHash']}"
+    hash_field = f"project_id"
     r = await redis_conn.hset(
-        key=hash_key,
-        field=hash_field,
-        value=0,
-    )
+            key=hash_key,
+            field=hash_field,
+            value=f"{project_id}"
+        )
+    hash_field = f"tentative_block_height"
+    r = await redis_conn.hset(
+            key=hash_key,
+            field=hash_field,
+            value=f"{block_height}"
+        )
+
+    hash_field = f"prev_dag_cid"
+    r = await redis_conn.hset(
+            key=hash_key,
+            field=hash_field,
+            value=prev_dag_cid,
+        )
+    
+
     #dag['TxHash'] = tx_hash_obj[0]['txHash']
     #timestamp = str(int(time.time()))
     #dag['Timestamp'] = timestamp
     #rest_logger.debug(dag)
-    #json_string = json.dumps(dag).encode('utf-8')
+	#json_string = json.dumps(dag).encode('utf-8')
     #data = ipfs_client.dag.put(io.BytesIO(json_string))
     #rest_logger.debug(data)
     #rest_logger.debug(data['Cid']['/'])
