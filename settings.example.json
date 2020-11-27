@@ -26,6 +26,7 @@
 		"retreivals_single":"retreivals_single",
 		"retreivals_bulk":"retreivals_bulk"
 	},
-    "audit_contract" : "0x25d37e41efb83a1da244abc5b5562f72304a4e2f"
+    "audit_contract" : "0x2bcadf4c87cea273f6c6304436362c305f53d428",
+	"app_name" : "auditrecords"
 	
 }
