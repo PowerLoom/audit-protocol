@@ -48,12 +48,6 @@ app.add_middleware(
 )
 app.mount('/static', StaticFiles(directory='static'), name='static')
 
-evc = EVCore(verbose=True)
-contract = evc.generate_contract_sdk(
-    contract_address=settings.audit_contract,
-    app_name='auditrecords'
-)
-
 REDIS_CONN_CONF = {
     "host": settings['REDIS']['HOST'],
     "port": settings['REDIS']['PORT'],
@@ -89,6 +83,11 @@ async def startup_boilerplate():
         db=REDIS_CONN_CONF['db'],
         password=REDIS_CONN_CONF['password'],
         maxsize=5
+    )
+    app.evc = EVCore(verbose=True)
+    app.contract = app.evc.generate_contract_sdk(
+        contract_address=settings.audit_contract,
+        app_name='auditrecords'
     )
 
 
@@ -141,6 +140,7 @@ async def commit_payload(
             r2 = await redis_conn.get(last_block_height_key)
             if r2:
                 block_height = int(r2)
+        request.app.redis_pool.release(redis_conn_raw)
 
     """ 
         - If the prev_dag_cid is empty, then it means that this is the first block that
@@ -181,7 +181,7 @@ async def commit_payload(
     #dag['Data'] = snapshot
     ipfs_cid = snapshot['Cid']
     token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-    tx_hash_obj = contract.commitRecord(**dict(
+    tx_hash_obj = request.app.contract.commitRecord(**dict(
         ipfsCid=ipfs_cid,
         apiKeyHash=token_hash,
     ))
