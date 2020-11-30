@@ -231,7 +231,7 @@ async def commit_payload(
     #    request.app.redis_pool.release(redis_conn_raw)
     return {
         'Cid': snapshot['Cid'],
-        'tentative_height': block_height,
+        'tentativeHeight': block_height,
         'payloadChanged': payload_changed,
     }
 
