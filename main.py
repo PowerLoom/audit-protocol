@@ -140,7 +140,6 @@ async def commit_payload(
             r2 = await redis_conn.get(last_block_height_key)
             if r2:
                 block_height = int(r2)
-        request.app.redis_pool.release(redis_conn_raw)
 
     """ 
         - If the prev_dag_cid is empty, then it means that this is the first block that
@@ -176,9 +175,6 @@ async def commit_payload(
             payload_changed = True
     rest_logger.debug(snapshot)
 
-    #dag['Height'] = block_height
-    #dag['prevCid'] = prev_dag_cid
-    #dag['Data'] = snapshot
     ipfs_cid = snapshot['Cid']
     token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
     tx_hash_obj = request.app.contract.commitRecord(**dict(
@@ -186,49 +182,30 @@ async def commit_payload(
         apiKeyHash=token_hash,
     ))
 
-    """ Put this transaction hash on redis so that webhook listener can access it when listening to events"""
-    hash_key = f"TRANSACTION:{tx_hash_obj[0]['txHash']}"
-    hash_field = f"project_id"
-    r = await redis_conn.hset(
-            key=hash_key,
-            field=hash_field,
-            value=f"{project_id}"
-        )
-    hash_field = f"tentative_block_height"
-    r = await redis_conn.hset(
-            key=hash_key,
-            field=hash_field,
-            value=f"{block_height}"
-        )
+    if settings.METADATA_CACHE == 'redis':
+        """ Put this transaction hash on redis so that webhook listener can access it when listening to events"""
+        hash_key = f"TRANSACTION:{tx_hash_obj[0]['txHash']}"
+        hash_field = f"project_id"
+        r = await redis_conn.hset(
+                key=hash_key,
+                field=hash_field,
+                value=f"{project_id}"
+            )
+        hash_field = f"tentative_block_height"
+        r = await redis_conn.hset(
+                key=hash_key,
+                field=hash_field,
+                value=f"{block_height}"
+            )
 
-    hash_field = f"prev_dag_cid"
-    r = await redis_conn.hset(
-            key=hash_key,
-            field=hash_field,
-            value=prev_dag_cid,
-        )
-    
+        hash_field = f"prev_dag_cid"
+        r = await redis_conn.hset(
+                key=hash_key,
+                field=hash_field,
+                value=prev_dag_cid,
+            )
+        request.app.redis_pool.release(redis_conn_raw)
 
-    #dag['TxHash'] = tx_hash_obj[0]['txHash']
-    #timestamp = str(int(time.time()))
-    #dag['Timestamp'] = timestamp
-    #rest_logger.debug(dag)
-	#json_string = json.dumps(dag).encode('utf-8')
-    #data = ipfs_client.dag.put(io.BytesIO(json_string))
-    #rest_logger.debug(data)
-    #rest_logger.debug(data['Cid']['/'])
-    # persist last known cid in redis or skydb
-    #if settings.METADATA_CACHE == 'skydb':
-    #    ipfs_table.add_row({'cid': data['Cid']['/']})
-    #elif settings.METADATA_CACHE == 'redis':
-    #    await redis_conn.set(f'projectID:{project_id}:lastDagCid', data['Cid']['/'])
-    #    await redis_conn.zadd(
-    #        key=f'projectID:{project_id}:Cids',
-    #        score=block_height,
-    #        member=data['Cid']['/']
-    #    )
-    #    await redis_conn.set(f'projectID:{project_id}:blockHeight', block_height + 1)
-    #    request.app.redis_pool.release(redis_conn_raw)
     return {
         'Cid': snapshot['Cid'],
         'tentativeHeight': block_height,
