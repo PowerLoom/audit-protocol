@@ -11,7 +11,7 @@ redis
 coloredlogs
 tenacity
 git+https://github.com/ipfs/py-ipfs-http-client.git
-ipfshttpclient
+# ipfshttpclient
 dynaconf==3.1.2
 backports.pbkdf2==0.1
 certifi==2020.11.8
