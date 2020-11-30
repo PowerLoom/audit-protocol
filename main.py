@@ -324,10 +324,16 @@ async def get_payloads(
                     cur_data = json.loads(cur_data)
                     # calculate diff
                     for k, v in cur_data.items():
+                        if k not in prev_data.keys():
+                            rest_logger.info('Ignoring key in older payload as it is not present')
+                            rest_logger.info(k)
+                            blocks[idx - 1]['payloadChanged'] = False
+                            break
                         if v != prev_data[k]:
                             diff_map[k] = {'old': prev_data[k], 'new': v}
-                    rest_logger.debug('Found diff in first time calculation')
-                    rest_logger.debug(diff_map)
+                    if len(diff_map):
+                        rest_logger.debug('Found diff in first time calculation')
+                        rest_logger.debug(diff_map)
                     # cache in redis
                     await redis_conn.set(diff_key, json.dumps(diff_map))
                 else:
