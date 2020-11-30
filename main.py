@@ -394,6 +394,7 @@ async def get_block(request: Request,
         )
         prev_dag_cid = r[0].decode('utf-8')
         block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        request.app.redis_pool.release(redis_conn_raw)
         return {prev_dag_cid: block}
 
 
@@ -439,5 +440,6 @@ async def get_block_data(
         block = ipfs_client.dag.get(prev_dag_cid).as_json()
         payload = block['Data']
         payload['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+        request.app.redis_pool.release(redis_conn_raw)
         return {prev_dag_cid: payload}
 
