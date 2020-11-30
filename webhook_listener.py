@@ -60,7 +60,7 @@ async def test(
             key = f"TRANSACTION:{txHash}"
             data = await redis_conn.hgetall(key)
             decoded_data = {k.decode():v.decode() for k,v in data.items()}
-            project_id = int(decoded_data['project_id'])
+            project_id = str(decoded_data['project_id'])
 
             dag = settings.dag_structure
             dag['Height'] = decoded_data['tentative_block_height']

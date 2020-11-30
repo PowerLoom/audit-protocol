@@ -213,11 +213,11 @@ async def commit_payload(
     }
 
 
-@app.get('/{projectId:int}/payloads')
+@app.get('/{projectId:str}/payloads')
 async def get_payloads(
         request: Request,
         response: Response,
-        projectId: int,
+        projectId: str,
         from_height: int = Query(None),
         to_height: int = Query(None),
         data: Optional[str] = Query(None)
@@ -333,7 +333,7 @@ async def get_payloads(
 
 
 @app.get('/{projectId}/payloads/height')
-async def payload_height(request: Request, response: Response, projectId: int):
+async def payload_height(request: Request, response: Response, projectId: str):
     max_block_height = -1
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
@@ -356,7 +356,7 @@ async def payload_height(request: Request, response: Response, projectId: int):
 @app.get('/{projectId}/payload/{block_height}')
 async def get_block(request: Request,
                     response: Response,
-                    projectId: int,
+                    projectId: str,
                     block_height: int,
                     ):
     if settings.METADATA_CACHE == 'skydb':
@@ -397,11 +397,11 @@ async def get_block(request: Request,
         return {prev_dag_cid: block}
 
 
-@app.get('/{projectId:int}/payload/{block_height:int}/data')
+@app.get('/{projectId:str}/payload/{block_height:int}/data')
 async def get_block_data(
         request: Request,
         response: Response,
-        projectId: int,
+        projectId: str,
         block_height: int,
 ):
     if settings.METADATA_CACHE == 'skydb':
