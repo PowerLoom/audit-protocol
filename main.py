@@ -128,7 +128,7 @@ async def get_project_token(request: Request):
 async def commit_payload(
         request: Request,
         response: Response,
-        token:str = Depends(get_project_token)
+        token: str = Depends(get_project_token)
 ):
     """"
         - This endpoint accepts the payload and adds it to ipfs.
@@ -140,6 +140,10 @@ async def commit_payload(
     try:
         payload = req_args['payload']
         project_id = req_args['projectId']
+        rest_logger.debug("Extracted payload and projectId from the request: ")
+        rest_logger.debug(payload)
+        rest_logger.debug(f"Payload data type: {type(payload)}")
+        rest_logger.debug(f"ProjectId: {project_id}")
     except Exception as e:
         return {'error': "Either payload or projectId"}
     prev_dag_cid = ""
@@ -189,20 +193,37 @@ async def commit_payload(
     """ The DAG will be created in the Webhook listener script """
     # dag = settings.dag_structure.to_dict()
 
-    """ Add the Payload to IPFS """
+    """ Instead of adding payload to directly IPFS, stage it to Filecoin and get back the Cid"""
     if type(payload) is dict:
-        snapshot_cid = ipfs_client.add_json(payload)
-    else:
-        try:
-            snapshot_cid = ipfs_client.add_str(str(payload))
-        except:
-            response.status_code = 400
-            return {'success': False, 'error': 'PayloadNotSuppported'}
+        payload = json.dumps(payload)
+    payload = payload.encode('utf-8')
+    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+    stage_res = powgate_client.data.stage_bytes(payload, token=token)
+    """ Since the same data may come back for snapshotting, I have added override=True"""
+    job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
+    snapshot_cid = stage_res.cid
+
+    """ Add the job id to redis. """
+    KEY = f"JobStatus:{snapshot_cid}"
+    _ = await redis_conn.set(key=KEY, value=job.jobId)
+    rest_logger.debug("Pushed the payload to filecoin.")
+    rest_logger.debug("Job Id: "+job.jobId)
+
+
+    #""" Add the Payload to IPFS """
+    #if type(payload) is dict:
+    #    snapshot_cid = ipfs_client.add_json(payload)
+    #else:
+    #    try:
+    #        snapshot_cid = ipfs_client.add_str(str(payload))
+    #    except:
+    #        response.status_code = 400
+    #        return {'success': False, 'error': 'PayloadNotSuppported'}
     rest_logger.debug('Payload CID')
     rest_logger.debug(snapshot_cid)
     snapshot = dict()
     snapshot['Cid'] = snapshot_cid
-    snapshot['Type'] = "HOT_IPFS"
+    snapshot['Type'] = "COLD_FILECOIN"
     """ Check if the payload has changed. """
     if prev_payload_cid:
         if prev_payload_cid != snapshot['Cid']:
@@ -338,7 +359,11 @@ async def get_payloads(
         formatted_block.update({k: v for k, v in block.items()})
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
         if data:
-            formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+            if current_height < max_block_height - settings.max_ipfs_blocks :
+                payload_data = powgate_client.data.get(block['Data']['Cid'],token=user_token).decode('utf-8')
+                formatted_block['Data']['payload'] = payload_data
+            else:
+                formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
         if prev_payload_cid:
             if prev_payload_cid != block['Data']['Cid']:
                 blocks[idx-1]['payloadChanged'] = True
@@ -353,7 +378,11 @@ async def get_payloads(
                     if 'payload' in formatted_block['Data'].keys():
                         prev_data = formatted_block['Data']['payload']
                     else:
-                        prev_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+                        if current_height < max_block_height - settings.max_ipfs_blocks:
+                            prev_data = powgate_client.data.get(block['Data']['Cid'], token=user_token).decode(
+                                'utf-8')
+                        else:
+                            prev_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
                     rest_logger.debug("Got the payload data: ")
                     rest_logger.debug(prev_data)
                     prev_data = json.loads(prev_data)
@@ -538,7 +567,12 @@ async def get_block_data(
         else:
             block = ipfs_client.dag.get(prev_dag_cid).as_json()
         payload = block['Data']
-        payload['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+        if block_height < max_block_height - settings.max_ipfs_blocks:
+            payload_data = powgate_client.data.get(block['Data']['Cid'], token=user_token).decode(
+                'utf-8')
+        else:
+            payload_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+        payload['payload'] = payload_data
         request.app.redis_pool.release(redis_conn_raw)
         return {prev_dag_cid: payload}
 
