@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-# pygate_grpc
+pygate_grpc
 git+https://github.com/blockvigil/maticvigil-python-sdk.git
 git+https://github.com/powerloom/py-skydb.git
 eth_utils
