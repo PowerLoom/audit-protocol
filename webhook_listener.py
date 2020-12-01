@@ -81,7 +81,7 @@ async def create_dag(
             dag['prevCid'] = decoded_data['prev_dag_cid']
             dag['Data'] = {
                         'Cid': payload_cid,
-                        'Type': 'HOT_IPFS',
+                        'Type': 'COLD_FILECOIN',
                     }
             dag['TxHash'] = txHash
             dag['Timestamp'] = timestamp
