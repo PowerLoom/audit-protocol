@@ -172,6 +172,39 @@ async def commit_payload(
     """ Check if the payload has changed. """
     if prev_payload_cid:
         if prev_payload_cid != snapshot['Cid']:
+            diff_map = dict()
+            prev_data = ipfs_client.cat(prev_payload_cid).decode('utf-8')
+            prev_data = json.loads(prev_data)
+            rest_logger.info('Previous payload returned | Type')
+            rest_logger.info(prev_data)
+            rest_logger.info(type(prev_data))
+            for k, v in payload.items():
+                if k not in prev_data.keys():
+                    rest_logger.info('commit_payload: Payload comparison: Ignoring key in older payload as it is not '
+                                     'present')
+                    rest_logger.info(k)
+                    continue
+                if v != prev_data[k]:
+                    diff_map[k] = {'old': prev_data[k], 'new': v}
+            diff_data = {
+                'cur': {
+                    'height': block_height,
+                    'payloadCid': snapshot_cid
+                },
+                'prev': {
+                    'height': block_height - 1,
+                    'payloadCid': prev_payload_cid,
+                    'dagCid': prev_dag_cid
+                },
+                'diff': diff_map
+            }
+            if settings.METADATA_CACHE == 'redis':
+                diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
+                await redis_conn.zadd(
+                    diff_snapshots_cache_zset,
+                    score=block_height,
+                    member=json.dumps(diff_data)
+                )
             payload_changed = True
     rest_logger.debug(snapshot)
 
@@ -210,6 +243,49 @@ async def commit_payload(
         'Cid': snapshot['Cid'],
         'tentativeHeight': block_height,
         'payloadChanged': payload_changed,
+    }
+
+
+@app.get('/{projectId:str}/payloads/cachedDiffs')
+async def get_payloads_diffs(
+        request: Request,
+        response: Response,
+        projectId: str,
+        from_height: int = Query(None),
+        to_height: int = Query(None),
+        maxCount: int = Query(default=10),
+):
+    max_block_height = 0
+    if settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
+        if not h:
+            max_block_height = 0
+        else:
+            max_block_height = int(h.decode('utf-8')) - 1
+
+    if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
+        return {'error': 'Invalid Height'}
+    extracted_count = 0
+    diff_response = list()
+    if settings.METADATA_CACHE == 'redis':
+        diff_snapshots_cache_zset = f'projectID:{projectId}:diffSnapshots'
+        r = await redis_conn.zrevrangebyscore(
+            key=diff_snapshots_cache_zset,
+            min=from_height,
+            max=to_height,
+            withscores=False
+        )
+        request.app.redis_pool.release(redis_conn_raw)
+        for diff in r:
+            if extracted_count >= maxCount:
+                break
+            diff_response.append(json.loads(diff))
+            extracted_count += 1
+    return {
+        'count': extracted_count,
+        'diffs': diff_response
     }
 
 
@@ -305,12 +381,13 @@ async def get_payloads(
                             rest_logger.info('Ignoring key in older payload as it is not present')
                             rest_logger.info(k)
                             blocks[idx - 1]['payloadChanged'] = False
-                            break
+                            continue
                         if v != prev_data[k]:
                             diff_map[k] = {'old': prev_data[k], 'new': v}
                     if len(diff_map):
                         rest_logger.debug('Found diff in first time calculation')
                         rest_logger.debug(diff_map)
+                        blocks[idx - 1]['payloadChanged'] = True
                     # cache in redis
                     await redis_conn.set(diff_key, json.dumps(diff_map))
                 else:
