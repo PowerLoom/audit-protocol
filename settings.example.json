@@ -27,6 +27,8 @@
 		"retreivals_bulk":"retreivals_bulk"
 	},
     "audit_contract" : "0x2bcadf4c87cea273f6c6304436362c305f53d428",
-	"app_name" : "auditrecords"
-	
+	"app_name" : "auditrecords",
+	"powergate_client_addr"	: "127.0.0.1:5002",
+	"max_ipfs_blocks" : 50
+
 }
