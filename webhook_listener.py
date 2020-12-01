@@ -8,6 +8,9 @@ import sys
 import json
 import io
 
+""" Powergate Imports """
+from pygate_grpc.client import PowerGateClient
+
 ipfs_client = ipfshttpclient.connect()
 app = FastAPI()
 
@@ -42,7 +45,7 @@ async def startup_boilerplate():
     )
 
 @app.post('/')
-async def test(
+async def create_dag(
         request: Request,
         response: Response,
     ):
@@ -50,18 +53,29 @@ async def test(
     if 'event_name' in data.keys():
         if data['event_name'] == 'RecordAppended':
             rest_logger.debug(data)
-            redis_conn_raw = await request.app.redis_pool.acquire()
-            redis_conn = aioredis.Redis(redis_conn_raw)
+            """ Create a Redis Connection """
+            if settings.METADATA_CACHE == "redis":
+                rest_logger.debug("Creating a redis connection....")
+                redis_conn_raw = await request.app.redis_pool.acquire()
+                redis_conn = aioredis.Redis(redis_conn_raw)
 
+            """ Get data from the event """
             txHash = data['txHash']
             timestamp = data['event_data']['timestamp']
             payload_cid = data['event_data']['ipfsCid']
 
+            """ Get required data from redis """
             key = f"TRANSACTION:{txHash}"
             data = await redis_conn.hgetall(key)
-            decoded_data = {k.decode():v.decode() for k,v in data.items()}
-            project_id = str(decoded_data['project_id'])
+            decoded_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in data.items()}
+            project_id = int(decoded_data['project_id'])
 
+            """ Get the filecoin token for the project Id """
+            KEY = f"filecoinToken:{project_id}"
+            token = await redis_conn.get(KEY)
+            token = token.decode('utf-8')
+
+            """ Fill up the dag """
             dag = settings.dag_structure
             dag['Height'] = decoded_data['tentative_block_height']
             dag['prevCid'] = decoded_data['prev_dag_cid']
@@ -72,10 +86,39 @@ async def test(
             dag['TxHash'] = txHash
             dag['Timestamp'] = timestamp
             rest_logger.debug(dag)
+
+            """ Convert dag structure to json and put it on ipfs dag """
             json_string = json.dumps(dag).encode('utf-8')
             data = ipfs_client.dag.put(io.BytesIO(json_string))
             rest_logger.debug(data)
             rest_logger.debug(data['Cid']['/'])
+
+            """ Put the dag json on to filecoin """
+            powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+            staged_res = powgate_client.data.stage_bytes(json_string, token=token)
+            job = powgate_client.config.apply(staged_res.cid, override=False, token=token)
+
+            KEY = f"blockFilecoinStorage:{project_id}:{decoded_data['tentative_block_height']}"
+            _ = await redis_conn.hset(
+                key=KEY,
+                field="blockStageCid",
+                value=staged_res.cid,
+            )
+
+            _ = await redis_conn.hset(
+                key=KEY,
+                field="blockDagCid",
+                value=data['Cid']['/'],
+            )
+
+            _ = await redis_conn.hset(
+                key=KEY,
+                field="jobId",
+                value=job.jobId,
+            )
+
+            rest_logger.debug("Pushed the block data to filecoin: ")
+            rest_logger.debug("Job: "+job.jobId)
 
             if settings.METADATA_CACHE == 'skydb':
                 ipfs_table = SkydbTable(

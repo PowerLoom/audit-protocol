@@ -15,6 +15,7 @@ import time
 from skydb import SkydbTable
 import ipfshttpclient
 from config import settings
+from pygate_grpc.client import PowerGateClient
 
 print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect()
@@ -90,11 +91,44 @@ async def startup_boilerplate():
         app_name='auditrecords'
     )
 
+def get_project_token(request: Request):
+    """ From the request body, extract the projectId and return back the powergate token."""
+    req_args = await request.json()
+    projectId = req_args['projectId']
+
+    """ Intitalize powergate client """
+    rest_logger.debug("Intitializing powergate client")
+    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
+
+    if settings.METADATA_CACHE == "redis":
+        """ Create a redis connection """
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+
+        """ Check if there is a filecoin token for the project Id """
+        KEY = f"filecoinToken:{projectId}"
+        token = await redis_conn.get(KEY)
+        if not token:
+            user = powgate_client.admin.users.create()
+            token = user.token
+            _ = await redis_conn.set(KEY, token)
+            rest_logger.debug("Created a token for projectId: "+str(projectId))
+            rest_logger.debug("Token: "+token)
+        else:
+            token = token.decode('utf-8')
+            rest_logger.debug("Retrieved token: "+token+", for project Id: "+str(projectId))
+
+        """ Release Redis connection pool"""
+        request.app.redis_pool.release(redis_conn_raw)
+
+        return token
+
 
 @app.post('/commit_payload')
 async def commit_payload(
         request: Request,
         response: Response,
+        token:str = Depends(get_project_token)
 ):
     """"
         - This endpoint accepts the payload and adds it to ipfs.
