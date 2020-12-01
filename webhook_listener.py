@@ -38,7 +38,7 @@ async def startup_boilerplate():
         address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
         db=REDIS_CONN_CONF['db'],
         password=REDIS_CONN_CONF['password'],
-        maxsize=5
+        maxsize=100
     )
 
 @app.post('/')
