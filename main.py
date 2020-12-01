@@ -91,7 +91,7 @@ async def startup_boilerplate():
         app_name='auditrecords'
     )
 
-def get_project_token(request: Request):
+async def get_project_token(request: Request):
     """ From the request body, extract the projectId and return back the powergate token."""
     req_args = await request.json()
     projectId = req_args['projectId']
@@ -260,6 +260,8 @@ async def get_payloads(
     max_block_height = None
     redis_conn_raw = None
     redis_conn = None
+    user_token = None
+    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
@@ -270,6 +272,7 @@ async def get_payloads(
         redis_conn_raw = await request.app.redis_pool.acquire()
         redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
+        user_token = await redis_conn.get(f'filecoinToken:{projectId}')
         if not h:
             max_block_height = 0
         else:
@@ -305,7 +308,20 @@ async def get_payloads(
                     prev_dag_cid = r[0].decode('utf-8')
                 else:
                     return {'error': 'NoRecordsFound'}
-        block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        block = None
+        if current_height < max_block_height - settings.max_ipfs_blocks:
+            """ Ge the blockStagedCid for that block"""
+            KEY = f"blockFilecoinStorage:{projectId}:{current_height}"
+            staged_cid = await redis_conn.hget(
+                key=KEY,
+                field="blockStageCid"
+            )
+            staged_cid = staged_cid.decode('utf-8')
+            data = powgate_client.data.get(staged_cid, token=user_token)
+            data = data.decode('utf-8')
+            block = json.loads(data)
+        else:
+            block = ipfs_client.dag.get(prev_dag_cid).as_json()
         formatted_block = dict()
         formatted_block['dagCid'] = prev_dag_cid
         formatted_block.update({k: v for k, v in block.items()})
