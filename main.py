@@ -246,6 +246,13 @@ async def commit_payload(
         'payloadChanged': payload_changed,
     }
 
+def get_block_from_filecoin(staged_cid:str, token:str):
+    """ Given the staged cid and token, retrieved that block from filecoin """
+
+    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
+    data = powgate_client.data.get(staged_cid, toke=token)
+    data = data.decode('utf-8')
+    return json.loads(data)
 
 @app.get('/{projectId:str}/payloads')
 async def get_payloads(
@@ -273,6 +280,7 @@ async def get_payloads(
         redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
         user_token = await redis_conn.get(f'filecoinToken:{projectId}')
+        user_token = user_token.decode('utf-8')
         if not h:
             max_block_height = 0
         else:
@@ -311,6 +319,7 @@ async def get_payloads(
         block = None
         if current_height < max_block_height - settings.max_ipfs_blocks:
             """ Ge the blockStagedCid for that block"""
+            rest_logger.debug("Fetching data from Filecoin....")
             KEY = f"blockFilecoinStorage:{projectId}:{current_height}"
             staged_cid = await redis_conn.hget(
                 key=KEY,
@@ -322,12 +331,14 @@ async def get_payloads(
             block = json.loads(data)
         else:
             block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        rest_logger.debug("Block Retrieved: ")
+        rest_logger.debug(block)
         formatted_block = dict()
         formatted_block['dagCid'] = prev_dag_cid
         formatted_block.update({k: v for k, v in block.items()})
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
         if data:
-            formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
+            formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
         if prev_payload_cid:
             if prev_payload_cid != block['Data']['Cid']:
                 blocks[idx-1]['payloadChanged'] = True
@@ -342,12 +353,14 @@ async def get_payloads(
                     if 'payload' in formatted_block['Data'].keys():
                         prev_data = formatted_block['Data']['payload']
                     else:
-                        prev_data = ipfs_client.cat(block['Data']['Cid']).decode()
+                        prev_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+                    rest_logger.debug("Got the payload data: ")
+                    rest_logger.debug(prev_data)
                     prev_data = json.loads(prev_data)
                     if 'payload' in blocks[idx-1]['Data'].keys():
                         cur_data = blocks[idx-1]['Data']['payload']
                     else:
-                        cur_data = ipfs_client.cat(blocks[idx-1]['Data']['Cid']).decode()
+                        cur_data = ipfs_client.cat(blocks[idx-1]['Data']['Cid']).decode('utf-8')
                     cur_data = json.loads(cur_data)
                     # calculate diff
                     for k, v in cur_data.items():
@@ -419,6 +432,7 @@ async def get_block(request: Request,
             response.status_code = 400
             return {'error': 'Invalid block Height'}
 
+        else:
             row = ipfs_table.fetch_row(row_index=block_height)
             block = ipfs_client.dag.get(row['cid']).as_json()
             return {row['cid']: block}
@@ -443,7 +457,25 @@ async def get_block(request: Request,
             withscores=False
         )
         prev_dag_cid = r[0].decode('utf-8')
-        block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        if block_height < max_block_height - settings.max_ipfs_blocks:
+            rest_logger.debug("Fetching data from Filecoin....")
+            """ Intitalized the powergate Client """
+            user_token = None
+            powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+            user_token = await redis_conn.get(f'filecoinToken:{projectId}')
+            user_token = user_token.decode('utf-8')
+            """ Get the blockStagedCid for that block"""
+            KEY = f"blockFilecoinStorage:{projectId}:{block_height}"
+            staged_cid = await redis_conn.hget(
+                key=KEY,
+                field="blockStageCid"
+            )
+            staged_cid = staged_cid.decode('utf-8')
+            data = powgate_client.data.get(staged_cid, token=user_token)
+            data = data.decode('utf-8')
+            block = json.loads(data)
+        else:
+            block = ipfs_client.dag.get(prev_dag_cid).as_json()
         request.app.redis_pool.release(redis_conn_raw)
         return {prev_dag_cid: block}
 
@@ -487,7 +519,24 @@ async def get_block_data(
             withscores=False
         )
         prev_dag_cid = r[0].decode('utf-8')
-        block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        if block_height < max_block_height - settings.max_ipfs_blocks:
+            """ Intitalized the powergate Client """
+            user_token = None
+            powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+            user_token = await redis_conn.get(f'filecoinToken:{projectId}')
+            user_token = user_token.decode('utf-8')
+            """ Get the blockStagedCid for that block"""
+            KEY = f"blockFilecoinStorage:{projectId}:{block_height}"
+            staged_cid = await redis_conn.hget(
+                key=KEY,
+                field="blockStageCid"
+            )
+            staged_cid = staged_cid.decode('utf-8')
+            data = powgate_client.data.get(staged_cid, token=user_token)
+            data = data.decode('utf-8')
+            block = json.loads(data)
+        else:
+            block = ipfs_client.dag.get(prev_dag_cid).as_json()
         payload = block['Data']
         payload['payload'] = ipfs_client.cat(block['Data']['Cid']).decode()
         request.app.redis_pool.release(redis_conn_raw)
