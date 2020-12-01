@@ -82,7 +82,7 @@ async def startup_boilerplate():
         address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
         db=REDIS_CONN_CONF['db'],
         password=REDIS_CONN_CONF['password'],
-        maxsize=5
+        maxsize=100
     )
     app.evc = EVCore(verbose=True)
     app.contract = app.evc.generate_contract_sdk(
@@ -180,10 +180,7 @@ async def commit_payload(
             rest_logger.info(type(prev_data))
             for k, v in payload.items():
                 if k not in prev_data.keys():
-                    rest_logger.info('commit_payload: Payload comparison: Ignoring key in older payload as it is not '
-                                     'present')
-                    rest_logger.info(k)
-                    continue
+                    prev_data[k] = None
                 if v != prev_data[k]:
                     diff_map[k] = {'old': prev_data[k], 'new': v}
             diff_data = {
