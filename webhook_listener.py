@@ -50,6 +50,7 @@ async def create_dag(
         response: Response,
     ):
     data = await request.json()
+    rest_logger(data)
     if 'event_name' in data.keys():
         if data['event_name'] == 'RecordAppended':
             rest_logger.debug(data)

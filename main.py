@@ -114,6 +114,9 @@ async def get_project_token(request: Request):
             _ = await redis_conn.set(KEY, token)
             rest_logger.debug("Created a token for projectId: "+str(projectId))
             rest_logger.debug("Token: "+token)
+
+            """ Save the project Id on set """
+            _ = await redis_conn.sadd("storedProjectIds", projectId)
         else:
             token = token.decode('utf-8')
             rest_logger.debug("Retrieved token: "+token+", for project Id: "+str(projectId))
@@ -152,6 +155,8 @@ async def commit_payload(
     ipfs_table = None
     redis_conn = None
     redis_conn_raw = None
+    last_tentative_block_height = None
+    last_tentative_block_height_key = f'projectID:{project_id}:tentativeBlockHeight'
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(
             table_name=f"{settings.dag_table_name}:{project_id}",
@@ -166,6 +171,7 @@ async def commit_payload(
         block_height = ipfs_table.index
 
     elif settings.METADATA_CACHE == 'redis':
+        rest_logger.debug("Fetching Data from Redis")
         """ Fetch the cid of latest DAG block along with the latest block height. """
         redis_conn_raw = await request.app.redis_pool.acquire()
         redis_conn = aioredis.Redis(redis_conn_raw)
@@ -178,6 +184,13 @@ async def commit_payload(
             r2 = await redis_conn.get(last_block_height_key)
             if r2:
                 block_height = int(r2)
+        out = await redis_conn.get(last_tentative_block_height_key)
+        rest_logger.debug(f"From Redis Last tentative block height: {out}")
+        if out:
+            last_tentative_block_height = int(out)
+        
+
+    rest_logger.debug(f"Got last tentative block height: {last_tentative_block_height}")
 
     """ 
         - If the prev_dag_cid is empty, then it means that this is the first block that
@@ -189,6 +202,8 @@ async def commit_payload(
 
     rest_logger.debug('Previous IPLD CID in the DAG: ')
     rest_logger.debug(prev_dag_cid)
+    if not last_tentative_block_height:
+        last_tentative_block_height = 0
 
     """ The DAG will be created in the Webhook listener script """
     # dag = settings.dag_structure.to_dict()
@@ -202,6 +217,14 @@ async def commit_payload(
     """ Since the same data may come back for snapshotting, I have added override=True"""
     job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
     snapshot_cid = stage_res.cid
+    if snapshot_cid != prev_payload_cid:
+        payload_changed = True
+    payload_cid_key = f"projectID:{project_id}:payloadCids"
+    _ = await redis_conn.zadd(
+        key=payload_cid_key,
+        score=last_tentative_block_height,
+        member=snapshot_cid
+    )
 
     """ Add the job id to redis. """
     KEY = f"JobStatus:{snapshot_cid}"
@@ -250,7 +273,7 @@ async def commit_payload(
         r = await redis_conn.hset(
                 key=hash_key,
                 field=hash_field,
-                value=f"{block_height}"
+                value=f"{last_tentative_block_height}"
             )
 
         hash_field = f"prev_dag_cid"
@@ -259,21 +282,16 @@ async def commit_payload(
                 field=hash_field,
                 value=prev_dag_cid,
             )
+        _ = await redis_conn.set(last_tentative_block_height_key, last_tentative_block_height+1)
         request.app.redis_pool.release(redis_conn_raw)
-
+    
     return {
         'Cid': snapshot['Cid'],
-        'tentativeHeight': block_height,
+        'tentativeHeight': last_tentative_block_height,
         'payloadChanged': payload_changed,
     }
 
-def get_block_from_filecoin(staged_cid:str, token:str):
-    """ Given the staged cid and token, retrieved that block from filecoin """
 
-    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
-    data = powgate_client.data.get(staged_cid, toke=token)
-    data = data.decode('utf-8')
-    return json.loads(data)
 
 @app.get('/{projectId:str}/payloads')
 async def get_payloads(
