@@ -450,6 +450,89 @@
 					"body": "{\n    \"bafyreihbescb4iwyj4lbi6x6fkhkr4hzwpxeycbt4vonofqmo7g76kecre\": {\n        \"Data\": {\n            \"Cid\": \"QmXGrrs1TQdc12xpohLxU1RDVaEorg1t2nVYdsFP1WaUdz\",\n            \"Size\": \"17\",\n            \"Type\": \"HOT_IPFS\",\n            \"payload\": \"Payload A\"\n        },\n        \"Height\": 0,\n        \"Timestamp\": \"20201121210315039101\",\n        \"TxHash\": \"0x3997bd12e1ee305856df281aad39afe0a7d6021055a3c86f4c8bcba724c31eb6\",\n        \"prevCid\": \"\"\n    }\n}"
 				}
 			]
+		},
+		{
+			"name": "Get last seen diff for all recorded project IDs",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/projects/updates?namespace=gitcoin_grant_",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"projects",
+						"updates"
+					],
+					"query": [
+						{
+							"key": "namespace",
+							"value": "gitcoin_grant_"
+						}
+					]
+				}
+			},
+			"response": [
+				{
+					"name": "Get blocks in a range",
+					"originalRequest": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:9000/20/payloads?from_height=0&to_height=0&data=true",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "9000",
+							"path": [
+								"20",
+								"payloads"
+							],
+							"query": [
+								{
+									"key": "from_height",
+									"value": "0"
+								},
+								{
+									"key": "to_height",
+									"value": "0"
+								},
+								{
+									"key": "data",
+									"value": "true"
+								}
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "date",
+							"value": "Mon, 23 Nov 2020 06:35:21 GMT"
+						},
+						{
+							"key": "server",
+							"value": "uvicorn"
+						},
+						{
+							"key": "content-length",
+							"value": "318"
+						},
+						{
+							"key": "content-type",
+							"value": "application/json"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"bafyreihbescb4iwyj4lbi6x6fkhkr4hzwpxeycbt4vonofqmo7g76kecre\": {\n        \"Data\": {\n            \"Cid\": \"QmXGrrs1TQdc12xpohLxU1RDVaEorg1t2nVYdsFP1WaUdz\",\n            \"Size\": \"17\",\n            \"Type\": \"HOT_IPFS\",\n            \"payload\": \"Payload A\"\n        },\n        \"Height\": 0,\n        \"Timestamp\": \"20201121210315039101\",\n        \"TxHash\": \"0x3997bd12e1ee305856df281aad39afe0a7d6021055a3c86f4c8bcba724c31eb6\",\n        \"prevCid\": \"\"\n    }\n}"
+				}
+			]
 		}
 	],
 	"protocolProfileBehavior": {}

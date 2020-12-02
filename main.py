@@ -186,12 +186,14 @@ async def commit_payload(
             diff_data = {
                 'cur': {
                     'height': block_height,
-                    'payloadCid': snapshot_cid
+                    'payloadCid': snapshot_cid,
+                    'timestamp': int(time.time())
+                    # no DAG cid here since it will be constructed in a separate service
                 },
                 'prev': {
                     'height': block_height - 1,
                     'payloadCid': prev_payload_cid,
-                    'dagCid': prev_dag_cid
+                    'dagCid': prev_dag_cid  # this will be used to fetch the previous block timestamp from the DAG
                 },
                 'diff': diff_map
             }
@@ -201,6 +203,12 @@ async def commit_payload(
                     diff_snapshots_cache_zset,
                     score=block_height,
                     member=json.dumps(diff_data)
+                )
+                latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
+                await redis_conn.hset(
+                    latest_seen_snapshots_htable,
+                    project_id,
+                    json.dumps(diff_data)
                 )
             payload_changed = True
     rest_logger.debug(snapshot)
@@ -241,6 +249,40 @@ async def commit_payload(
         'tentativeHeight': block_height,
         'payloadChanged': payload_changed,
     }
+
+
+# TODO: get API key/token specific updates corresponding to projects committed with those credentials
+@app.get('/projects/updates')
+async def get_latest_project_updates(
+        request: Request,
+        response: Response,
+        namespace: str = Query(default=None)
+):
+    project_diffs_snapshots = list()
+    if settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        h = await redis_conn.hgetall('auditprotocol:lastSeenSnapshots')
+        if len(h) < 1:
+            return {}
+        for i, d in h.items():
+            project_id = i.decode('utf-8')
+            diff_data = json.loads(d)
+            each_project_info = {
+                'projectId': project_id,
+                'diff_data': diff_data
+            }
+            if namespace and namespace in project_id:
+                project_diffs_snapshots.append(each_project_info)
+            if not namespace:
+                try:
+                    project_id_int = int(project_id)
+                except:
+                    pass
+                else:
+                    project_diffs_snapshots.append(each_project_info)
+        request.app.redis_pool.release(redis_conn_raw)
+    return project_diffs_snapshots
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs')
