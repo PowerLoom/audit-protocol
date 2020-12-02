@@ -457,7 +457,7 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/projects/updates?namespace=gitcoin_grant_",
+					"raw": "http://localhost:9000/projects/updates?namespace=gitcoin_grant_&maxCount=20",
 					"protocol": "http",
 					"host": [
 						"localhost"
@@ -471,6 +471,10 @@
 						{
 							"key": "namespace",
 							"value": "gitcoin_grant_"
+						},
+						{
+							"key": "maxCount",
+							"value": "20"
 						}
 					]
 				}

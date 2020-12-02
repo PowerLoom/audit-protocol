@@ -256,7 +256,8 @@ async def commit_payload(
 async def get_latest_project_updates(
         request: Request,
         response: Response,
-        namespace: str = Query(default=None)
+        namespace: str = Query(default=None),
+        maxCount: int = Query(default=20)
 ):
     project_diffs_snapshots = list()
     if settings.METADATA_CACHE == 'redis':
@@ -282,7 +283,8 @@ async def get_latest_project_updates(
                 else:
                     project_diffs_snapshots.append(each_project_info)
         request.app.redis_pool.release(redis_conn_raw)
-    return project_diffs_snapshots
+    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'], reverse=True)
+    return sorted_project_diffs_snapshots[:maxCount]
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs')
