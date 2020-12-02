@@ -50,7 +50,7 @@ async def create_dag(
         response: Response,
     ):
     data = await request.json()
-    rest_logger(data)
+    rest_logger.debug(data)
     if 'event_name' in data.keys():
         if data['event_name'] == 'RecordAppended':
             rest_logger.debug(data)
@@ -69,6 +69,7 @@ async def create_dag(
             key = f"TRANSACTION:{txHash}"
             data = await redis_conn.hgetall(key)
             decoded_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in data.items()}
+            rest_logger.debug(decoded_data)
             project_id = int(decoded_data['project_id'])
 
             """ Get the filecoin token for the project Id """

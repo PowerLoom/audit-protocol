@@ -16,6 +16,7 @@ from skydb import SkydbTable
 import ipfshttpclient
 from config import settings
 from pygate_grpc.client import PowerGateClient
+from uuid import uuid4
 
 print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect()
@@ -125,6 +126,55 @@ async def get_project_token(request: Request):
         request.app.redis_pool.release(redis_conn_raw)
 
         return token
+
+
+@app.post('/requests/{requestId:str}')
+async def request_status(
+    request: Request,
+    response: Response,
+    requestId:str,
+):
+    """
+        Given a requestId, return either the status of that request or retrieve all the payloads for that 
+    """
+
+    redis_conn_raw = await request.app.redis_pool.acquire()
+    redis_conn = aioredis.Redis(redis_conn_raw)
+
+    # Check if the request is already in the pending list
+    requests_list_key = f"pendingRetrievalRequests"
+    out = await redis_conn.sismember(requests_list_key, requestId)
+    if not out:
+        return {'requestId': requestId, 'requestStatus':'Pending'}
+
+    # Get all the retrieved files
+    retrieval_files_key = f"retrievalRequestFiles:{requestId}"
+    retrieved_files = await redis_conn.zrange(
+        key=retrieval_files_key,
+        start=0,
+        stop=-1,
+        withscores=True
+    )
+
+    data = {}
+    files = {}
+    for file_, block_height in retrieved_files:
+        file_ = file_.decode('utf-8')
+        cid = file_.split('/')[-1]
+        block_height = int(block_height)
+
+        dag_block = {
+            'payloadFile':'/'+file_,
+            'Height': block_height
+        }
+        files[cid] = dag_block
+
+    data['requestId'] = requestId
+    data['requestStatus'] = 'Completed'
+    data['files'] = files
+    response.status_code = 200
+    return data
+
 
 
 @app.post('/commit_payload')
@@ -357,17 +407,45 @@ async def get_payloads(
                     return {'error': 'NoRecordsFound'}
         block = None
         if current_height < max_block_height - settings.max_ipfs_blocks:
-            """ Ge the blockStagedCid for that block"""
-            rest_logger.debug("Fetching data from Filecoin....")
-            KEY = f"blockFilecoinStorage:{projectId}:{current_height}"
-            staged_cid = await redis_conn.hget(
-                key=KEY,
-                field="blockStageCid"
+            """ Create a request Id and start a retrieval request """
+            # rest_logger.debug("Fetching data from Filecoin....")
+            # KEY = f"blockFilecoinStorage:{projectId}:{current_height}"
+            # staged_cid = await redis_conn.hget(
+            #     key=KEY,
+            #     field="blockStageCid"
+            # )
+            # staged_cid = staged_cid.decode('utf-8')
+            # data = powgate_client.data.get(staged_cid, token=user_token)
+            # data = data.decode('utf-8')
+            # block = json.loads(data)
+            request_id = str(uuid4())
+            """ Setup the retrievalRequestInfo Hashset """
+            key = f"retrievalRequestInfo:{request_id}"
+            _ = await redis_conn.hset(
+                key=key,
+                field='projectId',
+                value=projectId
             )
-            staged_cid = staged_cid.decode('utf-8')
-            data = powgate_client.data.get(staged_cid, token=user_token)
-            data = data.decode('utf-8')
-            block = json.loads(data)
+            _ = await redis_conn.hset(
+                key=key,
+                field='to_height',
+                value=to_height
+            )
+            _ = await redis_conn.hset(
+                key=key,
+                field='from_height',
+                value=from_height
+            )
+            _data = '1' if data else '0'
+            _ = await redis_conn.hset(
+                key=key,
+                field='data',
+                value=_data
+            )
+            requests_list_key = f"pendingRetrievalRequests"
+            _ = await redis_conn.sadd(requests_list_key, request_id)
+
+            return {'requestId': request_id}
         else:
             block = ipfs_client.dag.get(prev_dag_cid).as_json()
         rest_logger.debug("Block Retrieved: ")
