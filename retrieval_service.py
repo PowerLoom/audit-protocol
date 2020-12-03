@@ -78,16 +78,27 @@ async def retrieve_files():
                 block_staged_cid = block_staged_cid.decode('utf-8')
                 retrieval_logger.debug(f"Getting data for: {block_staged_cid}")
 
+                block_dag = powgate_client.data.get(block_staged_cid, token=token)
+                block_dag = block_dag.decode('utf-8')
+                block_dag = json.loads(block_dag)
+                data = {}
                 # Get the dag block from filecoin
-                data = powgate_client.data.get(block_staged_cid, token=token)
-                data = data.decode('utf-8')
-                data = json.loads(data)
-
-                if request_info['data'] == '1':
-                    payload_cid = data['Data']['Cid']
+                if request_info['data'] == '2':
+                    payload_cid = block_dag['Data']['Cid']
                     payload = powgate_client.data.get(payload_cid,token=token)
                     payload = payload.decode('utf-8')
-                    data['Data']['payload'] = payload
+
+                    data['Cid'] = payload_cid
+                    data['Type'] = 'COLD_FILECOIN'
+                    data['payload']  = payload
+                    
+                else:
+                    data = {k:v for k,v in block_dag.items()}
+                    if request_info['data'] == '1':
+                        payload_cid = data['Data']['Cid']
+                        payload = powgate_client.data.get(payload_cid,token=token)
+                        payload = payload.decode('utf-8')
+                        data['Data']['payload'] = payload
 
                 block_file_path = f'static/{block_cid}'
                 with open(block_file_path, 'w') as f:

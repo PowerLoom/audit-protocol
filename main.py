@@ -415,6 +415,7 @@ async def get_payloads(
         )
         requests_list_key = f"pendingRetrievalRequests"
         _ = await redis_conn.sadd(requests_list_key, request_id)
+        request.app.redis_pool.release(redis_conn_raw)
 
         return {'requestId': request_id}
 
@@ -568,6 +569,43 @@ async def get_block(request: Request,
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 
+        if block_height < max_block_height - settings.max_ipfs_blocks:
+            rest_logger.debug(f"Block at {block_height} is being fetched")
+            request_id = str(uuid4())
+
+            from_height = block_height
+            to_height = block_height
+            data = False
+            """ Setup the retrievalRequestInfo Hashset """
+            key = f"retrievalRequestInfo:{request_id}"
+            _ = await redis_conn.hset(
+                key=key,
+                field='projectId',
+                value=projectId
+            )
+            _ = await redis_conn.hset(
+                key=key,
+                field='to_height',
+                value=to_height
+            )
+            _ = await redis_conn.hset(
+                key=key,
+                field='from_height',
+                value=from_height
+            )
+            _data = '1' if data else '0'
+            _ = await redis_conn.hset(
+                key=key,
+                field='data',
+                value=_data
+            )
+            requests_list_key = f"pendingRetrievalRequests"
+            _ = await redis_conn.sadd(requests_list_key, request_id)
+
+            return {'requestId': request_id}
+
+
+
         project_cids_key_zset = f'projectID:{projectId}:Cids'
         r = await redis_conn.zrangebyscore(
             key=project_cids_key_zset,
@@ -629,6 +667,41 @@ async def get_block_data(
         if block_height > max_block_height:
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
+
+        if block_height < max_block_height - settings.max_ipfs_blocks:
+            rest_logger.debug(f"Block at {block_height} is being fetched")
+            request_id = str(uuid4())
+
+            from_height = block_height
+            to_height = block_height
+            data = True
+            """ Setup the retrievalRequestInfo Hashset """
+            key = f"retrievalRequestInfo:{request_id}"
+            _ = await redis_conn.hset(
+                key=key,
+                field='projectId',
+                value=projectId
+            )
+            _ = await redis_conn.hset(
+                key=key,
+                field='to_height',
+                value=to_height
+            )
+            _ = await redis_conn.hset(
+                key=key,
+                field='from_height',
+                value=from_height
+            )
+            _data = '2' # Get data only and not the block itself
+            _ = await redis_conn.hset(
+                key=key,
+                field='data',
+                value=_data
+            )
+            requests_list_key = f"pendingRetrievalRequests"
+            _ = await redis_conn.sadd(requests_list_key, request_id)
+
+            return {'requestId': request_id}
 
         project_cids_key_zset = f'projectID:{projectId}:Cids'
         r = await redis_conn.zrangebyscore(

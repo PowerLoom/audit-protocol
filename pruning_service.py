@@ -63,7 +63,7 @@ async def choose_targets():
         last_pruned_key = f"lastPruned:{project_id}"
         out: bytes = await redis_conn.get(last_pruned_key)
         if out:
-            last_pruned_height = out.decode('utf-8')
+            last_pruned_height = int(out.decode('utf-8'))
         else:
             _ = await redis_conn.set(last_pruned_key, 0)
             last_pruned_height = 0
@@ -84,7 +84,7 @@ async def choose_targets():
             max=to_height,
             withscores=False
         )
-        all_cids = block_cids_to_prune + payload_cids_to_prune
+        all_cids = list(block_cids_to_prune) + list(payload_cids_to_prune)
         target_list_key = f"toBeUnpinnedCids:{project_id}"
         for cid in all_cids:
             _ = await redis_conn.sadd(target_list_key, cid)
@@ -176,19 +176,22 @@ async def prune_targets():
         all_cids: set = await redis_conn.smembers(key=all_cids_key)
         pruning_logger.debug(f"Found {len(all_cids)} cids to unpin..")
         for cid in all_cids:
-            ipfs_client.pin.rm(cid.decode('utf-8'))
+            try:
+                ipfs_client.pin.rm(cid.decode('utf-8'))
+            except ipfshttpclient.exceptions.ErrorResponse as e:
+                pruning_logger.debug("This cid is not pinned....")
             # Remove the cid from toBeUnpinnedCids and Add the cid to unpinnedCids Set
             _ = await redis_conn.srem(all_cids_key,cid)
             _ = await redis_conn.sadd(unpinned_cids_key, cid)
-        pruning_logger.debug(f"Unpinned {len(all_cids)} for {project_id}")
+        pruning_logger.debug(f"Unpinned {len(all_cids)} cids for projectId: {project_id}")
     redis_pool.release(redis_conn_raw)
 
 
 if __name__ == "__main__":
     asyncio.run(redis_boilerplate())
     while True:
-        pruning_logger.debug("Running the Prunning")
-        asyncio.run(test_choose_targets())
+        pruning_logger.debug("Running the Prunning Service")
+        asyncio.run(choose_targets())
         asyncio.run(prune_targets())
         pruning_logger.debug("Sleeping for 10 secs")
         time.sleep(10)
