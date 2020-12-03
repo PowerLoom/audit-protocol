@@ -50,9 +50,9 @@ async def retrieve_files():
             request_info = {k.decode('utf-8'):i.decode('utf-8') for k,i in out.items()}
 
             # Get the token for that projectId
-            token_key = f"filecoinToken:{request['projectId']}"
+            token_key = f"filecoinToken:{request_info['projectId']}"
             token = await redis_conn.get(token_key)
-            token = token.deocde('utf-8')
+            token = token.decode('utf-8')
 
             # For that project_id, using the from_ and to_, get all the cids
             block_cids_key = f"projectID:{request_info['projectId']}:Cids"
@@ -66,10 +66,20 @@ async def retrieve_files():
             # Iterate through each dag block
             for block_cid, block_height in all_cids:
                 block_cid = block_cid.decode('utf-8')
-                retrieval_logger.debug(f"Getting data for: {block_cid}")
+                block_height = int(block_height)
+                # Get the block's staged_cid
+
+                project_id = request_info['projectId']
+                staged_block_key = f"blockFilecoinStorage:{project_id}:{block_height}"
+                block_staged_cid = await redis_conn.hget(
+                    key=staged_block_key,
+                    field="blockStageCid"
+                )
+                block_staged_cid = block_staged_cid.decode('utf-8')
+                retrieval_logger.debug(f"Getting data for: {block_staged_cid}")
 
                 # Get the dag block from filecoin
-                data = powgate_client.data.get(block_cid, token=token)
+                data = powgate_client.data.get(block_staged_cid, token=token)
                 data = data.decode('utf-8')
                 data = json.loads(data)
 
@@ -91,9 +101,10 @@ async def retrieve_files():
                 )
                 retrieval_logger.debug(f"Block {block_cid} is saved")
             
-            # Once the request is complete, the delete the request id from redis
+            # Once the request is complete, then delete the request id from redis
             _ = await redis_conn.srem(requests_list_key, request)
             retrieval_logger.debug(f"Request: {request} has been removed from pending retrieveal requests")
+    redis_pool.release(redis_conn_raw)
 
 
 if __name__ == "__main__":
