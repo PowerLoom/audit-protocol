@@ -32,6 +32,7 @@ REDIS_CONN_CONF = {
     "db": settings['REDIS']['DB']
 }
 
+
 @app.on_event('startup')
 async def startup_boilerplate():
     app.redis_pool = await aioredis.create_pool(
@@ -41,34 +42,37 @@ async def startup_boilerplate():
         maxsize=100
     )
 
+
 @app.post('/')
 async def test(
         request: Request,
         response: Response,
-    ):
-    data = await request.json()
-    if 'event_name' in data.keys():
-        if data['event_name'] == 'RecordAppended':
-            rest_logger.debug(data)
+):
+    webhook_data = await request.json()
+    rest_logger.debug(webhook_data)
+    if 'event_name' in webhook_data.keys():
+        if webhook_data['event_name'] == 'RecordAppended':
+            # rest_logger.debug(data)
             redis_conn_raw = await request.app.redis_pool.acquire()
             redis_conn = aioredis.Redis(redis_conn_raw)
 
-            txHash = data['txHash']
-            timestamp = data['event_data']['timestamp']
-            payload_cid = data['event_data']['ipfsCid']
+            txHash = webhook_data['txHash']
+            timestamp = webhook_data['event_data']['timestamp']
+            payload_cid = webhook_data['event_data']['ipfsCid']
 
             key = f"TRANSACTION:{txHash}"
             data = await redis_conn.hgetall(key)
-            decoded_data = {k.decode():v.decode() for k,v in data.items()}
+            decoded_data = {k.decode(): v.decode() for k, v in data.items()}
             project_id = str(decoded_data['project_id'])
 
             dag = settings.dag_structure
             dag['Height'] = decoded_data['tentative_block_height']
             dag['prevCid'] = decoded_data['prev_dag_cid']
             dag['Data'] = {
-                        'Cid': payload_cid,
-						'Type': 'HOT_IPFS',
-                    }
+                'Cid': payload_cid,
+                'Type': 'HOT_IPFS',
+            }
+
             dag['TxHash'] = txHash
             dag['Timestamp'] = timestamp
             rest_logger.debug(dag)
@@ -76,6 +80,53 @@ async def test(
             data = ipfs_client.dag.put(io.BytesIO(json_string))
             rest_logger.debug(data)
             rest_logger.debug(data['Cid']['/'])
+
+            # cache last seen diffs
+            if dag['prevCid']:
+                prev_payload_cid = ipfs_client.dag.get(dag['prevCid']).as_json()['Data']['Cid']
+                if prev_payload_cid != payload_cid:
+                    diff_map = dict()
+                    prev_data = ipfs_client.cat(prev_payload_cid).decode('utf-8')
+                    prev_data = json.loads(prev_data)
+                    # rest_logger.info('Previous payload returned')
+                    # rest_logger.info(prev_data)
+                    payload = ipfs_client.cat(payload_cid).decode('utf-8')
+                    payload = json.loads(payload)
+                    # rest_logger.info('Current payload')
+                    # rest_logger.info(prev_data)
+                    for k, v in payload.items():
+                        if k not in prev_data.keys():
+                            prev_data[k] = None
+                        if v != prev_data[k]:
+                            diff_map[k] = {'old': prev_data[k], 'new': v}
+                    diff_data = {
+                        'cur': {
+                            'height': dag['Height'],
+                            'payloadCid': payload_cid,
+                            'dagCid': data['Cid']['/'],
+                            'timestamp': timestamp
+                        },
+                        'prev': {
+                            'height': dag['Height'],
+                            'payloadCid': prev_payload_cid,
+                            'dagCid': dag['prevCid']
+                            # this will be used to fetch the previous block timestamp from the DAG
+                        },
+                        'diff': diff_map
+                        }
+                    if settings.METADATA_CACHE == 'redis':
+                        diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
+                        await redis_conn.zadd(
+                            diff_snapshots_cache_zset,
+                            score=int(decoded_data['tentative_block_height']),
+                            member=json.dumps(diff_data)
+                        )
+                        latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
+                        await redis_conn.hset(
+                            latest_seen_snapshots_htable,
+                            project_id,
+                            json.dumps(diff_data)
+                        )
 
             if settings.METADATA_CACHE == 'skydb':
                 ipfs_table = SkydbTable(
@@ -92,11 +143,11 @@ async def test(
                     score=int(decoded_data['tentative_block_height']),
                     member=data['Cid']['/']
                 )
-                await redis_conn.set(f'projectID:{project_id}:blockHeight', int(decoded_data['tentative_block_height']) + 1)
+                await redis_conn.set(f'projectID:{project_id}:blockHeight',
+                                     int(decoded_data['tentative_block_height']) + 1)
                 request.app.redis_pool.release(redis_conn_raw)
 
         rest_logger.debug("Latest block added succesfully onto the DAG")
 
     response.status_code = 200
     return {}
-

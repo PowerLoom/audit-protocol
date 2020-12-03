@@ -172,44 +172,6 @@ async def commit_payload(
     """ Check if the payload has changed. """
     if prev_payload_cid:
         if prev_payload_cid != snapshot['Cid']:
-            diff_map = dict()
-            prev_data = ipfs_client.cat(prev_payload_cid).decode('utf-8')
-            prev_data = json.loads(prev_data)
-            rest_logger.info('Previous payload returned | Type')
-            rest_logger.info(prev_data)
-            rest_logger.info(type(prev_data))
-            for k, v in payload.items():
-                if k not in prev_data.keys():
-                    prev_data[k] = None
-                if v != prev_data[k]:
-                    diff_map[k] = {'old': prev_data[k], 'new': v}
-            diff_data = {
-                'cur': {
-                    'height': block_height,
-                    'payloadCid': snapshot_cid,
-                    'timestamp': int(time.time())
-                    # no DAG cid here since it will be constructed in a separate service
-                },
-                'prev': {
-                    'height': block_height - 1,
-                    'payloadCid': prev_payload_cid,
-                    'dagCid': prev_dag_cid  # this will be used to fetch the previous block timestamp from the DAG
-                },
-                'diff': diff_map
-            }
-            if settings.METADATA_CACHE == 'redis':
-                diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
-                await redis_conn.zadd(
-                    diff_snapshots_cache_zset,
-                    score=block_height,
-                    member=json.dumps(diff_data)
-                )
-                latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
-                await redis_conn.hset(
-                    latest_seen_snapshots_htable,
-                    project_id,
-                    json.dumps(diff_data)
-                )
             payload_changed = True
     rest_logger.debug(snapshot)
 
