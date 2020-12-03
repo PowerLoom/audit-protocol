@@ -1,7 +1,7 @@
 {
 	"info": {
-		"_postman_id": "d3520dff-2551-4c60-a18d-b5684e8cb817",
-		"name": "Powerloom New Architecture",
+		"_postman_id": "874d2e6b-8eb0-44e8-b6c8-cf670da9b887",
+		"name": "Powerloom New Architecture Copy",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -12,7 +12,7 @@
 				"header": [],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"payload\":\"Payload A\",\n    \"projectId\": 20\n\n}\n"
+					"raw": "{\n    \"payload\":\"Dataassadasdcccadadsddasdsd 2sdadasdasdaffsfsf Data 1 Data 1 Data 1 Data 1 Data 1 Data 1 Data 1chxjkchajxcakdcka Data 1 Data 1 Datqweqweqwea 1 Data 1 Datadasasdasddadsadasa 1 Data 1 Data 1 Data 1 Data 1 Data 1 Data 1 Data 1 Datajasdjshdjasjdjaskd 1 \",\n    \"projectId\": 2\n\n}\n"
 				},
 				"url": {
 					"raw": "http://localhost:9000/commit_payload",
@@ -80,14 +80,14 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/21/payload/1",
+					"raw": "http://localhost:9000/3/payload/1",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"21",
+						"3",
 						"payload",
 						"1"
 					]
@@ -153,7 +153,7 @@
 					"port": "9000",
 					"path": [
 						"2",
-						"payload",
+						"payloads",
 						"height"
 					]
 				}
@@ -210,16 +210,16 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/21/payload/2/data",
+					"raw": "http://localhost:9000/3/payload/1/data",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"21",
+						"3",
 						"payload",
-						"2",
+						"1",
 						"data"
 					]
 				}
@@ -277,14 +277,14 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/20/payloads?from_height=0&to_height=0&data=true",
+					"raw": "http://localhost:9000/2/payloads?from_height=0&to_height=4&data=true",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"20",
+						"2",
 						"payloads"
 					],
 					"query": [
@@ -294,7 +294,7 @@
 						},
 						{
 							"key": "to_height",
-							"value": "0"
+							"value": "4"
 						},
 						{
 							"key": "data",
@@ -361,6 +361,26 @@
 					"body": "{\n    \"bafyreihbescb4iwyj4lbi6x6fkhkr4hzwpxeycbt4vonofqmo7g76kecre\": {\n        \"Data\": {\n            \"Cid\": \"QmXGrrs1TQdc12xpohLxU1RDVaEorg1t2nVYdsFP1WaUdz\",\n            \"Size\": \"17\",\n            \"Type\": \"HOT_IPFS\",\n            \"payload\": \"Payload A\"\n        },\n        \"Height\": 0,\n        \"Timestamp\": \"20201121210315039101\",\n        \"TxHash\": \"0x3997bd12e1ee305856df281aad39afe0a7d6021055a3c86f4c8bcba724c31eb6\",\n        \"prevCid\": \"\"\n    }\n}"
 				}
 			]
+		},
+		{
+			"name": "Get request status",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/requests/0b7a2448-9ad6-4652-9c3e-9a4eb115bbe5",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"requests",
+						"0b7a2448-9ad6-4652-9c3e-9a4eb115bbe5"
+					]
+				}
+			},
+			"response": []
 		}
 	],
 	"protocolProfileBehavior": {}

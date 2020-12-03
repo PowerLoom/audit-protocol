@@ -128,7 +128,7 @@ async def get_project_token(request: Request):
         return token
 
 
-@app.post('/requests/{requestId:str}')
+@app.get('/requests/{requestId:str}')
 async def request_status(
     request: Request,
     response: Response,
