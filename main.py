@@ -265,6 +265,7 @@ async def get_latest_project_updates(
         redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.hgetall('auditprotocol:lastSeenSnapshots')
         if len(h) < 1:
+            request.app.redis_pool.release(redis_conn_raw)
             return {}
         for i, d in h.items():
             project_id = i.decode('utf-8')
@@ -466,6 +467,7 @@ async def payload_height(request: Request, response: Response, projectId: str):
             max_block_height = 0
         else:
             max_block_height = int(h.decode('utf-8')) - 1
+        rest_logger.debug(max_block_height)
         request.app.redis_pool.release(redis_conn_raw)
 
     return {"height": max_block_height}
@@ -495,11 +497,13 @@ async def get_block(request: Request,
         redis_conn = aioredis.Redis(redis_conn_raw)
         max_block_height = await redis_conn.get(f"projectID:{projectId}:blockHeight")
         if not max_block_height:
+            request.app.redis_pool.release(redis_conn_raw)
             response.status_code = 400
             return {'error': 'Block does not exist at this block height'}
         max_block_height = int(max_block_height.decode('utf-8'))-1
         rest_logger.debug(max_block_height)
         if block_height > max_block_height:
+            request.app.redis_pool.release(redis_conn_raw)
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 

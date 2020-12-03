@@ -145,15 +145,15 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/2/payload/height",
+					"raw": "http://localhost:9000/gitcoin_grant_40/payloads/height",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"2",
-						"payload",
+						"gitcoin_grant_40",
+						"payloads",
 						"height"
 					]
 				}
