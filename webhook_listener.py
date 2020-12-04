@@ -70,7 +70,7 @@ async def create_dag(
             data = await redis_conn.hgetall(key)
             decoded_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in data.items()}
             rest_logger.debug(decoded_data)
-            project_id = int(decoded_data['project_id'])
+            project_id = str(decoded_data['project_id'])
 
             """ Get the filecoin token for the project Id """
             KEY = f"filecoinToken:{project_id}"

@@ -68,4 +68,7 @@ async def push_to_filecoin():
 
 if __name__ == "__main__":
     asyncio.run(redis_boilerplate())
-    asyncio.run(push_to_filecoin())
+    for i in range(200):
+        asyncio.run(commit_to_audit_protocol())
+        test_logger.debug(f"{i}: Sleeping for 20 secs")
+        time.sleep(20)

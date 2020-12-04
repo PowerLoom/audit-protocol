@@ -277,7 +277,7 @@ async def commit_payload(
     )
 
     """ Add the job id to redis. """
-    KEY = f"JobStatus:{snapshot_cid}"
+    KEY = f"jobStatus:{snapshot_cid}"
     _ = await redis_conn.set(key=KEY, value=job.jobId)
     rest_logger.debug("Pushed the payload to filecoin.")
     rest_logger.debug("Job Id: "+job.jobId)
@@ -419,7 +419,7 @@ async def get_payloads(
 
         return {'requestId': request_id}
 
-    blocks = list()
+    blocks = list() # Will hold the list of blocks in range from_height, to_height
     current_height = to_height
     prev_dag_cid = ""
     prev_payload_cid = None
@@ -450,47 +450,45 @@ async def get_payloads(
         formatted_block.update({k: v for k, v in block.items()})
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
         if data:
-            if current_height < max_block_height - settings.max_ipfs_blocks :
-                payload_data = powgate_client.data.get(block['Data']['Cid'],token=user_token).decode('utf-8')
-                formatted_block['Data']['payload'] = payload_data
-            else:
-                formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+            formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+        # Get the diff_map between the current and previous snapshot
         if prev_payload_cid:
-            if prev_payload_cid != block['Data']['Cid']:
+            if prev_payload_cid != block['Data']['Cid']: # If the cid of previous snapshot does not match with the current snapshot
                 blocks[idx-1]['payloadChanged'] = True
                 diff_key = f"CidDiff:{prev_payload_cid}:{block['Data']['Cid']}"
                 diff_b = await redis_conn.get(diff_key)
                 diff_map = dict()
-                if not diff_b:
+                if not diff_b: 
                     # diff not cached already
                     rest_logger.debug('Diff not cached | New CID | Old CID')
                     rest_logger.debug(blocks[idx-1]['Data']['Cid'])
                     rest_logger.debug(block['Data']['Cid'])
+
+                    """ If the payload is not yet retrieved, then get if from ipfs """
                     if 'payload' in formatted_block['Data'].keys():
                         prev_data = formatted_block['Data']['payload']
                     else:
-                        if current_height < max_block_height - settings.max_ipfs_blocks:
-                            prev_data = powgate_client.data.get(block['Data']['Cid'], token=user_token).decode(
-                                'utf-8')
-                        else:
-                            prev_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+                        prev_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
                     rest_logger.debug("Got the payload data: ")
                     rest_logger.debug(prev_data)
                     prev_data = json.loads(prev_data)
+
                     if 'payload' in blocks[idx-1]['Data'].keys():
                         cur_data = blocks[idx-1]['Data']['payload']
                     else:
                         cur_data = ipfs_client.cat(blocks[idx-1]['Data']['Cid']).decode('utf-8')
                     cur_data = json.loads(cur_data)
+
                     # calculate diff
                     for k, v in cur_data.items():
                         if k not in prev_data.keys():
                             rest_logger.info('Ignoring key in older payload as it is not present')
                             rest_logger.info(k)
                             blocks[idx - 1]['payloadChanged'] = False
-                            break
+                            continue
                         if v != prev_data[k]:
                             diff_map[k] = {'old': prev_data[k], 'new': v}
+
                     if len(diff_map):
                         rest_logger.debug('Found diff in first time calculation')
                         rest_logger.debug(diff_map)
@@ -503,7 +501,7 @@ async def get_payloads(
                     rest_logger.debug(block['Data']['Cid'])
                     rest_logger.debug(diff_map)
                 blocks[idx-1]['diff'] = diff_map
-            else:
+            else: # If the cid of current snapshot is the same as that of the previous snapshot
                 blocks[idx-1]['payloadChanged'] = False
         prev_payload_cid = block['Data']['Cid']
         blocks.append(formatted_block)
