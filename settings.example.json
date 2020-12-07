@@ -1,6 +1,10 @@
 {
 	"host": "127.0.0.1",
 	"port": 9000,
+	"webhook_listener": {
+		"host": "127.0.0.1",
+		"port": 9002
+	},
 	"snapshot_interval": 4,
 	"metadata_cache": "redis",
 	"dag_table_name": "DAG_CID",

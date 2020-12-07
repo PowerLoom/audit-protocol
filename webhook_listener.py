@@ -39,7 +39,7 @@ async def startup_boilerplate():
         address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
         db=REDIS_CONN_CONF['db'],
         password=REDIS_CONN_CONF['password'],
-        maxsize=100
+        maxsize=50
     )
 
 
@@ -63,6 +63,7 @@ async def test(
             key = f"TRANSACTION:{txHash}"
             data = await redis_conn.hgetall(key)
             if len(data.keys()) < 1:
+                request.app.redis_pool.release(redis_conn_raw)
                 rest_logger.error('Did not find transient project and DAG information for following transaction and event data')
                 rest_logger.error(webhook_data)
                 return {}  # do mot process further
@@ -73,13 +74,14 @@ async def test(
                 dag['Height'] = decoded_data['tentative_block_height']
                 dag['prevCid'] = decoded_data['prev_dag_cid']
             except KeyError as e:
+                request.app.redis_pool.release(redis_conn_raw)
                 rest_logger.error(e, exc_info=True)
                 rest_logger.error(
                     'Incorrect transient project and DAG information. Transaction and event data follows')
                 rest_logger.error(decoded_data)
                 rest_logger.error(webhook_data)
                 return {}  # do mot process further
-            
+
             dag['Data'] = {
                 'Cid': payload_cid,
                 'Type': 'HOT_IPFS',
