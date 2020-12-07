@@ -537,6 +537,75 @@
 					"body": "{\n    \"bafyreihbescb4iwyj4lbi6x6fkhkr4hzwpxeycbt4vonofqmo7g76kecre\": {\n        \"Data\": {\n            \"Cid\": \"QmXGrrs1TQdc12xpohLxU1RDVaEorg1t2nVYdsFP1WaUdz\",\n            \"Size\": \"17\",\n            \"Type\": \"HOT_IPFS\",\n            \"payload\": \"Payload A\"\n        },\n        \"Height\": 0,\n        \"Timestamp\": \"20201121210315039101\",\n        \"TxHash\": \"0x3997bd12e1ee305856df281aad39afe0a7d6021055a3c86f4c8bcba724c31eb6\",\n        \"prevCid\": \"\"\n    }\n}"
 				}
 			]
+		},
+		{
+			"name": "Get count of diffs captured against a project ID",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://127.0.0.1:9000/gitcoin_grant_40/payloads/cachedDiffs/count",
+					"protocol": "http",
+					"host": [
+						"127",
+						"0",
+						"0",
+						"1"
+					],
+					"port": "9000",
+					"path": [
+						"gitcoin_grant_40",
+						"payloads",
+						"cachedDiffs",
+						"count"
+					]
+				}
+			},
+			"response": [
+				{
+					"name": "Height of projectId",
+					"originalRequest": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:9000/2/payload/height",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "9000",
+							"path": [
+								"2",
+								"payload",
+								"height"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "date",
+							"value": "Mon, 23 Nov 2020 06:35:10 GMT"
+						},
+						{
+							"key": "server",
+							"value": "uvicorn"
+						},
+						{
+							"key": "content-length",
+							"value": "13"
+						},
+						{
+							"key": "content-type",
+							"value": "application/json"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"height\": -1\n}"
+				}
+			]
 		}
 	],
 	"protocolProfileBehavior": {}
