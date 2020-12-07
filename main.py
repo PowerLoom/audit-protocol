@@ -17,6 +17,7 @@ import ipfshttpclient
 from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
+import requests
 
 print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect()
@@ -128,6 +129,121 @@ async def get_project_token(request: Request):
         return token
 
 
+async def retrieve_block_data(block_dag, redis_conn, data_flag=0):
+    """
+        A function which will get dag block from ipfs and also increment its hits
+        Args:
+            block_dag:str - The cid of the dag block that needs to be retrieved
+            redis_conn - The redis_conn which will be used to access redis
+            data_flag:int - This is a flag which can take three values:
+                0 - Return only the dag block and not its payload data
+                1 - Return the dag block along with its payload data
+                2 - Return only the payload data 
+    """
+
+    assert data_flag in range(0,3), f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
+
+    """ Increment the hits of that block """
+    block_dag_hits_key = f"hitsDagBlock"
+    r = await redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag)
+    rest_logger.debug(f"Block hit for {block_dag} is now {r}")    
+
+    """ Retrieve the DAG block from ipfs """
+    block = ipfs_client.dag.get(block_dag).as_json()
+    if data_flag == 0:
+        return block
+
+    payload = block['Data']
+
+    """ Get the payload Data """
+    payload_data = await retrieve_payload_data(block['Data']['Cid'], redis_conn)
+    payload['payload'] = payload_data
+
+    if data_flag == 1:
+        block['Data'] = payload
+        return block
+
+    if data_flag == 2:
+        return payload
+
+
+async def retrieve_payload_data(payload_cid, redis_conn):
+    """
+        - Given a payload_cid, get its data from ipfs, at the same time increase its hit
+    """
+    payload_key = f"hitsPayloadData"
+    r = await redis_conn.zincrby(payload_key, 1.0, payload_cid)
+    rest_logger.debug(f"Payload Data hit for {payload_cid} is now {r}")
+
+    """ Get the payload Data from ipfs """
+    payload_data = ipfs_client.cat(payload_cid).decode('utf-8')
+    return payload_data
+
+
+async def get_max_block_height(project_id:str, redis_conn):
+    """
+        - Given the projectId and redis_conn, get the prev_dag_cid, block height and
+        tetative block height of that projectId from redis
+    """
+    rest_logger.debug("Fetching Data from Redis")
+
+    """ Fetch the cid of latest DAG block along with the latest block height. """
+    last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
+    r = await redis_conn.get(last_known_dag_cid_key)
+    prev_dag_cid = None
+    block_height = None
+    last_tentative_block_height = None
+    last_tentative_block_height_key = f'projectID:{project_id}:tentativeBlockHeight'
+    if r:
+        """ Retrieve the height of the latest block only if the DAG projectId is not empty """
+        prev_dag_cid = r.decode('utf-8')
+        last_block_height_key = f'projectID:{project_id}:blockHeight'
+        r2 = await redis_conn.get(last_block_height_key)
+        if r2:
+            block_height = int(r2)
+    else:
+        prev_dag_cid = ""
+    out = await redis_conn.get(last_tentative_block_height_key)
+    rest_logger.debug(f"From Redis Last tentative block height: {out}")
+    if out:
+        last_tentative_block_height = int(out)
+    else:
+        last_tentative_block_height = 0
+    return (prev_dag_cid, block_height, last_tentative_block_height)
+
+
+async def create_retrieval_request(project_id:str, from_height:int, to_height:int, data:int, redis_conn):
+    request_id = str(uuid4())
+
+    """ Setup the retrievalRequestInfo Hashset """
+    key = f"retrievalRequestInfo:{request_id}"
+    _ = await redis_conn.hset(
+        key=key,
+        field='projectId',
+        value=project_id
+    )
+    _ = await redis_conn.hset(
+        key=key,
+        field='to_height',
+        value=to_height
+    )
+    _ = await redis_conn.hset(
+        key=key,
+        field='from_height',
+        value=from_height
+    )
+    _ = await redis_conn.hset(
+        key=key,
+        field='data',
+        value=data
+    )
+    requests_list_key = f"pendingRetrievalRequests"
+    _ = await redis_conn.sadd(requests_list_key, request_id)
+
+    return request_id
+
+
+
 @app.get('/requests/{requestId:str}')
 async def request_status(
     request: Request,
@@ -176,6 +292,39 @@ async def request_status(
     return data
 
 
+async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id, redis_conn, contract):
+
+    """
+        - Create a unqiue transaction_id associated with this transaction, 
+        and add it to the set of pending transactions
+    """
+    try:
+        tx_hash_obj = contract.commitRecord(**dict(
+            payloadCommitId=payload_commit_id,
+            snapshotCid=snapshot_cid,
+            apiKeyHash=token_hash,
+            projectId=project_id,
+            tentativeBlockHeight=last_tentative_block_height,
+        ))
+    except requests.exceptions.HTTPError as errh:
+        rest_logger.debug("Http Error:")
+        rest_logger.debug(errh)
+    except requests.exceptions.ConnectionError as errc:
+        rest_logger.debug("Connection Error: ")
+        rest_logger.debug(errc)
+    except requests.exceptions.Timeout as errt:
+        rest_logger.debug("Timeout Error: ")
+        rest_logger.debug(errt)
+    except requests.exceptions.RequestException as errr:
+        rest_logger.debug("Request Exception")
+        rest_logger.debug(errr)
+    else:
+        rest_logger.debug(f"The transaction {payload_commit_id} went through successfully")
+        rest_logger.debug(tx_hash_obj)
+
+
+    pendingTransactionsKey = f"projectId:{project_id}:pendingBlockCreation"
+    _ = await redis_conn.sadd(pendingTransactionsKey, payload_commit_id)
 
 @app.post('/commit_payload')
 async def commit_payload(
@@ -183,11 +332,18 @@ async def commit_payload(
         response: Response,
         token: str = Depends(get_project_token)
 ):
-    """"
-        - This endpoint accepts the payload and adds it to ipfs.
-        - The cid retrieved after adding to ipfs is committed to a Smart Contract and once the transaction goes
-        through a webhook listener will catch that event and update the DAG with the latest block along with the timestamp
-        of when the cid of the payload was committed.
+    """ 
+        This endpoint handles the following cases
+        - If there are no pending dag block creations, then commit the payload
+        and return the snapshot-cid, tentative block height and the payload changed flag
+
+        - If there are any pending dag block creations that are left, then Queue up 
+        the payload and let a background service handle it.
+        
+        - If there are more than `N` no.of payloads pending, then trigger a mechanism to block
+        further calls to this endpoint until all the pending payloads are committed. This
+        number is specified in the settings.json file as 'max_pending_payload_commits'
+
     """
     req_args = await request.json()
     try:
@@ -221,23 +377,14 @@ async def commit_payload(
         block_height = ipfs_table.index
 
     elif settings.METADATA_CACHE == 'redis':
-        rest_logger.debug("Fetching Data from Redis")
-        """ Fetch the cid of latest DAG block along with the latest block height. """
+        """ 
+        Retrieve the block height, last dag cid and tentative block height 
+        for the project_id
+        """
         redis_conn_raw = await request.app.redis_pool.acquire()
         redis_conn = aioredis.Redis(redis_conn_raw)
-        last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
-        r = await redis_conn.get(last_known_dag_cid_key)
-        if r:
-            """ Retrieve the height of the latest block only if the DAG projectId is not empty """
-            prev_dag_cid = r.decode('utf-8')
-            last_block_height_key = f'projectID:{project_id}:blockHeight'
-            r2 = await redis_conn.get(last_block_height_key)
-            if r2:
-                block_height = int(r2)
-        out = await redis_conn.get(last_tentative_block_height_key)
-        rest_logger.debug(f"From Redis Last tentative block height: {out}")
-        if out:
-            last_tentative_block_height = int(out)
+        prev_dag_cid, block_height, last_tentative_block_height = \
+            await get_max_block_height(project_id, redis_conn)
         
 
     rest_logger.debug(f"Got last tentative block height: {last_tentative_block_height}")
@@ -252,8 +399,6 @@ async def commit_payload(
 
     rest_logger.debug('Previous IPLD CID in the DAG: ')
     rest_logger.debug(prev_dag_cid)
-    if not last_tentative_block_height:
-        last_tentative_block_height = 0
 
     """ The DAG will be created in the Webhook listener script """
     # dag = settings.dag_structure.to_dict()
@@ -264,6 +409,7 @@ async def commit_payload(
     payload = payload.encode('utf-8')
     powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
     stage_res = powgate_client.data.stage_bytes(payload, token=token)
+
     """ Since the same data may come back for snapshotting, I have added override=True"""
     job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
     snapshot_cid = stage_res.cid
@@ -282,58 +428,71 @@ async def commit_payload(
     rest_logger.debug("Pushed the payload to filecoin.")
     rest_logger.debug("Job Id: "+job.jobId)
 
+    """ Create a unique identifier for this payload """
+    payload_data = {
+        'tentativeBlockHeight': last_tentative_block_height,
+        'payloadCid': snapshot_cid,
+        'projectId': project_id
+    }
+    payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)).hex()
+    rest_logger.debug(f"Created the unique payload commit id: {payload_commit_id}")
 
-    #""" Add the Payload to IPFS """
-    #if type(payload) is dict:
-    #    snapshot_cid = ipfs_client.add_json(payload)
-    #else:
-    #    try:
-    #        snapshot_cid = ipfs_client.add_str(str(payload))
-    #    except:
-    #        response.status_code = 400
-    #        return {'success': False, 'error': 'PayloadNotSuppported'}
-    rest_logger.debug('Payload CID')
-    rest_logger.debug(snapshot_cid)
-    snapshot = dict()
-    snapshot['Cid'] = snapshot_cid
-    snapshot['Type'] = "COLD_FILECOIN"
-    """ Check if the payload has changed. """
-    if prev_payload_cid:
-        if prev_payload_cid != snapshot['Cid']:
-            payload_changed = True
-    rest_logger.debug(snapshot)
 
-    ipfs_cid = snapshot['Cid']
-    token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-    tx_hash_obj = request.app.contract.commitRecord(**dict(
-        ipfsCid=ipfs_cid,
-        apiKeyHash=token_hash,
-    ))
+    """ Check if there are any pending Block creations left or any pending payloads left to commit """
+    pending_block_creations_key = f"projectId:{project_id}:pendingBlockCreations"
+    pending_payload_commits_key = f"pendingPayloadCommits"
+    pending_block_creations = await redis_conn.smembers(pending_block_creations_key)
+    pending_payload_commits = await redis_conn.lrange(pending_payload_commits_key, 0, -1)
+    if (len(pending_block_creations) > 0) or (len(pending_payload_commits) > 0) :
+        rest_logger.debug("There are pending block creations or pending payloads to commit...")
+        rest_logger.debug("Queuing up this payload to be processed once all blocks are created or all the pending payloads are committed.")
 
-    if settings.METADATA_CACHE == 'redis':
-        """ Put this transaction hash on redis so that webhook listener can access it when listening to events"""
-        hash_key = f"TRANSACTION:{tx_hash_obj[0]['txHash']}"
-        hash_field = f"project_id"
-        r = await redis_conn.hset(
-                key=hash_key,
-                field=hash_field,
-                value=f"{project_id}"
-            )
-        hash_field = f"tentative_block_height"
-        r = await redis_conn.hset(
-                key=hash_key,
-                field=hash_field,
-                value=f"{last_tentative_block_height}"
-            )
+        """ Create the Hash table for Payload """
+        payload_commit_key = f"payloadCommit:{payload_commit_id}"
+        out = await redis_conn.hset(
+            payload_commit_key,
+            "payloadCid",
+            snapshot_cid
+        )
 
-        hash_field = f"prev_dag_cid"
-        r = await redis_conn.hset(
-                key=hash_key,
-                field=hash_field,
-                value=prev_dag_cid,
-            )
-        _ = await redis_conn.set(last_tentative_block_height_key, last_tentative_block_height+1)
-        request.app.redis_pool.release(redis_conn_raw)
+        out = await redis_conn.hset(
+            payload_commit_key,
+            "projectId",
+            project_id
+        )
+
+        out = await redis_conn.hset(
+            payload_commit_key,
+            "tentative_block_height",
+            last_tentative_block_height
+        )
+
+        """ Add this payload commit for pending payload commits list """
+        out = await redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
+
+
+    else:
+        """ Since there are no pending payloads or block creations, commit this payload directly """
+        rest_logger.debug('Payload CID')
+        rest_logger.debug(snapshot_cid)
+        snapshot = dict()
+        snapshot['Cid'] = snapshot_cid
+        snapshot['Type'] = "COLD_FILECOIN"
+        """ Check if the payload has changed. """
+
+        token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+        _ = await make_transaction(
+                                snapshot_cid=snapshot_cid, 
+                                token_hash=token_hash, 
+                                payload_commit_id=payload_commit_id,
+                                last_tentative_block_height=last_tentative_block_height,
+                                project_id=project_id,
+                                redis_conn=redis_conn,
+                                contract=request.app.contract
+                    )
+
+    _ = await redis_conn.set(last_tentative_block_height_key, last_tentative_block_height+1)
+    request.app.redis_pool.release(redis_conn_raw)
     
     return {
         'Cid': snapshot['Cid'],
@@ -388,33 +547,13 @@ async def get_payloads(
 
     if from_height < max_block_height - settings.max_ipfs_blocks:
         """ Create a request Id and start a retrieval request """
-        request_id = str(uuid4())
-
-        """ Setup the retrievalRequestInfo Hashset """
-        key = f"retrievalRequestInfo:{request_id}"
-        _ = await redis_conn.hset(
-            key=key,
-            field='projectId',
-            value=projectId
-        )
-        _ = await redis_conn.hset(
-            key=key,
-            field='to_height',
-            value=to_height
-        )
-        _ = await redis_conn.hset(
-            key=key,
-            field='from_height',
-            value=from_height
-        )
         _data = '1' if data else '0'
-        _ = await redis_conn.hset(
-            key=key,
-            field='data',
-            value=_data
-        )
-        requests_list_key = f"pendingRetrievalRequests"
-        _ = await redis_conn.sadd(requests_list_key, request_id)
+        request_id = await create_retrieval_request(
+                                projectId, 
+                                from_height, 
+                                to_height, 
+                                _data, 
+                                redis_conn)
         request.app.redis_pool.release(redis_conn_raw)
 
         return {'requestId': request_id}
@@ -442,15 +581,16 @@ async def get_payloads(
                 else:
                     return {'error': 'NoRecordsFound'}
         block = None
-        block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        #block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        data_flag = 1 if data else 0
+        block = await retrieve_block_data(prev_dag_cid, redis_conn, data_flag=data_flag)
         rest_logger.debug("Block Retrieved: ")
         rest_logger.debug(block)
         formatted_block = dict()
         formatted_block['dagCid'] = prev_dag_cid
         formatted_block.update({k: v for k, v in block.items()})
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
-        if data:
-            formatted_block['Data']['payload'] = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+
         # Get the diff_map between the current and previous snapshot
         if prev_payload_cid:
             if prev_payload_cid != block['Data']['Cid']: # If the cid of previous snapshot does not match with the current snapshot
@@ -468,7 +608,7 @@ async def get_payloads(
                     if 'payload' in formatted_block['Data'].keys():
                         prev_data = formatted_block['Data']['payload']
                     else:
-                        prev_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
+                        prev_data = await retrieve_payload_data(block['Data']['Cid'], redis_conn)
                     rest_logger.debug("Got the payload data: ")
                     rest_logger.debug(prev_data)
                     prev_data = json.loads(prev_data)
@@ -476,7 +616,7 @@ async def get_payloads(
                     if 'payload' in blocks[idx-1]['Data'].keys():
                         cur_data = blocks[idx-1]['Data']['payload']
                     else:
-                        cur_data = ipfs_client.cat(blocks[idx-1]['Data']['Cid']).decode('utf-8')
+                        cur_data = await retrieve_payload_data(block['Data']['Cid'], redis_conn)
                     cur_data = json.loads(cur_data)
 
                     # calculate diff
@@ -540,6 +680,7 @@ async def get_block(request: Request,
                     projectId: str,
                     block_height: int,
                     ):
+    """ This endpoint is responsible for retrieving only the dag block and not the payload """
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
@@ -569,41 +710,21 @@ async def get_block(request: Request,
 
         if block_height < max_block_height - settings.max_ipfs_blocks:
             rest_logger.debug(f"Block at {block_height} is being fetched")
-            request_id = str(uuid4())
 
             from_height = block_height
             to_height = block_height
-            data = False
-            """ Setup the retrievalRequestInfo Hashset """
-            key = f"retrievalRequestInfo:{request_id}"
-            _ = await redis_conn.hset(
-                key=key,
-                field='projectId',
-                value=projectId
-            )
-            _ = await redis_conn.hset(
-                key=key,
-                field='to_height',
-                value=to_height
-            )
-            _ = await redis_conn.hset(
-                key=key,
-                field='from_height',
-                value=from_height
-            )
-            _data = '1' if data else '0'
-            _ = await redis_conn.hset(
-                key=key,
-                field='data',
-                value=_data
-            )
-            requests_list_key = f"pendingRetrievalRequests"
-            _ = await redis_conn.sadd(requests_list_key, request_id)
+            _data = 0 # This means, fetch only the DAG Block
+            request_id = await create_retrieval_request(
+                                    projectId, 
+                                    from_height, 
+                                    to_height, 
+                                    _data, 
+                                    redis_conn)
+            request.app.redis_pool.release(redis_conn_raw)
 
             return {'requestId': request_id}
 
-
-
+        """ Access the block at block_height """
         project_cids_key_zset = f'projectID:{projectId}:Cids'
         r = await redis_conn.zrangebyscore(
             key=project_cids_key_zset,
@@ -611,29 +732,13 @@ async def get_block(request: Request,
             max=block_height,
             withscores=False
         )
+        
         prev_dag_cid = r[0].decode('utf-8')
-        if block_height < max_block_height - settings.max_ipfs_blocks:
-            rest_logger.debug("Fetching data from Filecoin....")
-            """ Intitalized the powergate Client """
-            user_token = None
-            powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
-            user_token = await redis_conn.get(f'filecoinToken:{projectId}')
-            user_token = user_token.decode('utf-8')
-            """ Get the blockStagedCid for that block"""
-            KEY = f"blockFilecoinStorage:{projectId}:{block_height}"
-            staged_cid = await redis_conn.hget(
-                key=KEY,
-                field="blockStageCid"
-            )
-            staged_cid = staged_cid.decode('utf-8')
-            data = powgate_client.data.get(staged_cid, token=user_token)
-            data = data.decode('utf-8')
-            block = json.loads(data)
-        else:
-            block = ipfs_client.dag.get(prev_dag_cid).as_json()
+
+        block = await retrieve_block_data(prev_dag_cid, redis_conn, data_flag=0)
+
         request.app.redis_pool.release(redis_conn_raw)
         return {prev_dag_cid: block}
-
 
 @app.get('/{projectId:str}/payload/{block_height:int}/data')
 async def get_block_data(
@@ -668,36 +773,17 @@ async def get_block_data(
 
         if block_height < max_block_height - settings.max_ipfs_blocks:
             rest_logger.debug(f"Block at {block_height} is being fetched")
-            request_id = str(uuid4())
-
             from_height = block_height
             to_height = block_height
-            data = True
-            """ Setup the retrievalRequestInfo Hashset """
-            key = f"retrievalRequestInfo:{request_id}"
-            _ = await redis_conn.hset(
-                key=key,
-                field='projectId',
-                value=projectId
+            _data = 2 # Get data only and not the block itself
+            request_id = create_retrieval_request(
+                projectId,
+                from_height,
+                to_height,
+                _data,
+                redis_conn
             )
-            _ = await redis_conn.hset(
-                key=key,
-                field='to_height',
-                value=to_height
-            )
-            _ = await redis_conn.hset(
-                key=key,
-                field='from_height',
-                value=from_height
-            )
-            _data = '2' # Get data only and not the block itself
-            _ = await redis_conn.hset(
-                key=key,
-                field='data',
-                value=_data
-            )
-            requests_list_key = f"pendingRetrievalRequests"
-            _ = await redis_conn.sadd(requests_list_key, request_id)
+            request.app.redis_pool.release(redis_conn_raw)
 
             return {'requestId': request_id}
 
@@ -709,31 +795,12 @@ async def get_block_data(
             withscores=False
         )
         prev_dag_cid = r[0].decode('utf-8')
-        if block_height < max_block_height - settings.max_ipfs_blocks:
-            """ Intitalized the powergate Client """
-            user_token = None
-            powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
-            user_token = await redis_conn.get(f'filecoinToken:{projectId}')
-            user_token = user_token.decode('utf-8')
-            """ Get the blockStagedCid for that block"""
-            KEY = f"blockFilecoinStorage:{projectId}:{block_height}"
-            staged_cid = await redis_conn.hget(
-                key=KEY,
-                field="blockStageCid"
-            )
-            staged_cid = staged_cid.decode('utf-8')
-            data = powgate_client.data.get(staged_cid, token=user_token)
-            data = data.decode('utf-8')
-            block = json.loads(data)
-        else:
-            block = ipfs_client.dag.get(prev_dag_cid).as_json()
-        payload = block['Data']
-        if block_height < max_block_height - settings.max_ipfs_blocks:
-            payload_data = powgate_client.data.get(block['Data']['Cid'], token=user_token).decode(
-                'utf-8')
-        else:
-            payload_data = ipfs_client.cat(block['Data']['Cid']).decode('utf-8')
-        payload['payload'] = payload_data
+
+        payload = await retrieve_block_data(prev_dag_cid, redis_conn, 2)
+
+        """ Release redis pool """
         request.app.redis_pool.release(redis_conn_raw)
+
+        """ Return the payload data """
         return {prev_dag_cid: payload}
 

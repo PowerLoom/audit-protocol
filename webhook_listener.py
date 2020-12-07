@@ -44,16 +44,67 @@ async def startup_boilerplate():
         maxsize=5
     )
 
+async def save_event_data(event_data:dict, redis_conn):
+    """
+        - Given event_data, save the txHash, timestamp, projectId, snapshotCid, tentativeBlockHeight
+        onto a redis HashTable with key: eventData:{payloadCommitId}
+        - And then add the payload_commit_id to a zset with key: projectId:{projectId}:pendingBlocks
+        with score being the tentativeBlockHeight
+    """
+
+    event_data_key = f"eventData:{event_data['event_data']['payloadCommitId']}"
+
+    r = await redis_conn.hset(
+        key=event_data_key,
+        field='txHash',
+        value=event_data['txHash'],
+    )
+
+    r = await redis_conn.hset(
+        key=event_data_key,
+        field='projectId',
+        value=event_data['event_data']['projectId'],
+    )
+    
+    r = await redis_conn.hset(
+        key=event_data_key,
+        field='timestamp',
+        value=event_data['event_data']['timestamp'],
+    )
+
+    r = await redis_conn.hset(
+        key=event_data_key,
+        field='snapshotCid',
+        value=event_data['event_data']['snapshotCid'],
+    )
+
+    r = await redis_conn.hset(
+        key=event_data_key,
+        field='tentativeBlockHeight',
+        value=event_data['event_data']['tentativeBlockHeight'],
+    )
+
+    pending_blocks_key = f"projectId:{event_data['event_data']['projectId']}:pendingBlocks"
+    _ = await redis_conn.zadd (
+            key=pending_blocks_key, 
+            member=event_data['event_data']['payload_commit_id'],
+            score=int(event_data['event_data']['tentativeBlockHeight'])
+        )
+
+    return 0
+
+async def create_dag_block(event_data:dict, redis_conn)
+
 @app.post('/')
 async def create_dag(
         request: Request,
         response: Response,
     ):
-    data = await request.json()
-    rest_logger.debug(data)
-    if 'event_name' in data.keys():
-        if data['event_name'] == 'RecordAppended':
-            rest_logger.debug(data)
+    event_data = await request.json()
+    rest_logger.debug(event_data)
+    if 'event_name' in event_data.keys():
+        if event_data['event_name'] == 'RecordAppended':
+            rest_logger.debug(event_data)
             """ Create a Redis Connection """
             if settings.METADATA_CACHE == "redis":
                 rest_logger.debug("Creating a redis connection....")
@@ -61,16 +112,22 @@ async def create_dag(
                 redis_conn = aioredis.Redis(redis_conn_raw)
 
             """ Get data from the event """
-            txHash = data['txHash']
-            timestamp = data['event_data']['timestamp']
-            payload_cid = data['event_data']['ipfsCid']
+            txHash = event_data['txHash']
+            timestamp = event_data['event_data']['timestamp']
+            payload_cid = event_data['event_data']['snapshotCid']
+            project_id = event_data['event_data']['projectId']
+            tentative_block_height = event_data['event_data']['tentativeBlockHeight']
+            payload_commit_id = event_data['event_data']['payloadCommitId']
 
-            """ Get required data from redis """
-            key = f"TRANSACTION:{txHash}"
-            data = await redis_conn.hgetall(key)
-            decoded_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in data.items()}
-            rest_logger.debug(decoded_data)
-            project_id = str(decoded_data['project_id'])
+            # Get the max block height for the project_id
+            max_block_height = await redis_conn.get(f"projectID:{project_id}:blockHeight")
+            if max_block_height:
+                max_block_height = int(max_block_height)
+            else:
+                max_block_height = 0
+
+            if tentative_block_height > max_block_height:
+                _ = await save_event_data(event_data)
 
             """ Get the filecoin token for the project Id """
             KEY = f"filecoinToken:{project_id}"
@@ -139,6 +196,10 @@ async def create_dag(
                 )
                 await redis_conn.set(f'projectID:{project_id}:blockHeight', int(decoded_data['tentative_block_height']) + 1)
                 request.app.redis_pool.release(redis_conn_raw)
+
+        if data['event_name'] == 'RecordAppended':
+            """ There is a transaction event that has been raised """
+
 
         rest_logger.debug("Latest block added succesfully onto the DAG")
 
