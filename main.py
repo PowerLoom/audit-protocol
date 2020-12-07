@@ -12,6 +12,8 @@ import aioredis
 import io
 import redis
 import time
+import requests
+import async_timeout
 from skydb import SkydbTable
 import ipfshttpclient
 from config import settings
@@ -177,33 +179,43 @@ async def commit_payload(
 
     ipfs_cid = snapshot['Cid']
     token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-    tx_hash_obj = request.app.contract.commitRecord(**dict(
-        ipfsCid=ipfs_cid,
-        apiKeyHash=token_hash,
-    ))
-
+    async with async_timeout.timeout(5) as cm:
+        try:
+            tx_hash_obj = request.app.contract.commitRecord(**dict(
+                ipfsCid=ipfs_cid,
+                apiKeyHash=token_hash,
+            ))
+        except requests.exceptions.ConnectionError:
+            tx_hash_obj = None
     if settings.METADATA_CACHE == 'redis':
-        """ Put this transaction hash on redis so that webhook listener can access it when listening to events"""
-        hash_key = f"TRANSACTION:{tx_hash_obj[0]['txHash']}"
-        hash_field = f"project_id"
-        r = await redis_conn.hset(
-                key=hash_key,
-                field=hash_field,
-                value=f"{project_id}"
-            )
-        hash_field = f"tentative_block_height"
-        r = await redis_conn.hset(
-                key=hash_key,
-                field=hash_field,
-                value=f"{block_height}"
-            )
+        if not cm.expired and tx_hash_obj:
+            """ Put this transaction hash on redis so that webhook listener can access it when listening to events"""
+            hash_key = f"TRANSACTION:{tx_hash_obj[0]['txHash']}"
+            hash_field = f"project_id"
+            r = await redis_conn.hset(
+                    key=hash_key,
+                    field=hash_field,
+                    value=f"{project_id}"
+                )
+            hash_field = f"tentative_block_height"
+            r = await redis_conn.hset(
+                    key=hash_key,
+                    field=hash_field,
+                    value=f"{block_height}"
+                )
 
-        hash_field = f"prev_dag_cid"
-        r = await redis_conn.hset(
-                key=hash_key,
-                field=hash_field,
-                value=prev_dag_cid,
-            )
+            hash_field = f"prev_dag_cid"
+            r = await redis_conn.hset(
+                    key=hash_key,
+                    field=hash_field,
+                    value=prev_dag_cid,
+                )
+        else:
+            rest_logger.error('='*80)
+            rest_logger.error('Commit Payload to timed out')
+            rest_logger.error(ipfs_cid)
+            rest_logger.error(project_id)
+            rest_logger.error('=' * 80)
         request.app.redis_pool.release(redis_conn_raw)
 
     return {
@@ -255,8 +267,8 @@ async def get_payloads_diffs(
         request: Request,
         response: Response,
         projectId: str,
-        from_height: int = Query(None),
-        to_height: int = Query(None),
+        from_height: int = Query(default=0),
+        to_height: int = Query(default=-1),
         maxCount: int = Query(default=10),
 ):
     max_block_height = 0
@@ -269,6 +281,8 @@ async def get_payloads_diffs(
         else:
             max_block_height = int(h.decode('utf-8')) - 1
 
+    if to_height == -1:
+        to_height = max_block_height
     if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
     extracted_count = 0

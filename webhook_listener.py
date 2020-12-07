@@ -62,6 +62,10 @@ async def test(
 
             key = f"TRANSACTION:{txHash}"
             data = await redis_conn.hgetall(key)
+            if len(data.keys()) < 1:
+                rest_logger.error('Did not find transient project and DAG information for following transaction and event data')
+                rest_logger.error(webhook_data)
+                return {}  # do mot process further
             decoded_data = {k.decode(): v.decode() for k, v in data.items()}
             project_id = str(decoded_data['project_id'])
 
