@@ -67,11 +67,19 @@ async def test(
                 rest_logger.error(webhook_data)
                 return {}  # do mot process further
             decoded_data = {k.decode(): v.decode() for k, v in data.items()}
-            project_id = str(decoded_data['project_id'])
-
             dag = settings.dag_structure
-            dag['Height'] = decoded_data['tentative_block_height']
-            dag['prevCid'] = decoded_data['prev_dag_cid']
+            try:
+                project_id = str(decoded_data['project_id'])
+                dag['Height'] = decoded_data['tentative_block_height']
+                dag['prevCid'] = decoded_data['prev_dag_cid']
+            except KeyError as e:
+                rest_logger.error(e, exc_info=True)
+                rest_logger.error(
+                    'Incorrect transient project and DAG information. Transaction and event data follows')
+                rest_logger.error(decoded_data)
+                rest_logger.error(webhook_data)
+                return {}  # do mot process further
+            
             dag['Data'] = {
                 'Cid': payload_cid,
                 'Type': 'HOT_IPFS',
