@@ -118,6 +118,7 @@ async def test(
                             'height': dag['Height'],
                             'payloadCid': payload_cid,
                             'dagCid': data['Cid']['/'],
+                            'txHash': txHash,
                             'timestamp': timestamp
                         },
                         'prev': {
