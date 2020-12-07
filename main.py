@@ -262,6 +262,44 @@ async def get_latest_project_updates(
     return sorted_project_diffs_snapshots[:maxCount]
 
 
+@app.get('/{projectId:str}/payloads/cachedDiffs/count')
+async def get_payloads_diff_counts(
+        request: Request,
+        response: Response,
+        projectId: str,
+        from_height: int = Query(default=0),
+        to_height: int = Query(default=-1),
+        maxCount: int = Query(default=10),
+):
+    max_block_height = 0
+    if settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
+        if not h:
+            max_block_height = 0
+        else:
+            max_block_height = int(h.decode('utf-8')) - 1
+
+    if to_height == -1:
+        to_height = max_block_height
+    if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
+        return {'error': 'Invalid Height'}
+    extracted_count = 0
+    diff_response = list()
+    if settings.METADATA_CACHE == 'redis':
+        diff_snapshots_cache_zset = f'projectID:{projectId}:diffSnapshots'
+        r = await redis_conn.zcard(diff_snapshots_cache_zset)
+        request.app.redis_pool.release(redis_conn_raw)
+        if not r:
+            return {'count': 0}
+        else:
+            try:
+                return {'count': int(r)}
+            except:
+                return {'count': None}
+
+
 @app.get('/{projectId:str}/payloads/cachedDiffs')
 async def get_payloads_diffs(
         request: Request,
