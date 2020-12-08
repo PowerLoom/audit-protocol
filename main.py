@@ -195,11 +195,14 @@ async def get_max_block_height(project_id:str, redis_conn):
     rest_logger.debug("Fetching Data from Redis")
 
     """ Fetch the cid of latest DAG block along with the latest block height. """
-    last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
-    r = await redis_conn.get(last_known_dag_cid_key)
     prev_dag_cid = None
     block_height = None
     last_tentative_block_height = None
+    last_snapshot_cid = None
+
+    last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
+    r = await redis_conn.get(last_known_dag_cid_key)
+
     last_tentative_block_height_key = f'projectID:{project_id}:tentativeBlockHeight'
     if r:
         """ Retrieve the height of the latest block only if the DAG projectId is not empty """
@@ -210,6 +213,17 @@ async def get_max_block_height(project_id:str, redis_conn):
             block_height = int(r2)
     else:
         prev_dag_cid = ""
+
+
+    last_snapshot_cid_key = f'projectID:{project_id}:lastSnapshotCid'
+    out = await redis_conn.get(last_snapshot_cid_key)
+    rest_logger.debug("The last snapshot cid was:")
+    rest_logger.debug(out)
+    if out:
+        last_snapshot_cid = out.decode('utf-8')
+    else:
+        last_snapshot_cid = ""
+
     out = await redis_conn.get(last_tentative_block_height_key)
     rest_logger.debug("From Redis Last tentative block height: ")
     rest_logger.debug(out)
@@ -217,7 +231,7 @@ async def get_max_block_height(project_id:str, redis_conn):
         last_tentative_block_height = int(out)
     else:
         last_tentative_block_height = 0
-    return (prev_dag_cid, block_height, last_tentative_block_height)
+    return (prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid)
 
 
 async def create_retrieval_request(project_id:str, from_height:int, to_height:int, data:int, redis_conn):
@@ -366,13 +380,13 @@ async def commit_payload(
     except Exception as e:
         return {'error': "Either payload or projectId"}
     prev_dag_cid = ""
-    prev_payload_cid = None
     block_height = 0
     ipfs_table = None
     redis_conn = None
     redis_conn_raw = None
     last_tentative_block_height = None
     last_tentative_block_height_key = f'projectID:{project_id}:tentativeBlockHeight'
+    last_snapshot_cid = None
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(
             table_name=f"{settings.dag_table_name}:{project_id}",
@@ -393,7 +407,7 @@ async def commit_payload(
         """
         redis_conn_raw = await request.app.redis_pool.acquire()
         redis_conn = aioredis.Redis(redis_conn_raw)
-        prev_dag_cid, block_height, last_tentative_block_height = \
+        prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid= \
             await get_max_block_height(project_id, redis_conn)
         
 
@@ -404,8 +418,6 @@ async def commit_payload(
         - If the prev_dag_cid is empty, then it means that this is the first block that
         will be added to the DAG of the projectId.
     """
-    if prev_dag_cid != "":
-        prev_payload_cid = ipfs_client.dag.get(prev_dag_cid).as_json()['data']['cid']
     payload_changed = False
 
     rest_logger.debug('Previous IPLD CID in the DAG: ')
@@ -439,7 +451,7 @@ async def commit_payload(
             except:
                 response.status_code = 400
                 return {'success': False, 'error': 'PayloadNotSuppported'}
-    if snapshot_cid != prev_payload_cid:
+    if snapshot_cid != last_snapshot_cid:
         payload_changed = True
     payload_cid_key = f"projectID:{project_id}:payloadCids"
     _ = await redis_conn.zadd(
@@ -514,6 +526,10 @@ async def commit_payload(
                     )
 
     _ = await redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
+    last_snapshot_cid_key = f'projectID:{project_id}:lastSnapshotCid'
+    rest_logger.debug("Setting the last snapshot_cid as: ")
+    rest_logger.debug(snapshot_cid)
+    _ = await redis_conn.set(last_snapshot_cid_key, snapshot_cid)
     request.app.redis_pool.release(redis_conn_raw)
     
     return {
