@@ -54,35 +54,16 @@ async def save_event_data(event_data:dict, redis_conn):
     """
 
     event_data_key = f"eventData:{event_data['event_data']['payloadCommitId']}"
-
-    r = await redis_conn.hset(
+    fields = {
+        'txHash': event_data['txHash'],
+        'projectId': event_data['event_data']['projectId'],
+        'timestamp': event_data['event_data']['timestamp'],
+        'snapshotCid': event_data['event_data']['snapshotCid'],
+        'tentativeBlockHeight': event_data['event_data']['tentativeBlockHeight']
+    }
+    _ = await redis_conn.hmset_dict(
         key=event_data_key,
-        field='txHash',
-        value=event_data['txHash'],
-    )
-
-    r = await redis_conn.hset(
-        key=event_data_key,
-        field='projectId',
-        value=event_data['event_data']['projectId'],
-    )
-    
-    r = await redis_conn.hset(
-        key=event_data_key,
-        field='timestamp',
-        value=event_data['event_data']['timestamp'],
-    )
-
-    r = await redis_conn.hset(
-        key=event_data_key,
-        field='snapshotCid',
-        value=event_data['event_data']['snapshotCid'],
-    )
-
-    r = await redis_conn.hset(
-        key=event_data_key,
-        field='tentativeBlockHeight',
-        value=event_data['event_data']['tentativeBlockHeight'],
+        **fields
     )
 
     pending_blocks_key = f"projectId:{event_data['event_data']['projectId']}:pendingBlocks"
@@ -140,25 +121,18 @@ async def create_dag_block(event_data:dict, redis_conn):
             staged_res = powgate_client.data.stage_bytes(json_string, token=token)
             job = powgate_client.config.apply(staged_res.cid, override=False, token=token)
 
-            KEY = f"blockFilecoinStorage:{project_id}:{tentative_block_height}"
-            _ = await redis_conn.hset(
-                key=KEY,
-                field="blockStageCid",
-                value=staged_res.cid,
-            )
+            block_filecoin_storage_key = f"blockFilecoinStorage:{project_id}:{tentative_block_height}"
+            fields = {
+                'blockStageCid': staged_res.cid,
+                'blockDagCid': dag_data['Cid']['/'],
+                'jobId': job.jobId
+            }
 
-            _ = await redis_conn.hset(
-                key=KEY,
-                field="blockDagCid",
-                value=dag_data['Cid']['/'],
+            _ = await redis_conn.hmset_dict(
+                key=block_filecoin_storage_key,
+                **fields
             )
-
-            _ = await redis_conn.hset(
-                key=KEY,
-                field="jobId",
-                value=job.jobId,
-            )
-
+            
             rest_logger.debug("Pushed the block data to filecoin: ")
             rest_logger.debug("Job: "+job.jobId)
 

@@ -237,27 +237,18 @@ async def get_max_block_height(project_id:str, redis_conn):
 async def create_retrieval_request(project_id:str, from_height:int, to_height:int, data:int, redis_conn):
     request_id = str(uuid4())
 
-    """ Setup the retrievalRequestInfo Hashset """
-    key = f"retrievalRequestInfo:{request_id}"
-    _ = await redis_conn.hset(
-        key=key,
-        field='projectId',
-        value=project_id
-    )
-    _ = await redis_conn.hset(
-        key=key,
-        field='to_height',
-        value=to_height
-    )
-    _ = await redis_conn.hset(
-        key=key,
-        field='from_height',
-        value=from_height
-    )
-    _ = await redis_conn.hset(
-        key=key,
-        field='data',
-        value=data
+    """ Setup the retrievalRequestInfo HashTable """
+    retrieval_request_info_key = f"retrievalRequestInfo:{request_id}"
+    fields = {
+        'projectId':project_id,
+        'to_height':to_height,
+        'from_height':from_height,
+        'data': data
+    }
+    
+    _ = await redis_conn.hmset_dict(
+        key=retrieval_request_info_key,
+        **fields
     )
     requests_list_key = f"pendingRetrievalRequests"
     _ = await redis_conn.sadd(requests_list_key, request_id)
@@ -483,26 +474,19 @@ async def commit_payload(
 
         """ Create the Hash table for Payload """
         payload_commit_key = f"payloadCommit:{payload_commit_id}"
-        out = await redis_conn.hset(
-            payload_commit_key,
-            "snapshotCid",
-            snapshot_cid
-        )
+        fields = {
+            'snapshotCid':snapshot_cid,
+            'projectId':project_id,
+            'tentativeBlockHeight':last_tentative_block_height,
+        }
 
-        out = await redis_conn.hset(
-            payload_commit_key,
-            "projectId",
-            project_id
-        )
-
-        out = await redis_conn.hset(
-            payload_commit_key,
-            "tentativeBlockHeight",
-            last_tentative_block_height
+        _ = await redis_conn.hmset_dict(
+            key=payload_commit_key,
+            **fields
         )
 
         """ Add this payload commit for pending payload commits list """
-        out = await redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
+        _ = await redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
 
 
     else:
