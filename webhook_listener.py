@@ -259,6 +259,7 @@ async def create_dag(
                             out = await redis_conn.hgetall(key=event_data_key)
 
                             _event_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in out.items()}
+                            fields_to_delete = list(_event_data.keys())
                             _event_data['event_data'] = {}
                             _event_data['event_data'].update({k:v for k,v in _event_data.items()})
                             _event_data['event_data'].pop('txHash')
@@ -269,6 +270,9 @@ async def create_dag(
                             """ Remove the dag block from pending block creations list """
                             _ = await redis_conn.srem(pending_block_creations_key, _payload_commit_id)
                             _ = await redis_conn.zrem(pending_blocks_key, _payload_commit_id)
+
+                            """ Delete the event_data """
+                            _ = await redis_conn.hdel(event_data_key, *fields_to_delete)
 
                         else:
                             """ Since there is a pending block creation, stop the loop """
