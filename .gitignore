@@ -11,3 +11,5 @@ files/
 
 # Ignore dynaconf secret files
 .secrets.*
+bloom_filter_objects/
+containers/

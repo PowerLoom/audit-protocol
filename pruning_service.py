@@ -5,6 +5,11 @@ import aioredis
 from config import settings
 import time
 import asyncio
+from bloom_filter import BloomFilter
+from eth_utils import keccak
+import json
+from pygate_grpc.client import PowerGateClient
+from main import get_project_token
 
 """ Initialize ipfs client """
 ipfs_client = ipfshttpclient.connect()
@@ -56,8 +61,10 @@ async def choose_targets():
             """ No blocks exists for that projectId"""
             max_block_height: int = 0
 
+        # Check if the project_id is still a small chain
         if max_block_height < settings.max_ipfs_blocks:
             continue
+
 
         # Get the height of last pruned cid
         last_pruned_key = f"lastPruned:{project_id}"
@@ -67,7 +74,15 @@ async def choose_targets():
         else:
             _ = await redis_conn.set(last_pruned_key, 0)
             last_pruned_height = 0
-        to_height, from_height = max_block_height - settings.max_ipfs_blocks, last_pruned_height
+
+
+        if settings.container_height + last_pruned_height + 1 > max_block_height - settings.max_ipfs_blocks:
+            """ Check if are settings.container_height amount of blocks left """
+            pruning_logger.debug("Not enough blocks for: ")
+            pruning_logger.debug(project_id)
+            continue
+
+        to_height, from_height = max_block_height - settings.max_ipfs_blocks, last_pruned_height+1
 
         # Get all the blockCids and payloadCids
         block_cids_key = f"projectID:{project_id}:Cids"
@@ -75,88 +90,177 @@ async def choose_targets():
             key=block_cids_key,
             min=from_height,
             max=to_height,
-            withscores=False
+            withscores=True
         )
-        payload_cids_key = f"projectID:{project_id}:payloadCids"
-        payload_cids_to_prune = await redis_conn.zrangebyscore(
-            key=payload_cids_key,
-            min=from_height,
-            max=to_height,
-            withscores=False
-        )
-        all_cids = list(block_cids_to_prune) + list(payload_cids_to_prune)
-        target_list_key = f"toBeUnpinnedCids:{project_id}"
-        for cid in all_cids:
-            _ = await redis_conn.sadd(target_list_key, cid)
+        #payload_cids_key = f"projectID:{project_id}:payloadCids"
+        #payload_cids_to_prune = await redis_conn.zrangebyscore(
+        #    key=payload_cids_key,
+        #    min=from_height,
+        #    max=to_height,
+        #    withscores=False
+        #)
+        #all_cids = list(block_cids_to_prune) + list(payload_cids_to_prune)
+        #target_list_key = f"toBeUnpinnedCids:{project_id}"
+        #for cid in all_cids:
+        #    _ = await redis_conn.sadd(target_list_key, cid)
 
-        # Set the lastPruned for this projectId
-        _ = await redis_conn.set(last_pruned_key, to_height)
+
+        """ Add dag blocks to the to-unpin-list """
+        dag_unpin_key = f"projectID:{project_id}:targetDags"
+        for cid, height in block_cids_to_prune:
+            _ = await redis_conn.zadd(
+                key=dag_unpin_key,
+                member=cid,
+                score=int(height)
+            )
+
+        """ Store the min and max heights of the dag blocks that need to be pruned """
+        target_height_key = f"projectID:{project_id}:pruneFromHeight"
+        _ = await redis_conn.set(target_height_key, from_height)
+        target_height_key = f"projectID:{project_id}:pruneToHeight"
+        _ = await redis_conn.set(target_height_key, to_height)
+        pruning_logger.debug("Saving from and to height:")
+        pruning_logger.debug(from_height)
+        pruning_logger.debug(to_height)
+
+
+        # Add this project_id to the set toBeUnpinned ProjectIds
+        to_unpin_projects_key = f"toUnpinProjects"
+        _ = await redis_conn.sadd(to_unpin_projects_key, project_id)
     redis_pool.release(redis_conn_raw)
 
 
-async def test_choose_targets():
+
+async def build_container(project_id:str):
     """
-        - For testing purposes, the cids will be take from the set: testCid
-        and block height will be taken from : blockHeight:{cid}
+        - Generate a unique ID for this container
+        - Iterate through each DAG block.
+        - Retrieve the payload for each DAG block
+        - Add the payload into the DAG block itself 
+        - Add the payload_cid to the bloom_filter of this container
     """
+
     """ Create a redis connections """
     redis_conn_raw = await redis_pool.acquire()
     redis_conn = aioredis.Redis(redis_conn_raw)
 
-    key = f"storedProjectIds"
-    project_ids: set = await redis_conn.smembers(key)  # No await since this is not aioredis connection
-    for project_id in project_ids:
-        project_id = project_id.decode('utf-8')
-        pruning_logger.debug("Getting block height for project: " + project_id)
+    ipfs_client = ipfshttpclient.connect()
 
-        # Get the block_height for project_id
-        last_block_key = f"testBlockHeight"
-        out: bytes = await redis_conn.get(last_block_key)
-        if out:
-            max_block_height: int = int(out.decode('utf-8'))
-        else:
-            """ No blocks exists for that projectId"""
-            max_block_height: int = 0
+    target_height_key = f"projectID:{project_id}:pruneFromHeight"
+    from_height = await redis_conn.get(target_height_key)
+    target_height_key = f"projectID:{project_id}:pruneToHeight"
+    to_height = await redis_conn.get(target_height_key)
+    pruning_logger.debug("Retrieved from and to height")
+    pruning_logger.debug(from_height)
+    pruning_logger.debug(to_height)
 
-        if max_block_height < settings.max_ipfs_blocks:
-            pruning_logger.debug("Not enough blocks to unpin. Skipping....")
-            continue
+    """ Create the unique container ID for this project_id """
+    container_id_data = {
+        'fromHeight': int(from_height),
+        'toHeight': int(to_height),
+        'projectId': project_id
+    }
+    container_id = keccak(text=json.dumps(container_id_data)).hex()
 
-        # Get the height of last pruned cid
-        last_pruned_key = f"lastPruned:{project_id}"
-        out: bytes = await redis_conn.get(last_pruned_key)
-        if out:
-            last_pruned_height = int(out.decode('utf-8'))
-        else:
-            _ = await redis_conn.set(last_pruned_key, 0)
-            last_pruned_height = 0
+    """ Create a Bloom filter """
+    bloom_filter_settings = settings.bloom_filter_settings
+    bloom_filter_settings['filename'] = f"bloom_filter_objects/{container_id}.bloom"
+    bloom_filter = BloomFilter(**bloom_filter_settings)
 
-        to_height, from_height = max_block_height - settings.max_ipfs_blocks, last_pruned_height
+    """ Get all the targets """
+    dag_unpin_key = f"projectID:{project_id}:targetDags"
+    dag_cids = await redis_conn.zrange(
+        key=dag_unpin_key,
+        withscores=False
+    )
 
-        pruning_logger.debug(f"Selected range to prune: {to_height}, {from_height}")
+    container = {}
+    for dag_cid in dag_cids:
+        dag_cid = dag_cid.decode('utf-8')
 
-        # Get all the blockCids and payloadCids
-        block_cids_key = f"testDataAt:{project_id}"
-        block_cids_to_prune = await redis_conn.zrangebyscore(
-            key=block_cids_key,
-            min=from_height,
-            max=to_height,
-            withscores=False
-        )
+        pruning_logger.debug("Creating dag block for: ")
+        pruning_logger.debug(dag_cid)
 
-        all_cids = block_cids_to_prune
-        target_list_key = f"toBeUnpinnedCids:{project_id}"
-        for cid in all_cids:
-            _ = await redis_conn.sadd(target_list_key, cid)
+        dag_block = ipfs_client.dag.get(dag_cid).as_json()
 
-        _ = await redis_conn.set(last_pruned_key, to_height+1)
+        """ Get the snapshot cid and retrieve the data of the snapshot from ipfs """
+        snapshot_cid = dag_block['data']['cid']
+        snapshot_payload = ipfs_client.cat(snapshot_cid).decode('utf-8')
+
+        """ Add the payload data into the dag block """
+        dag_block['data']['payload'] = snapshot_payload
+
+        """ Add the payload cid to the bloom filter """
+        bloom_filter.add(dag_cid)
+        container[dag_cid] = dag_block
+
     redis_pool.release(redis_conn_raw)
 
-    pass    
+    container_data = {
+        'container': container,
+        'bloomFilterSettings': bloom_filter_settings,
+        'containerId': container_id,
+        'fromHeight': int(from_height),
+        'toHeight': int(to_height),
+        'projectId': project_id
+    }
+    return container_data
+
+
+async def backup_to_filecoin(container_data:dict):
+    """
+        - Convert container data to json string. 
+        - Push it to filecoin
+        - Save the job Id
+    """
+    redis_conn_raw = await redis_pool.acquire()
+    redis_conn = aioredis.Redis(redis_conn_raw)
+    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
+
+    """ Get the token """
+    KEY = f"filecoinToken:{container_data['projectId']}"
+    token = await redis_conn.get(KEY)
+    if not token:
+        user = powgate_client.admin.users.create()
+        token = user.token
+        _ = await redis_conn.set(KEY, token)
+
+    else:
+        token = token.decode('utf-8')
+
+    """ Convert the data to json string """
+    json_data = json.dumps(container_data).encode('utf-8')
+
+    # Stage and push the data
+    stage_res = powgate_client.data.stage_bytes(json_data, token=token)
+    job = powgate_client.config.apply(stage_res.cid, override=False, token=token)
+
+    # Save the jobId and other data
+    fields = {k:v for k,v in container_data.items()}
+    _ = fields.pop('container')
+    fields['bloomFilterSettings'] = json.dumps(fields.pop('bloomFilterSettings'))
+    fields['containerCid'] = stage_res.cid
+    fields['jobId'] = job.jobId
+    container_id = fields.pop('containerId')
+    project_id = fields.pop('projectId')
+
+    container_data_key = f"projectID:{project_id}:containerData:{container_id}"
+    _ = await redis_conn.hmset_dict(
+        key=container_data_key,
+        **fields
+    )
+    
+    redis_pool.release(redis_conn_raw)
+
+    result = {'containerCid': stage_res.cid, 'jobId':job.jobId}
+    return result
+
 
 async def prune_targets():
     """
-        - This function is responsible for taking target cids from the list and then un-pinning them.
+        - Get the list of all projectID's that are in our protocol
+        - iterate through each of the projectID:
+            - get the list of Dag blocks that are chosen as targets
     :return:
         None
     """
@@ -165,25 +269,61 @@ async def prune_targets():
     redis_conn = aioredis.Redis(redis_conn_raw)
 
     # Get all project_ids
-    key = f"storedProjectIds"
-    project_ids: set = await redis_conn.smembers(key)
+    to_unpin_projects_key = f"toUnpinProjects"
+    project_ids: set = await redis_conn.smembers(to_unpin_projects_key)
 
     # Get all the cids in the redis set toBeUnpinnedCids
     for project_id in project_ids:
+
         project_id = project_id.decode('utf-8')
-        all_cids_key = f"toBeUnpinnedCids:{project_id}"
-        unpinned_cids_key = f"unpinnedCids:{project_id}"
-        all_cids: set = await redis_conn.smembers(key=all_cids_key)
-        pruning_logger.debug(f"Found {len(all_cids)} cids to unpin..")
-        for cid in all_cids:
+        pruning_logger.debug("Processing projectID: ")
+        pruning_logger.debug(project_id)
+
+        """ Get the container for each project_id """ 
+        container_data = await build_container(project_id)
+
+        """ Save the container into a json file """
+        container_file_path = f"containers/{container_data['containerId']}.json"
+        with open(container_file_path, 'w') as container_file:
+            json.dump(container_data, container_file)
+
+        """ Backup the data """
+        if settings.backup_target == 'FILECOIN':
+            result = await backup_to_filecoin(container_data)
+            pruning_logger.debug("Container data has been successfully backed up to filecoin: ")
+            pruning_logger.debug(result)
+        
+        """ Once the container has been backed up, then add it to the list of containers available """
+        containers_created_key = f"projectID:{project_id}:containers"
+        _ = await redis_conn.zadd(
+            key=containers_created_key,
+            member=container_data['containerId'],
+            score = container_data['toHeight']
+        )
+
+        """ For each payload in the dag structure, unpin it """
+        for dag_cid, dag_block in container_data['container'].items():
+            snapshot_cid = dag_block['data']['cid']
             try:
-                ipfs_client.pin.rm(cid.decode('utf-8'))
+                ipfs_client.pin.rm(snapshot_cid)
             except ipfshttpclient.exceptions.ErrorResponse as e:
                 pruning_logger.debug("This cid is not pinned....")
-            # Remove the cid from toBeUnpinnedCids and Add the cid to unpinnedCids Set
-            _ = await redis_conn.srem(all_cids_key,cid)
-            _ = await redis_conn.sadd(unpinned_cids_key, cid)
-        pruning_logger.debug(f"Unpinned {len(all_cids)} cids for projectId: {project_id}")
+
+            """ Remove the dag_block from the list of targetPrunes """
+            dag_unpin_key = f"projectID:{project_id}:targetDags"
+            _ = await redis_conn.zrem(
+                key=dag_unpin_key,
+                member=dag_cid
+            )
+
+        # Set the lastPruned for this projectId
+        last_pruned_key = f"lastPruned:{project_id}"
+        _ = await redis_conn.set(last_pruned_key, container_data['toHeight'])
+
+        """ Remove the project Id from the list of target Project IDs """
+        _ = await redis_conn.srem(to_unpin_projects_key, project_id)
+        pruning_logger.debug('Successfully Pruned....')
+
     redis_pool.release(redis_conn_raw)
 
 

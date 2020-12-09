@@ -7,7 +7,7 @@
 	"port": 9000,
 	"webhook_listener": {
 		"host": "127.0.0.1",
-		"port": 9002
+		"port": 9090
 	},
 	"dag_structure" : {
 			"height":-1,
@@ -35,8 +35,15 @@
     "audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
 	"app_name" : "auditrecords",
 	"powergate_client_addr"	: "127.0.0.1:5002",
-	"max_ipfs_blocks" : 1000,
+	"max_ipfs_blocks" : 10,
 	"max_pending_payload_commits": 5,
 	"block_storage": "IPFS",
-	"payload_storage": "IPFS"
+	"payload_storage": "IPFS",
+	"container_height": 5,
+	"bloom_filter_settings": {
+		"max_elements": 500,
+		"error_rate": 0.0001,
+		"filename": null
+	},
+	"backup_target": "FILECOIN"
 }

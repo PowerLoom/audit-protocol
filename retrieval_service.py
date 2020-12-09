@@ -8,6 +8,7 @@ import asyncio
 import os
 import json
 import time
+from bloom_filter import BloomFilter
 
 """ Initialize ipfs client """
 ipfs_client = ipfshttpclient.connect()
@@ -73,44 +74,58 @@ async def retrieve_files():
                 block_cid = block_cid.decode('utf-8')
                 block_height = int(block_height)
 
-                # Get the block's staged_cid
-                project_id = request_info['projectId']
-                staged_block_key = f"blockFilecoinStorage:{project_id}:{block_height}"
-                block_staged_cid = await redis_conn.hget(
-                    key=staged_block_key,
-                    field="blockStageCid"
+                """ Get the container for that block height """
+                containers_created_key = f"projectID:{request_info['projectId']}:containers"
+                target_containers = await redis_conn.zrangebyscore(
+                    key=containers_created_key,
+                    max=settings.container_height*2 + block_height + 1,
+                    min=block_height - settings.container_height*2 - 1
                 )
-                block_staged_cid = block_staged_cid.decode('utf-8')
-                retrieval_logger.debug(f"Getting data for DAG Block: {block_staged_cid}")
 
-                block_dag = powgate_client.data.get(block_staged_cid, token=token)
-                block_dag = block_dag.decode('utf-8')
-                block_dag = json.loads(block_dag)
+                """ Iterate through each containerId and then check if the block exists in that container """
+                bloom_object = None
+                container_data = None
+                for container_id in target_containers:
+                    """ Get the data for the container """
+                    container_id = container_id.decode('utf-8')
+                    container_data_key = f"projectID:{request_info['projectId']}:containerData:{container_id}"
+                    out = await redis_conn.hgetall(container_data_key)
+                    container_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in out.items()}
+                    bloom_filter_settings = json.loads(container_data['bloomFilterSettings'])
+                    retrieval_logger.debug(bloom_filter_settings)
+                    bloom_object = BloomFilter(**bloom_filter_settings)
+                    if block_cid in bloom_object:
+                        break
+
+                retrieval_logger.debug("Found the matching container")
+                retrieval_logger.debug(container_data)
+
+                out = powgate_client.data.get(container_data['containerCid'], token=token).decode('utf-8')
+                container = json.loads(out)['container']
+                block_dag = container[block_cid]
+                retrieval_logger.debug("Retrieved the DAG Block...")
+                retrieval_logger.debug(container)
+
                 retrieval_data = {}
 
 
                 if request_info['data'] == '2':
                     """ Save only the payload data """
-                    payload_cid = block_dag['Data']['Cid']
+                    payload_cid = block_dag['data']['cid']
                     # Get payload from filecoin
-                    payload = powgate_client.data.get(payload_cid,token=token)
-                    payload = payload.decode('utf-8')
+                    payload = block_dag['data']['payload']
 
-                    retrieval_data['Cid'] = payload_cid
-                    retrieval_data['Type'] = 'COLD_FILECOIN'
+                    retrieval_data['cid'] = payload_cid
+                    retrieval_data['type'] = 'COLD_FILECOIN'
                     retrieval_data['payload']  = payload
                     
                 elif int(request_info['data']) in range(0,2): # Either 0 or 1
                     """ Save the entire DAG Block """
                     retrieval_data = {k:v for k,v in block_dag.items()}
 
-                    if request_info['data'] == '1':
+                    if request_info['data'] != '1':
                         """ Save the payload data in the DAG block """
-                        payload_cid = retrieval_data['Data']['Cid']
-                        # Get payload from filecoin
-                        payload = powgate_client.data.get(payload_cid,token=token)
-                        payload = payload.decode('utf-8')
-                        retrieval_data['Data']['payload'] = payload
+                        _ = retrieval_data['data'].pop('payload')
 
                 else:
                     raise ValueError(f"Invalid value for data field in request_info: {request_info['data']}")

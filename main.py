@@ -93,23 +93,25 @@ async def startup_boilerplate():
         app_name='auditrecords'
     )
 
-async def get_project_token(request: Request):
+async def get_project_token(request: Request=None, projectId:str = None, override_settings=False):
     """ From the request body, extract the projectId and return back the powergate token."""
-    req_args = await request.json()
-    projectId = req_args['projectId']
+    if projectId is None:
+        req_args = await request.json()
+        projectId = req_args['projectId']
+
+    """ Save the project Id on set """
+    redis_conn_raw = await request.app.redis_pool.acquire()
+    redis_conn = aioredis.Redis(redis_conn_raw)
+    _ = await redis_conn.sadd("storedProjectIds", projectId)
 
     """ Intitalize powergate client """
     rest_logger.debug("Intitializing powergate client")
-    if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN"):
+    if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (override_settings == False):
         return ""
 
     powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
 
     if settings.METADATA_CACHE == "redis":
-        """ Create a redis connection """
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
-
         """ Check if there is a filecoin token for the project Id """
         KEY = f"filecoinToken:{projectId}"
         token = await redis_conn.get(KEY)
@@ -120,8 +122,6 @@ async def get_project_token(request: Request):
             rest_logger.debug("Created a token for projectId: "+str(projectId))
             rest_logger.debug("Token: "+token)
 
-            """ Save the project Id on set """
-            _ = await redis_conn.sadd("storedProjectIds", projectId)
         else:
             token = token.decode('utf-8')
             rest_logger.debug("Retrieved token: "+token+", for project Id: "+str(projectId))
@@ -256,53 +256,6 @@ async def create_retrieval_request(project_id:str, from_height:int, to_height:in
     return request_id
 
 
-
-@app.get('/requests/{requestId:str}')
-async def request_status(
-    request: Request,
-    response: Response,
-    requestId:str,
-):
-    """
-        Given a requestId, return either the status of that request or retrieve all the payloads for that 
-    """
-
-    redis_conn_raw = await request.app.redis_pool.acquire()
-    redis_conn = aioredis.Redis(redis_conn_raw)
-
-    # Check if the request is already in the pending list
-    requests_list_key = f"pendingRetrievalRequests"
-    out = await redis_conn.sismember(requests_list_key, requestId)
-    if out == True:
-        return {'requestId': requestId, 'requestStatus':'Pending'}
-
-    # Get all the retrieved files
-    retrieval_files_key = f"retrievalRequestFiles:{requestId}"
-    retrieved_files = await redis_conn.zrange(
-        key=retrieval_files_key,
-        start=0,
-        stop=-1,
-        withscores=True
-    )
-
-    data = {}
-    files = {}
-    for file_, block_height in retrieved_files:
-        file_ = file_.decode('utf-8')
-        cid = file_.split('/')[-1]
-        block_height = int(block_height)
-
-        dag_block = {
-            'payloadFile':'/'+file_,
-            'height': block_height
-        }
-        files[cid] = dag_block
-
-    data['requestId'] = requestId
-    data['requestStatus'] = 'Completed'
-    data['files'] = files
-    response.status_code = 200
-    return data
 
 
 async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id, redis_conn, contract):
@@ -521,6 +474,54 @@ async def commit_payload(
         'tentativeHeight': last_tentative_block_height,
         'payloadChanged': payload_changed,
     }
+
+
+@app.get('/requests/{requestId:str}')
+async def request_status(
+    request: Request,
+    response: Response,
+    requestId:str,
+):
+    """
+        Given a requestId, return either the status of that request or retrieve all the payloads for that 
+    """
+
+    redis_conn_raw = await request.app.redis_pool.acquire()
+    redis_conn = aioredis.Redis(redis_conn_raw)
+
+    # Check if the request is already in the pending list
+    requests_list_key = f"pendingRetrievalRequests"
+    out = await redis_conn.sismember(requests_list_key, requestId)
+    if out == True:
+        return {'requestId': requestId, 'requestStatus':'Pending'}
+
+    # Get all the retrieved files
+    retrieval_files_key = f"retrievalRequestFiles:{requestId}"
+    retrieved_files = await redis_conn.zrange(
+        key=retrieval_files_key,
+        start=0,
+        stop=-1,
+        withscores=True
+    )
+
+    data = {}
+    files = {}
+    for file_, block_height in retrieved_files:
+        file_ = file_.decode('utf-8')
+        cid = file_.split('/')[-1]
+        block_height = int(block_height)
+
+        dag_block = {
+            'payloadFile':'/'+file_,
+            'height': block_height
+        }
+        files[cid] = dag_block
+
+    data['requestId'] = requestId
+    data['requestStatus'] = 'Completed'
+    data['files'] = files
+    response.status_code = 200
+    return data
 
 
 
