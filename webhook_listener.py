@@ -75,7 +75,7 @@ async def test(
                 dag['prevCid'] = decoded_data['prev_dag_cid']
             except KeyError as e:
                 request.app.redis_pool.release(redis_conn_raw)
-                rest_logger.error(e, exc_info=True)
+                rest_logger.error(e)
                 rest_logger.error(
                     'Incorrect transient project and DAG information. Transaction and event data follows')
                 rest_logger.error(decoded_data)
