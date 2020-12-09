@@ -97,7 +97,8 @@ async def test(
 
             # cache last seen diffs
             if dag['prevCid']:
-                prev_payload_cid = ipfs_client.dag.get(dag['prevCid']).as_json()['Data']['Cid']
+                prev_dag = ipfs_client.dag.get(dag['prevCid']).as_json()
+                prev_payload_cid = prev_dag['Data']['Cid']
                 if prev_payload_cid != payload_cid:
                     diff_map = dict()
                     prev_data = ipfs_client.cat(prev_payload_cid).decode('utf-8')
@@ -122,7 +123,7 @@ async def test(
                             'timestamp': timestamp
                         },
                         'prev': {
-                            'height': dag['Height'],
+                            'height': prev_dag['Height'],
                             'payloadCid': prev_payload_cid,
                             'dagCid': dag['prevCid']
                             # this will be used to fetch the previous block timestamp from the DAG
