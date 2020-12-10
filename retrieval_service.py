@@ -118,7 +118,7 @@ async def retrieve_files():
                     out = powgate_client.data.get(container_data['containerCid'], token=token).decode('utf-8')
                     container = json.loads(out)['container']
                     _block_index = block_height % settings.container_height
-                    block_dag = container['dagChain'][_block_index]
+                    block_cid, block_dag = next(iter(container['dagChain'][_block_index].items()))
                     payload_data = container['payloads'][block_dag['data']['cid']]
 
                 retrieval_logger.debug("Retrieved the DAG Block...")

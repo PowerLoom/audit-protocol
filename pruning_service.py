@@ -196,7 +196,7 @@ async def build_container(project_id:str):
 
         """ Add the payload cid to the bloom filter """
         bloom_filter.add(dag_cid)
-        container['dagChain'].append(dag_block)
+        container['dagChain'].append({dag_cid:dag_block})
 
     redis_pool.release(redis_conn_raw)
 
@@ -306,7 +306,8 @@ async def prune_targets():
         )
 
         """ For each payload in the dag structure, unpin it """
-        for dag_cid, dag_block in container_data['container'].items():
+        for dag_data in container_data['container']['dagChain']:
+            dag_cid, dag_block = next(iter(dag_data.items()))
             snapshot_cid = dag_block['data']['cid']
             try:
                 ipfs_client.pin.rm(snapshot_cid)
