@@ -107,6 +107,7 @@ async def get_project_token(request: Request=None, projectId:str = None, overrid
     """ Intitalize powergate client """
     rest_logger.debug("Intitializing powergate client")
     if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (override_settings == False):
+        request.app.redis_pool.release(redis_conn_raw)
         return ""
 
     powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
