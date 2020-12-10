@@ -80,16 +80,16 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/2/payload/0",
+					"raw": "http://localhost:9000/3/payload/1",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"2",
+						"3",
 						"payload",
-						"0"
+						"1"
 					]
 				}
 			},
@@ -277,7 +277,7 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/3/payloads?from_height=1&to_height=7&data=true",
+					"raw": "http://localhost:9000/3/payloads?from_height=19&to_height=20&data=true",
 					"protocol": "http",
 					"host": [
 						"localhost"
@@ -290,11 +290,11 @@
 					"query": [
 						{
 							"key": "from_height",
-							"value": "1"
+							"value": "19"
 						},
 						{
 							"key": "to_height",
-							"value": "7"
+							"value": "20"
 						},
 						{
 							"key": "data",
@@ -368,7 +368,7 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/requests/1670e305-2e09-43e0-8a38-bb7b98a5e494",
+					"raw": "http://localhost:9000/requests/ea3bb0c2-d414-4c5f-bf83-2173cba48754",
 					"protocol": "http",
 					"host": [
 						"localhost"
@@ -376,7 +376,70 @@
 					"port": "9000",
 					"path": [
 						"requests",
-						"1670e305-2e09-43e0-8a38-bb7b98a5e494"
+						"ea3bb0c2-d414-4c5f-bf83-2173cba48754"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "get cachedDiff count",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/3/payloads/cachedDiffs/count",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"3",
+						"payloads",
+						"cachedDiffs",
+						"count"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get the cached Diffs for a projectId",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/3/payloads/cachedDiffs",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"3",
+						"payloads",
+						"cachedDiffs"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get the updates about a project",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/projects/updates",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"projects",
+						"updates"
 					]
 				}
 			},
