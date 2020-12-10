@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
 from maticvigil.EVCore import EVCore
+from maticvigil.exceptions import EVBaseException
 import logging
 import sys
 import json
@@ -18,6 +19,7 @@ from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
 import requests
+import async_timeout
 
 print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect()
@@ -257,37 +259,45 @@ async def create_retrieval_request(project_id:str, from_height:int, to_height:in
     return request_id
 
 
-
-
 async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id, redis_conn, contract):
 
     """
         - Create a unqiue transaction_id associated with this transaction, 
         and add it to the set of pending transactions
     """
-    try:
-        tx_hash_obj = contract.commitRecord(**dict(
-            payloadCommitId=payload_commit_id,
-            snapshotCid=snapshot_cid,
-            apiKeyHash=token_hash,
-            projectId=project_id,
-            tentativeBlockHeight=last_tentative_block_height,
-        ))
-    except requests.exceptions.HTTPError as errh:
-        rest_logger.debug("Http Error:")
-        rest_logger.debug(errh)
-    except requests.exceptions.ConnectionError as errc:
-        rest_logger.debug("Connection Error: ")
-        rest_logger.debug(errc)
-    except requests.exceptions.Timeout as errt:
-        rest_logger.debug("Timeout Error: ")
-        rest_logger.debug(errt)
-    except requests.exceptions.RequestException as errr:
-        rest_logger.debug("Request Exception")
-        rest_logger.debug(errr)
-    else:
-        rest_logger.debug("The transaction went through successfully")
-        rest_logger.debug(tx_hash_obj)
+    e_obj = None
+    async with async_timeout.timeout(5) as cm:
+        try:
+            tx_hash_obj = contract.commitRecord(**dict(
+                payloadCommitId=payload_commit_id,
+                snapshotCid=snapshot_cid,
+                apiKeyHash=token_hash,
+                projectId=project_id,
+                tentativeBlockHeight=last_tentative_block_height,
+            ))
+
+        except EVBaseException as evbase:
+            e_obj = evbase
+        except requests.exceptions.HTTPError as errh:
+            e_obj = errh
+        except requests.exceptions.ConnectionError as errc:
+            e_obj = errc
+        except requests.exceptions.Timeout as errt:
+            e_obj = errt
+        except requests.exceptions.RequestException as errr:
+            e_obj = errr
+        except Exception as e:
+            e_obj = e
+        else:
+            rest_logger.debug("The transaction went through successfully")
+            rest_logger.debug(tx_hash_obj)
+
+    if e_obj and cm.expired:
+        rest_logger.debug("="*80)
+        rest_logger.debug("The transaction was not succesfull")
+        rest_logger.debug("Commit Payload failed to MaticVigil API")
+        rest_logger.debug(e_obj)
+        rest_logger.debug("="*80)
 
 
     pendingTransactionsKey = f"projectId:{project_id}:pendingBlockCreation"
