@@ -169,12 +169,16 @@ async def build_container(project_id:str):
 
     """ Get all the targets """
     dag_unpin_key = f"projectID:{project_id}:targetDags"
-    dag_cids = await redis_conn.zrange(
+    dag_cids = await redis_conn.zrevrange(
         key=dag_unpin_key,
+        start=0,
+        stop=-1,
         withscores=False
     )
 
     container = {}
+    container['dagChain'] = []
+    container['payloads'] = {}
     for dag_cid in dag_cids:
         dag_cid = dag_cid.decode('utf-8')
 
@@ -187,12 +191,12 @@ async def build_container(project_id:str):
         snapshot_cid = dag_block['data']['cid']
         snapshot_payload = ipfs_client.cat(snapshot_cid).decode('utf-8')
 
-        """ Add the payload data into the dag block """
-        dag_block['data']['payload'] = snapshot_payload
+        """ Add the payload to the container """
+        container['payloads'][snapshot_cid] = snapshot_payload
 
         """ Add the payload cid to the bloom filter """
         bloom_filter.add(dag_cid)
-        container[dag_cid] = dag_block
+        container['dagChain'].append(dag_block)
 
     redis_pool.release(redis_conn_raw)
 

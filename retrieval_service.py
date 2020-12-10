@@ -69,42 +69,59 @@ async def retrieve_files():
                 withscores=True
             )
 
+            block_height_key = f"projectID:{request_info['projectId']}:blockHeight"
+            max_block_height = await redis_conn.get(block_height_key)
+            max_block_height = int(max_block_height)
+
             # Iterate through each dag block
             for block_cid, block_height in all_cids:
                 block_cid = block_cid.decode('utf-8')
                 block_height = int(block_height)
+                block_dag = None
+                payload_data = None
+                
+                """ Check if the DAG block is pinned """
+                if block_height < max_block_height - settings.max_ipfs_blocks:
+                    """ Get the data directly through the IPFS client """
+                    block_dag = ipfs_client.dag.get(block_cid).as_json()
+                    payload_data = ipfs_client.cat(block_dag['data']['cid'])
+                    if isinstance(payload_data, bytes):
+                        payload_data = payload_data.decode('utf-8')
 
-                """ Get the container for that block height """
-                containers_created_key = f"projectID:{request_info['projectId']}:containers"
-                target_containers = await redis_conn.zrangebyscore(
-                    key=containers_created_key,
-                    max=settings.container_height*2 + block_height + 1,
-                    min=block_height - settings.container_height*2 - 1
-                )
+                else:
+                    """ Get the container for that block height """
+                    containers_created_key = f"projectID:{request_info['projectId']}:containers"
+                    target_containers = await redis_conn.zrangebyscore(
+                        key=containers_created_key,
+                        max=settings.container_height*2 + block_height + 1,
+                        min=block_height - settings.container_height*2 - 1
+                    )
 
-                """ Iterate through each containerId and then check if the block exists in that container """
-                bloom_object = None
-                container_data = None
-                for container_id in target_containers:
-                    """ Get the data for the container """
-                    container_id = container_id.decode('utf-8')
-                    container_data_key = f"projectID:{request_info['projectId']}:containerData:{container_id}"
-                    out = await redis_conn.hgetall(container_data_key)
-                    container_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in out.items()}
-                    bloom_filter_settings = json.loads(container_data['bloomFilterSettings'])
-                    retrieval_logger.debug(bloom_filter_settings)
-                    bloom_object = BloomFilter(**bloom_filter_settings)
-                    if block_cid in bloom_object:
-                        break
+                    """ Iterate through each containerId and then check if the block exists in that container """
+                    bloom_object = None
+                    container_data = None
+                    for container_id in target_containers:
+                        """ Get the data for the container """
+                        container_id = container_id.decode('utf-8')
+                        container_data_key = f"projectID:{request_info['projectId']}:containerData:{container_id}"
+                        out = await redis_conn.hgetall(container_data_key)
+                        container_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in out.items()}
+                        bloom_filter_settings = json.loads(container_data['bloomFilterSettings'])
+                        retrieval_logger.debug(bloom_filter_settings)
+                        bloom_object = BloomFilter(**bloom_filter_settings)
+                        if block_cid in bloom_object:
+                            break
 
-                retrieval_logger.debug("Found the matching container")
-                retrieval_logger.debug(container_data)
+                    retrieval_logger.debug("Found the matching container")
+                    retrieval_logger.debug(container_data)
 
-                out = powgate_client.data.get(container_data['containerCid'], token=token).decode('utf-8')
-                container = json.loads(out)['container']
-                block_dag = container[block_cid]
+                    out = powgate_client.data.get(container_data['containerCid'], token=token).decode('utf-8')
+                    container = json.loads(out)['container']
+                    _block_index = block_height % settings.container_height
+                    block_dag = container['dagChain'][_block_index]
+                    payload_data = container['payloads'][block_dag['data']['cid']]
+
                 retrieval_logger.debug("Retrieved the DAG Block...")
-                retrieval_logger.debug(container)
 
                 retrieval_data = {}
 
@@ -113,7 +130,7 @@ async def retrieve_files():
                     """ Save only the payload data """
                     payload_cid = block_dag['data']['cid']
                     # Get payload from filecoin
-                    payload = block_dag['data']['payload']
+                    payload = payload_data
 
                     retrieval_data['cid'] = payload_cid
                     retrieval_data['type'] = 'COLD_FILECOIN'
@@ -123,9 +140,9 @@ async def retrieve_files():
                     """ Save the entire DAG Block """
                     retrieval_data = {k:v for k,v in block_dag.items()}
 
-                    if request_info['data'] != '1':
+                    if request_info['data'] == '1':
                         """ Save the payload data in the DAG block """
-                        _ = retrieval_data['data'].pop('payload')
+                        retrieval_data['data']['payload'] = payload_data
 
                 else:
                     raise ValueError(f"Invalid value for data field in request_info: {request_info['data']}")
