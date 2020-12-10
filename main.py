@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
 from maticvigil.EVCore import EVCore
+from maticvigil.exceptions import EVBaseException
 import logging
 import sys
 import json
@@ -179,13 +180,18 @@ async def commit_payload(
 
     ipfs_cid = snapshot['Cid']
     token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+    e_obj = None
     async with async_timeout.timeout(5) as cm:
         try:
             tx_hash_obj = request.app.contract.commitRecord(**dict(
                 ipfsCid=ipfs_cid,
                 apiKeyHash=token_hash,
             ))
-        except requests.exceptions.ConnectionError:
+        except EVBaseException as e:
+            e_obj =e
+            tx_hash_obj = None
+        except Exception as e:
+            e_obj = e
             tx_hash_obj = None
     if settings.METADATA_CACHE == 'redis':
         if not cm.expired and tx_hash_obj:
@@ -212,9 +218,11 @@ async def commit_payload(
                 )
         else:
             rest_logger.error('='*80)
-            rest_logger.error('Commit Payload to timed out')
+            rest_logger.error('Commit Payload failed to MaticVigil API')
             rest_logger.error(ipfs_cid)
             rest_logger.error(project_id)
+            if e_obj:
+                rest_logger.error(e_obj)
             rest_logger.error('=' * 80)
         request.app.redis_pool.release(redis_conn_raw)
 
