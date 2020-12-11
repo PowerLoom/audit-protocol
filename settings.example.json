@@ -9,12 +9,6 @@
 	"metadata_cache": "redis",
 	"dag_table_name": "DAG_CID",
 	"seed": "THISISRANDOMSEED",
-	"host": "127.0.0.1",
-	"port": 9000,
-	"webhook_listener": {
-		"host": "127.0.0.1",
-		"port": 9090
-	},
 	"dag_structure" : {
 			"height":-1,
 			"prevCid":"",
