@@ -7,7 +7,7 @@ contract AuditRecordStore {
         uint256 timestamp;
     }
 
-    event RecordAppended(bytes32 apiKeyHash, string ipfsCid, uint256 indexed timestamp);
+    event RecordAppended(bytes32 apiKeyHash, string snapshotCid, string payloadCommitId, uint256 tentativeBlockHeight, string projectId, uint256 indexed timestamp);
 
     mapping(bytes32 => PayloadRecord[]) private apiKeyHashToRecords;
 
@@ -16,10 +16,10 @@ contract AuditRecordStore {
 
     }
 
-    function commitRecord(string memory ipfsCid, bytes32 apiKeyHash) public {
-        PayloadRecord memory a = PayloadRecord(ipfsCid, now);
+    function commitRecord(string memory snapshotCid, string memory payloadCommitId, uint256 tentativeBlockHeight, string memory projectId, bytes32 apiKeyHash) public {
+        PayloadRecord memory a = PayloadRecord(payloadCommitId, now);
         apiKeyHashToRecords[apiKeyHash].push(a);
-        emit RecordAppended(apiKeyHash, ipfsCid, now);
+        emit RecordAppended(apiKeyHash, snapshotCid, payloadCommitId, tentativeBlockHeight, projectId, now);
     }
 
     /*

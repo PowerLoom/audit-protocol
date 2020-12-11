@@ -8,8 +8,10 @@ fastapi = "*"
 uvicorn = "*"
 pygate-grpc = "*"
 redis = "*"
+aioredis = "*"
 
 [dev-packages]
+pylint = "*"
 
 [requires]
 python_version = "3.8"

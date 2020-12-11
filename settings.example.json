@@ -9,15 +9,21 @@
 	"metadata_cache": "redis",
 	"dag_table_name": "DAG_CID",
 	"seed": "THISISRANDOMSEED",
+	"host": "127.0.0.1",
+	"port": 9000,
+	"webhook_listener": {
+		"host": "127.0.0.1",
+		"port": 9090
+	},
 	"dag_structure" : {
-			"Height":-1,
+			"height":-1,
 			"prevCid":"",
-			"Data": {
-					"Cid":"",
-					"Type":""
+			"data": {
+					"cid":"",
+					"type":""
 				},
-			"TxHash":"",
-			"Timestamp":""
+			"txHash":"",
+			"timestamp":""
 			},
 	  "REDIS": {
 		"HOST": "127.0.0.1",
@@ -32,7 +38,18 @@
 		"retreivals_single":"retreivals_single",
 		"retreivals_bulk":"retreivals_bulk"
 	},
-    "audit_contract" : "0x2bcadf4c87cea273f6c6304436362c305f53d428",
-	"app_name" : "auditrecords"
-	
+    "audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
+	"app_name" : "auditrecords",
+	"powergate_client_addr"	: "127.0.0.1:5002",
+	"max_ipfs_blocks" : 10,
+	"max_pending_payload_commits": 5,
+	"block_storage": "IPFS",
+	"payload_storage": "IPFS",
+	"container_height": 5,
+	"bloom_filter_settings": {
+		"max_elements": 500,
+		"error_rate": 0.0001,
+		"filename": null
+	},
+	"backup_target": "FILECOIN"
 }

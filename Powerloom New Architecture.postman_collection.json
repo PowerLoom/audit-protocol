@@ -1,7 +1,7 @@
 {
 	"info": {
-		"_postman_id": "2d06df9d-ef6c-40e9-9624-a722a550ea0e",
-		"name": "Powerloom New Architecture",
+		"_postman_id": "874d2e6b-8eb0-44e8-b6c8-cf670da9b887",
+		"name": "Powerloom New Architecture Copy",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -12,7 +12,7 @@
 				"header": [],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"payload\":\"Payload A\",\n    \"projectId\": 20\n\n}\n"
+					"raw": "{\n    \"payload\": \"a\",\n    \"projectId\": 3\n\n}\n"
 				},
 				"url": {
 					"raw": "http://localhost:9000/commit_payload",
@@ -80,14 +80,14 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/21/payload/1",
+					"raw": "http://localhost:9000/3/payload/1",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"21",
+						"3",
 						"payload",
 						"1"
 					]
@@ -145,14 +145,14 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/gitcoin_grant_40/payloads/height",
+					"raw": "http://localhost:9000/3/payloads/height",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"gitcoin_grant_40",
+						"3",
 						"payloads",
 						"height"
 					]
@@ -210,16 +210,16 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/21/payload/2/data",
+					"raw": "http://localhost:9000/3/payload/25/data",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"21",
+						"3",
 						"payload",
-						"2",
+						"25",
 						"data"
 					]
 				}
@@ -277,24 +277,24 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/20/payloads?from_height=0&to_height=0&data=true",
+					"raw": "http://localhost:9000/3/payloads?from_height=19&to_height=20&data=true",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"20",
+						"3",
 						"payloads"
 					],
 					"query": [
 						{
 							"key": "from_height",
-							"value": "0"
+							"value": "19"
 						},
 						{
 							"key": "to_height",
-							"value": "0"
+							"value": "20"
 						},
 						{
 							"key": "data",
@@ -363,101 +363,75 @@
 			]
 		},
 		{
-			"name": "Get cachedDiffs within a height range",
+			"name": "Get request status",
 			"request": {
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/20_onChain/payloads/cachedDiffs?from_height=0&to_height=4",
+					"raw": "http://localhost:9000/requests/ea3bb0c2-d414-4c5f-bf83-2173cba48754",
 					"protocol": "http",
 					"host": [
 						"localhost"
 					],
 					"port": "9000",
 					"path": [
-						"20_onChain",
-						"payloads",
-						"cachedDiffs"
-					],
-					"query": [
-						{
-							"key": "from_height",
-							"value": "0"
-						},
-						{
-							"key": "to_height",
-							"value": "4"
-						}
+						"requests",
+						"ea3bb0c2-d414-4c5f-bf83-2173cba48754"
 					]
-				},
-				"description": "You can specify how far to look past. Every time a diff is recorded during commit_payload, it is cached in a redis ZSET with score of the current height of the DAG when it happened"
-			},
-			"response": [
-				{
-					"name": "Get blocks in a range",
-					"originalRequest": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "http://localhost:9000/20/payloads?from_height=0&to_height=0&data=true",
-							"protocol": "http",
-							"host": [
-								"localhost"
-							],
-							"port": "9000",
-							"path": [
-								"20",
-								"payloads"
-							],
-							"query": [
-								{
-									"key": "from_height",
-									"value": "0"
-								},
-								{
-									"key": "to_height",
-									"value": "0"
-								},
-								{
-									"key": "data",
-									"value": "true"
-								}
-							]
-						}
-					},
-					"status": "OK",
-					"code": 200,
-					"_postman_previewlanguage": "json",
-					"header": [
-						{
-							"key": "date",
-							"value": "Mon, 23 Nov 2020 06:35:21 GMT"
-						},
-						{
-							"key": "server",
-							"value": "uvicorn"
-						},
-						{
-							"key": "content-length",
-							"value": "318"
-						},
-						{
-							"key": "content-type",
-							"value": "application/json"
-						}
-					],
-					"cookie": [],
-					"body": "{\n    \"bafyreihbescb4iwyj4lbi6x6fkhkr4hzwpxeycbt4vonofqmo7g76kecre\": {\n        \"Data\": {\n            \"Cid\": \"QmXGrrs1TQdc12xpohLxU1RDVaEorg1t2nVYdsFP1WaUdz\",\n            \"Size\": \"17\",\n            \"Type\": \"HOT_IPFS\",\n            \"payload\": \"Payload A\"\n        },\n        \"Height\": 0,\n        \"Timestamp\": \"20201121210315039101\",\n        \"TxHash\": \"0x3997bd12e1ee305856df281aad39afe0a7d6021055a3c86f4c8bcba724c31eb6\",\n        \"prevCid\": \"\"\n    }\n}"
 				}
-			]
+			},
+			"response": []
 		},
 		{
-			"name": "Get last seen diff for all recorded project IDs",
+			"name": "get cachedDiff count",
 			"request": {
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/projects/updates?namespace=gitcoin_grant_&maxCount=20",
+					"raw": "http://localhost:9000/3/payloads/cachedDiffs/count",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"3",
+						"payloads",
+						"cachedDiffs",
+						"count"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get the cached Diffs for a projectId",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/3/payloads/cachedDiffs",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"3",
+						"payloads",
+						"cachedDiffs"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get the updates about a project",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/projects/updates",
 					"protocol": "http",
 					"host": [
 						"localhost"
@@ -466,146 +440,10 @@
 					"path": [
 						"projects",
 						"updates"
-					],
-					"query": [
-						{
-							"key": "namespace",
-							"value": "gitcoin_grant_"
-						},
-						{
-							"key": "maxCount",
-							"value": "20"
-						}
 					]
 				}
 			},
-			"response": [
-				{
-					"name": "Get blocks in a range",
-					"originalRequest": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "http://localhost:9000/20/payloads?from_height=0&to_height=0&data=true",
-							"protocol": "http",
-							"host": [
-								"localhost"
-							],
-							"port": "9000",
-							"path": [
-								"20",
-								"payloads"
-							],
-							"query": [
-								{
-									"key": "from_height",
-									"value": "0"
-								},
-								{
-									"key": "to_height",
-									"value": "0"
-								},
-								{
-									"key": "data",
-									"value": "true"
-								}
-							]
-						}
-					},
-					"status": "OK",
-					"code": 200,
-					"_postman_previewlanguage": "json",
-					"header": [
-						{
-							"key": "date",
-							"value": "Mon, 23 Nov 2020 06:35:21 GMT"
-						},
-						{
-							"key": "server",
-							"value": "uvicorn"
-						},
-						{
-							"key": "content-length",
-							"value": "318"
-						},
-						{
-							"key": "content-type",
-							"value": "application/json"
-						}
-					],
-					"cookie": [],
-					"body": "{\n    \"bafyreihbescb4iwyj4lbi6x6fkhkr4hzwpxeycbt4vonofqmo7g76kecre\": {\n        \"Data\": {\n            \"Cid\": \"QmXGrrs1TQdc12xpohLxU1RDVaEorg1t2nVYdsFP1WaUdz\",\n            \"Size\": \"17\",\n            \"Type\": \"HOT_IPFS\",\n            \"payload\": \"Payload A\"\n        },\n        \"Height\": 0,\n        \"Timestamp\": \"20201121210315039101\",\n        \"TxHash\": \"0x3997bd12e1ee305856df281aad39afe0a7d6021055a3c86f4c8bcba724c31eb6\",\n        \"prevCid\": \"\"\n    }\n}"
-				}
-			]
-		},
-		{
-			"name": "Get count of diffs captured against a project ID",
-			"request": {
-				"method": "GET",
-				"header": [],
-				"url": {
-					"raw": "http://127.0.0.1:9000/gitcoin_grant_40/payloads/cachedDiffs/count",
-					"protocol": "http",
-					"host": [
-						"127",
-						"0",
-						"0",
-						"1"
-					],
-					"port": "9000",
-					"path": [
-						"gitcoin_grant_40",
-						"payloads",
-						"cachedDiffs",
-						"count"
-					]
-				}
-			},
-			"response": [
-				{
-					"name": "Height of projectId",
-					"originalRequest": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "http://localhost:9000/2/payload/height",
-							"protocol": "http",
-							"host": [
-								"localhost"
-							],
-							"port": "9000",
-							"path": [
-								"2",
-								"payload",
-								"height"
-							]
-						}
-					},
-					"status": "OK",
-					"code": 200,
-					"_postman_previewlanguage": "json",
-					"header": [
-						{
-							"key": "date",
-							"value": "Mon, 23 Nov 2020 06:35:10 GMT"
-						},
-						{
-							"key": "server",
-							"value": "uvicorn"
-						},
-						{
-							"key": "content-length",
-							"value": "13"
-						},
-						{
-							"key": "content-type",
-							"value": "application/json"
-						}
-					],
-					"cookie": [],
-					"body": "{\n    \"height\": -1\n}"
-				}
-			]
+			"response": []
 		}
 	],
 	"protocolProfileBehavior": {}
