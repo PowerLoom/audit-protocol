@@ -1,7 +1,6 @@
 # audit-protocol-private
 
 ```
-ipfs daemon
 make localnet
 
 python3 gunicorn_main_launcher.py
