@@ -13,6 +13,8 @@ import aioredis
 import io
 import redis
 import time
+import requests
+import async_timeout
 from skydb import SkydbTable
 import ipfshttpclient
 from config import settings
@@ -87,7 +89,7 @@ async def startup_boilerplate():
         address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
         db=REDIS_CONN_CONF['db'],
         password=REDIS_CONN_CONF['password'],
-        maxsize=5
+        maxsize=100
     )
     app.evc = EVCore(verbose=True)
     app.contract = app.evc.generate_contract_sdk(
@@ -597,8 +599,6 @@ async def get_payloads_diff_counts(
         to_height = max_block_height
     if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
-    extracted_count = 0
-    diff_response = list()
     if settings.METADATA_CACHE == 'redis':
         diff_snapshots_cache_zset = f'projectID:{projectId}:diffSnapshots'
         r = await redis_conn.zcard(diff_snapshots_cache_zset)
@@ -611,12 +611,51 @@ async def get_payloads_diff_counts(
             except:
                 return {'count': None}
 
+
+# TODO: get API key/token specific updates corresponding to projects committed with those credentials
+@app.get('/projects/updates')
+async def get_latest_project_updates(
+        request: Request,
+        response: Response,
+        namespace: str = Query(default=None),
+        maxCount: int = Query(default=20)
+):
+    project_diffs_snapshots = list()
+    if settings.METADATA_CACHE == 'redis':
+        redis_conn_raw = await request.app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        h = await redis_conn.hgetall('auditprotocol:lastSeenSnapshots')
+        if len(h) < 1:
+            request.app.redis_pool.release(redis_conn_raw)
+            return {}
+        for i, d in h.items():
+            project_id = i.decode('utf-8')
+            diff_data = json.loads(d)
+            each_project_info = {
+                'projectId': project_id,
+                'diff_data': diff_data
+            }
+            if namespace and namespace in project_id:
+                project_diffs_snapshots.append(each_project_info)
+            if not namespace:
+                try:
+                    project_id_int = int(project_id)
+                except:
+                    pass
+                else:
+                    project_diffs_snapshots.append(each_project_info)
+        request.app.redis_pool.release(redis_conn_raw)
+    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'], reverse=True)
+    return sorted_project_diffs_snapshots[:maxCount]
+
+
+
 @app.get('/{projectId:str}/payloads/cachedDiffs')
 async def get_payloads_diffs(
         request: Request,
         response: Response,
         projectId: str,
-        from_height: int = Query(default=1),
+        from_height: int = Query(default=0),
         to_height: int = Query(default=-1),
         maxCount: int = Query(default=10),
 ):
@@ -628,11 +667,11 @@ async def get_payloads_diffs(
         if not h:
             max_block_height = 0
         else:
-            max_block_height = int(h.decode('utf-8'))
+            max_block_height = int(h.decode('utf-8')) - 1
 
     if to_height == -1:
         to_height = max_block_height
-    if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
+    if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
     extracted_count = 0
     diff_response = list()
@@ -779,6 +818,7 @@ async def get_payloads(
                     if len(diff_map):
                         rest_logger.debug('Found diff in first time calculation')
                         rest_logger.debug(diff_map)
+                        blocks[idx - 1]['payloadChanged'] = True
                     # cache in redis
                     await redis_conn.set(diff_key, json.dumps(diff_map))
                 else:
@@ -816,6 +856,7 @@ async def payload_height(request: Request, response: Response, projectId: str):
             max_block_height = 0
         else:
             max_block_height = int(h.decode('utf-8'))
+        rest_logger.debug(max_block_height)
         request.app.redis_pool.release(redis_conn_raw)
 
     return {"height": max_block_height}
@@ -847,11 +888,13 @@ async def get_block(request: Request,
         redis_conn = aioredis.Redis(redis_conn_raw)
         max_block_height = await redis_conn.get(f"projectID:{projectId}:blockHeight")
         if not max_block_height:
+            request.app.redis_pool.release(redis_conn_raw)
             response.status_code = 400
             return {'error': 'Block does not exist at this block height'}
         max_block_height = int(max_block_height.decode('utf-8'))
         rest_logger.debug(max_block_height)
         if (block_height > max_block_height) or (block_height <= 0):
+            request.app.redis_pool.release(redis_conn_raw)
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 
