@@ -847,7 +847,7 @@ async def get_block(request: Request,
         if not max_block_height:
             response.status_code = 400
             return {'error': 'Block does not exist at this block height'}
-        max_block_height = int(max_block_height.decode('utf-8'))-1
+        max_block_height = int(max_block_height.decode('utf-8'))
         rest_logger.debug(max_block_height)
         if (block_height > max_block_height) or (block_height <= 0):
             response.status_code = 400
@@ -913,7 +913,7 @@ async def get_block_data(
         if not max_block_height:
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
-        max_block_height = int(max_block_height.decode('utf-8'))-1
+        max_block_height = int(max_block_height.decode('utf-8'))
         if (block_height > max_block_height) or (block_height <= 0):
             response.status_code = 400
             return {'error': 'Invalid Block Height'}

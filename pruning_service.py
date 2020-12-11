@@ -137,7 +137,7 @@ async def build_container(project_id:str):
         - Iterate through each DAG block.
         - Retrieve the payload for each DAG block
         - Add the payload into the DAG block itself 
-        - Add the payload_cid to the bloom_filter of this container
+        - Add the block_dag_cid to the bloom_filter of this container
     """
 
     """ Create a redis connections """
