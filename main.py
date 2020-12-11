@@ -613,6 +613,7 @@ async def get_payloads_diff_counts(
 
 
 # TODO: get API key/token specific updates corresponding to projects committed with those credentials
+
 @app.get('/projects/updates')
 async def get_latest_project_updates(
         request: Request,
@@ -655,7 +656,7 @@ async def get_payloads_diffs(
         request: Request,
         response: Response,
         projectId: str,
-        from_height: int = Query(default=0),
+        from_height: int = Query(default=1),
         to_height: int = Query(default=-1),
         maxCount: int = Query(default=10),
 ):
@@ -667,11 +668,11 @@ async def get_payloads_diffs(
         if not h:
             max_block_height = 0
         else:
-            max_block_height = int(h.decode('utf-8')) - 1
+            max_block_height = int(h.decode('utf-8'))
 
     if to_height == -1:
         to_height = max_block_height
-    if (from_height < 0) or (to_height > max_block_height) or (from_height > to_height):
+    if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
     extracted_count = 0
     diff_response = list()
