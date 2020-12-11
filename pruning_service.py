@@ -82,7 +82,7 @@ async def choose_targets():
             pruning_logger.debug(project_id)
             continue
 
-        to_height, from_height = max_block_height - settings.max_ipfs_blocks, last_pruned_height+1
+        to_height, from_height = last_pruned_height+settings.container_height, last_pruned_height+1
 
         # Get all the blockCids and payloadCids
         block_cids_key = f"projectID:{project_id}:Cids"
