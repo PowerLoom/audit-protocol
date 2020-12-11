@@ -24,7 +24,7 @@ import requests
 import async_timeout
 
 print(settings.as_dict())
-ipfs_client = ipfshttpclient.connect()
+ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -114,7 +114,7 @@ async def get_project_token(request: Request=None, projectId:str = None, overrid
         request.app.redis_pool.release(redis_conn_raw)
         return ""
 
-    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR,False)
+    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
 
     if settings.METADATA_CACHE == "redis":
         """ Check if there is a filecoin token for the project Id """

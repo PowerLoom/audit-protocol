@@ -5,6 +5,7 @@
 		"host": "127.0.0.1",
 		"port": 9002
 	},
+	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
 	"snapshot_interval": 4,
 	"metadata_cache": "redis",
 	"dag_table_name": "DAG_CID",
