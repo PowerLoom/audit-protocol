@@ -402,6 +402,8 @@ async def commit_payload(
             snapshot_cid = ipfs_client.add_json(payload)
         else:
             try:
+                if type(payload) is bytes:
+                    payload = payload.decode('utf-8')
                 snapshot_cid = ipfs_client.add_str(str(payload))
             except:
                 response.status_code = 400

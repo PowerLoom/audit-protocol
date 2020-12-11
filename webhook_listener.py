@@ -154,8 +154,67 @@ async def create_dag_block(event_data:dict, redis_conn):
             )
             await redis_conn.set(f'projectID:{project_id}:blockHeight', tentative_block_height)
 
-        return tentative_block_height
+        return dag_data['Cid']['/'], dag
 
+async def calculate_diff(dag_cid:str, dag:dict, project_id:str, redis_conn):
+    # cache last seen diffs
+    global ipfs_client
+    if dag['prevCid']:
+        payload_cid = dag['data']['cid']
+        prev_dag = ipfs_client.dag.get(dag['prevCid']).as_json()
+        prev_payload_cid = prev_dag['data']['cid']
+        if prev_payload_cid != payload_cid:
+            diff_map = dict()
+            prev_data = ipfs_client.cat(prev_payload_cid).decode('utf-8')
+            rest_logger.debug(prev_data)
+            rest_logger.debug(type(prev_data))
+            prev_data = json.loads(prev_data)
+            # rest_logger.info('Previous payload returned')
+            # rest_logger.info(prev_data)
+            payload = ipfs_client.cat(payload_cid).decode('utf-8')
+            rest_logger.debug(payload)
+            rest_logger.debug(type(payload))
+            payload = json.loads(payload)
+            # rest_logger.info('Current payload')
+            # rest_logger.info(prev_data)
+            for k, v in payload.items():
+                if k not in prev_data.keys():
+                    prev_data[k] = None
+                if v != prev_data[k]:
+                    diff_map[k] = {'old': prev_data[k], 'new': v}
+            diff_data = {
+                'cur': {
+                    'height': dag['height'],
+                    'payloadCid': payload_cid,
+                    'dagCid': dag_cid,
+                    'txHash': dag['txHash'],
+                    'timestamp': dag['timestamp']
+                },
+                'prev': {
+                    'height': prev_dag['height'],
+                    'payloadCid': prev_payload_cid,
+                    'dagCid': dag['prevCid']
+                    # this will be used to fetch the previous block timestamp from the DAG
+                },
+                'diff': diff_map
+            }
+            if settings.METADATA_CACHE == 'redis':
+                diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
+                await redis_conn.zadd(
+                    diff_snapshots_cache_zset,
+                    score=dag['height'],
+                    member=json.dumps(diff_data)
+                )
+                latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
+                await redis_conn.hset(
+                    latest_seen_snapshots_htable,
+                    project_id,
+                    json.dumps(diff_data)
+                )
+
+            return diff_data
+
+    return {}
 
 
 @app.post('/')
@@ -205,7 +264,8 @@ async def create_dag(
                 pending_blocks_key = f"projectId:{project_id}:pendingBlocks"
                 pending_block_creations_key = f"projectId:{project_id}:pendingBlockCreation"
 
-                max_block_height = await create_dag_block(event_data, redis_conn)
+                _dag_cid, dag_block = await create_dag_block(event_data, redis_conn)
+                max_block_height = dag_block['height']
                 """ Remove this block from pending block creations SET """
                 _ = await redis_conn.srem(pending_block_creations_key, event_data['event_data']['payloadCommitId'])
                 _ = await redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
@@ -239,7 +299,8 @@ async def create_dag(
                             _event_data['event_data'].pop('txHash')
 
                             """ Create the dag block for this event """
-                            max_block_height = await create_dag_block(_event_data, redis_conn)
+                            _dag_cid, dag_block = await create_dag_block(_event_data, redis_conn)
+                            max_block_height = dag_block['height']
 
                             """ Remove the dag block from pending block creations list """
                             _ = await redis_conn.srem(pending_block_creations_key, _payload_commit_id)
@@ -252,6 +313,16 @@ async def create_dag(
                             """ Since there is a pending block creation, stop the loop """
                             rest_logger.debug("There is pending block creation left. Breaking out of the loop..")
                             break
+                else:
+                    """ There are no pending blocks in the chaing """
+                    try:
+                        diff_map = await calculate_diff(_dag_cid, dag_block, project_id, redis_conn)
+                    except json.decoder.JSONDecodeError as jerr:
+                        rest_logger.debug("There was an error while decoding the JSON data")
+                        rest_logger.debug(jerr)
+                    else:
+                        rest_logger.debug("The diff map retrieved")
+                        rest_logger.debug(diff_map)
 
             request.app.redis_pool.release(redis_conn_raw)
 
