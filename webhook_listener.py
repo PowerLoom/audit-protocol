@@ -6,6 +6,7 @@ import logging
 from skydb import SkydbTable
 import sys
 import json
+import os
 import io
 
 """ Powergate Imports """
@@ -38,6 +39,15 @@ REDIS_CONN_CONF = {
 
 @app.on_event('startup')
 async def startup_boilerplate():
+    try:
+        os.stat(os.getcwd() + '/bloom_filter_objects')
+    except:
+        os.mkdir(os.getcwd() + '/bloom_filter_objects')
+
+    try:
+        os.stat(os.getcwd() + '/containers')
+    except:
+        os.mkdir(os.getcwd() + '/containers')
     app.redis_pool = await aioredis.create_pool(
         address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
         db=REDIS_CONN_CONF['db'],
