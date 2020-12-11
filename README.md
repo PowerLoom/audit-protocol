@@ -17,5 +17,7 @@ python3 pruning_service.py
 you need to block further calls to the commit_payload endpoint. Once the pending_payload_commits Queue reach a certain 
 limit, it needs to be alerted.
 - "block_storage": Either IPFS to FILECOIN. This variable represents where each of the block or payload needs to be stored
-"payload_storage": Same as that of the block_storage
-"container_height": The no.of DAG blocks each container needs to hold.
+- "payload_storage": Same as that of the block_storage
+- "container_height": The no.of DAG blocks each container needs to hold.
+- "backup_target": Defaults to FILECOIN for now. This variable represents where we want to backup the containers
+
