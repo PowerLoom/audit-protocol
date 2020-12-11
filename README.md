@@ -1,13 +1,14 @@
-# audit-protocol-sia
+# audit-protocol-private
 
 ```
-ngrok http 9900
-
 ipfs daemon
+make localnet
 
-uvicorn webhook_listener:app --port 9900
-
-uvicorn main:app --port 9000
+python3 gunicorn_main_launcher.py
+python3 gunicorn_webhook_launcher.py
+python3 payload_commit_service.py
+python3 retrieval_service.py
+python3 pruning_service.py
 
 ```
 
