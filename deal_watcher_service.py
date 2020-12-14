@@ -10,7 +10,7 @@ import json
 import time
 
 """ Initialize ipfs client """
-ipfs_client = ipfshttpclient.connect()
+ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 """ Inititalize the logger """
 deal_watcher_logger = logging.getLogger(__name__)

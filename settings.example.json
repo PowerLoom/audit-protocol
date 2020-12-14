@@ -11,21 +11,21 @@
 	"dag_table_name": "DAG_CID",
 	"seed": "THISISRANDOMSEED",
 	"dag_structure" : {
-			"height":-1,
-			"prevCid":"",
-			"data": {
-					"cid":"",
-					"type":""
-				},
-			"txHash":"",
-			"timestamp":""
+		"height":-1,
+		"prevCid":"",
+		"data": {
+				"cid":"",
+				"type":""
 			},
-	  "REDIS": {
-		"HOST": "127.0.0.1",
-		"PORT": 6379,
-		"DB": 0,
-		"PASSWORD": null
-	  },
+		"txHash":"",
+		"timestamp":""
+	},
+	"REDIS": {
+	"HOST": "127.0.0.1",
+	"PORT": 6379,
+	"DB": 0,
+	"PASSWORD": null
+	},
 
 	"table_names": {
 		"api_keys": "api_keys",

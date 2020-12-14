@@ -2,6 +2,7 @@ from typing import Optional, Union
 from fastapi import Depends, FastAPI, WebSocket, HTTPException, Security, Request, Response, BackgroundTasks, Cookie, \
     Query, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from functools import wraps
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
 from maticvigil.EVCore import EVCore
@@ -96,6 +97,26 @@ async def startup_boilerplate():
         contract_address=settings.audit_contract,
         app_name='auditrecords'
     )
+
+
+def setup_teardown_boilerplate(fn):
+    @wraps(fn)
+    async def wrapped(*args, **kwargs):
+        arg_conn = 'redis_conn'
+        # func_params = fn.__code__.co_varnames
+        redis_conn_raw = await kwargs['request'].app.redis_pool.acquire()
+        redis_conn = aioredis.Redis(redis_conn_raw)
+        # conn_in_args = arg_conn in func_params and func_params.index(arg_conn) < len(args)
+        # conn_in_kwargs = arg_conn in kwargs
+        kwargs[arg_conn] = redis_conn
+        try:
+            return await fn(*args, **kwargs)
+        except:
+            return {'error': 'Internal Server Error'}
+        finally:
+            kwargs['request'].app.redis_pool.release()
+    return wrapped
+
 
 async def get_project_token(request: Request=None, projectId:str = None, override_settings=False):
     """ From the request body, extract the projectId and return back the powergate token."""
@@ -305,10 +326,13 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
     pendingTransactionsKey = f"projectId:{project_id}:pendingBlockCreation"
     _ = await redis_conn.sadd(pendingTransactionsKey, payload_commit_id)
 
+
+# @setup_teardown_boilerplate
 @app.post('/commit_payload')
 async def commit_payload(
         request: Request,
         response: Response,
+        # redis_conn: aioredis.Redis,
         token: str = Depends(get_project_token)
 ):
     """ 
@@ -386,7 +410,6 @@ async def commit_payload(
     """ Instead of adding payload to directly IPFS, stage it to Filecoin and get back the Cid"""
     if type(payload) is dict:
         payload = json.dumps(payload)
-    payload = payload.encode('utf-8')
 
     if settings.payload_storage == "FILECOIN":
         powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
@@ -404,8 +427,6 @@ async def commit_payload(
             snapshot_cid = ipfs_client.add_json(payload)
         else:
             try:
-                if type(payload) is bytes:
-                    payload = payload.decode('utf-8')
                 snapshot_cid = ipfs_client.add_str(str(payload))
             except:
                 response.status_code = 400
@@ -970,7 +991,7 @@ async def get_block_data(
             from_height = block_height
             to_height = block_height
             _data = 2 # Get data only and not the block itself
-            request_id = create_retrieval_request(
+            request_id = await create_retrieval_request(
                 projectId,
                 from_height,
                 to_height,

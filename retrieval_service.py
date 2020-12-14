@@ -11,7 +11,7 @@ import time
 from bloom_filter import BloomFilter
 
 """ Initialize ipfs client """
-ipfs_client = ipfshttpclient.connect()
+ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 """ Inititalize the logger """
 retrieval_logger = logging.getLogger(__name__)

@@ -7,7 +7,8 @@ import io
 import settings
 from skydb import SkydbTable
 
-client = ipfshttpclient.connect()
+ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
+
 table = SkydbTable(table_name='new_links',columns=['c1'],seed="MY SEED")
 prevCid = None
 if table.index > 0:
