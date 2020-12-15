@@ -61,6 +61,8 @@ async def choose_targets():
             """ No blocks exists for that projectId"""
             max_block_height: int = 0
 
+        pruning_logger.debug("Retrieved block height:")
+        pruning_logger.debug(max_block_height)
         # Check if the project_id is still a small chain
         if max_block_height < settings.max_ipfs_blocks:
             continue
@@ -74,9 +76,10 @@ async def choose_targets():
         else:
             _ = await redis_conn.set(last_pruned_key, 0)
             last_pruned_height = 0
+        pruning_logger.debug("Last Pruned Height: ")
+        pruning_logger.debug(last_pruned_height)
 
-
-        if settings.container_height + last_pruned_height + 1 > max_block_height - settings.max_ipfs_blocks:
+        if settings.container_height + last_pruned_height > max_block_height - settings.max_ipfs_blocks:
             """ Check if are settings.container_height amount of blocks left """
             pruning_logger.debug("Not enough blocks for: ")
             pruning_logger.debug(project_id)
@@ -92,18 +95,6 @@ async def choose_targets():
             max=to_height,
             withscores=True
         )
-        #payload_cids_key = f"projectID:{project_id}:payloadCids"
-        #payload_cids_to_prune = await redis_conn.zrangebyscore(
-        #    key=payload_cids_key,
-        #    min=from_height,
-        #    max=to_height,
-        #    withscores=False
-        #)
-        #all_cids = list(block_cids_to_prune) + list(payload_cids_to_prune)
-        #target_list_key = f"toBeUnpinnedCids:{project_id}"
-        #for cid in all_cids:
-        #    _ = await redis_conn.sadd(target_list_key, cid)
-
 
         """ Add dag blocks to the to-unpin-list """
         dag_unpin_key = f"projectID:{project_id}:targetDags"

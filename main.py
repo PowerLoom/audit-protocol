@@ -97,7 +97,8 @@ async def startup_boilerplate():
         app_name='auditrecords'
     )
 
-async def get_project_token(request: Request=None, projectId:str = None, override_settings=False):
+
+async def get_project_token(request: Request = None, projectId: str = None, override_settings=False):
     """ From the request body, extract the projectId and return back the powergate token."""
     if projectId is None:
         req_args = await request.json()
@@ -110,7 +111,8 @@ async def get_project_token(request: Request=None, projectId:str = None, overrid
 
     """ Intitalize powergate client """
     rest_logger.debug("Intitializing powergate client")
-    if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (override_settings == False):
+    if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (
+            override_settings == False):
         request.app.redis_pool.release(redis_conn_raw)
         return ""
 
@@ -124,12 +126,12 @@ async def get_project_token(request: Request=None, projectId:str = None, overrid
             user = powgate_client.admin.users.create()
             token = user.token
             _ = await redis_conn.set(KEY, token)
-            rest_logger.debug("Created a token for projectId: "+str(projectId))
-            rest_logger.debug("Token: "+token)
+            rest_logger.debug("Created a token for projectId: " + str(projectId))
+            rest_logger.debug("Token: " + token)
 
         else:
             token = token.decode('utf-8')
-            rest_logger.debug("Retrieved token: "+token+", for project Id: "+str(projectId))
+            rest_logger.debug("Retrieved token: " + token + ", for project Id: " + str(projectId))
 
         """ Release Redis connection pool"""
         request.app.redis_pool.release(redis_conn_raw)
@@ -149,7 +151,7 @@ async def retrieve_block_data(block_dag, redis_conn, data_flag=0):
                 2 - Return only the payload data 
     """
 
-    assert data_flag in range(0,3), f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
+    assert data_flag in range(0, 3), f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
 
     """ Increment the hits of that block """
     block_dag_hits_key = f"hitsDagBlock"
@@ -192,7 +194,7 @@ async def retrieve_payload_data(payload_cid, redis_conn):
     return payload_data
 
 
-async def get_max_block_height(project_id:str, redis_conn):
+async def get_max_block_height(project_id: str, redis_conn):
     """
         - Given the projectId and redis_conn, get the prev_dag_cid, block height and
         tetative block height of that projectId from redis
@@ -219,7 +221,6 @@ async def get_max_block_height(project_id:str, redis_conn):
     else:
         prev_dag_cid = ""
 
-
     last_snapshot_cid_key = f'projectID:{project_id}:lastSnapshotCid'
     out = await redis_conn.get(last_snapshot_cid_key)
     rest_logger.debug("The last snapshot cid was:")
@@ -239,18 +240,18 @@ async def get_max_block_height(project_id:str, redis_conn):
     return (prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid)
 
 
-async def create_retrieval_request(project_id:str, from_height:int, to_height:int, data:int, redis_conn):
+async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, redis_conn):
     request_id = str(uuid4())
 
     """ Setup the retrievalRequestInfo HashTable """
     retrieval_request_info_key = f"retrievalRequestInfo:{request_id}"
     fields = {
-        'projectId':project_id,
-        'to_height':to_height,
-        'from_height':from_height,
+        'projectId': project_id,
+        'to_height': to_height,
+        'from_height': from_height,
         'data': data
     }
-    
+
     _ = await redis_conn.hmset_dict(
         key=retrieval_request_info_key,
         **fields
@@ -261,8 +262,8 @@ async def create_retrieval_request(project_id:str, from_height:int, to_height:in
     return request_id
 
 
-async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id, redis_conn, contract):
-
+async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id,
+                           redis_conn, contract):
     """
         - Create a unqiue transaction_id associated with this transaction, 
         and add it to the set of pending transactions
@@ -295,15 +296,15 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
             rest_logger.debug(tx_hash_obj)
 
     if e_obj and cm.expired:
-        rest_logger.debug("="*80)
+        rest_logger.debug("=" * 80)
         rest_logger.debug("The transaction was not succesfull")
         rest_logger.debug("Commit Payload failed to MaticVigil API")
         rest_logger.debug(e_obj)
-        rest_logger.debug("="*80)
-
+        rest_logger.debug("=" * 80)
 
     pendingTransactionsKey = f"projectId:{project_id}:pendingBlockCreation"
     _ = await redis_conn.sadd(pendingTransactionsKey, payload_commit_id)
+
 
 @app.post('/commit_payload')
 async def commit_payload(
@@ -364,9 +365,8 @@ async def commit_payload(
         """
         redis_conn_raw = await request.app.redis_pool.acquire()
         redis_conn = aioredis.Redis(redis_conn_raw)
-        prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid= \
+        prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid = \
             await get_max_block_height(project_id, redis_conn)
-        
 
     rest_logger.debug("Got last tentative block height: ")
     rest_logger.debug(last_tentative_block_height)
@@ -398,7 +398,7 @@ async def commit_payload(
         KEY = f"jobStatus:{snapshot_cid}"
         _ = await redis_conn.set(key=KEY, value=job.jobId)
         rest_logger.debug("Pushed the payload to filecoin.")
-        rest_logger.debug("Job Id: "+job.jobId)
+        rest_logger.debug("Job Id: " + job.jobId)
     elif settings.payload_storage == "IPFS":
         if type(payload) is dict:
             snapshot_cid = ipfs_client.add_json(payload)
@@ -419,7 +419,6 @@ async def commit_payload(
         member=snapshot_cid
     )
 
-
     """ Create a unique identifier for this payload """
     payload_data = {
         'tentativeBlockHeight': last_tentative_block_height,
@@ -430,22 +429,22 @@ async def commit_payload(
     rest_logger.debug("Created the unique payload commit id: ")
     rest_logger.debug(payload_commit_id)
 
-
     """ Check if there are any pending Block creations left or any pending payloads left to commit """
     pending_block_creations_key = f"projectId:{project_id}:pendingBlockCreation"
     pending_payload_commits_key = f"pendingPayloadCommits"
     pending_block_creations = await redis_conn.smembers(pending_block_creations_key)
     pending_payload_commits = await redis_conn.lrange(pending_payload_commits_key, 0, -1)
-    if (len(pending_block_creations) > 0) or (len(pending_payload_commits) > 0) :
+    if (len(pending_block_creations) > 0) or (len(pending_payload_commits) > 0):
         rest_logger.debug("There are pending block creations or pending payloads to commit...")
-        rest_logger.debug("Queuing up this payload to be processed once all blocks are created or all the pending payloads are committed.")
+        rest_logger.debug(
+            "Queuing up this payload to be processed once all blocks are created or all the pending payloads are committed.")
 
         """ Create the Hash table for Payload """
         payload_commit_key = f"payloadCommit:{payload_commit_id}"
         fields = {
-            'snapshotCid':snapshot_cid,
-            'projectId':project_id,
-            'tentativeBlockHeight':last_tentative_block_height,
+            'snapshotCid': snapshot_cid,
+            'projectId': project_id,
+            'tentativeBlockHeight': last_tentative_block_height,
         }
 
         _ = await redis_conn.hmset_dict(
@@ -468,14 +467,14 @@ async def commit_payload(
 
         token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
         _ = await make_transaction(
-                                snapshot_cid=snapshot_cid, 
-                                token_hash=token_hash, 
-                                payload_commit_id=payload_commit_id,
-                                last_tentative_block_height=last_tentative_block_height,
-                                project_id=project_id,
-                                redis_conn=redis_conn,
-                                contract=request.app.contract
-                    )
+            snapshot_cid=snapshot_cid,
+            token_hash=token_hash,
+            payload_commit_id=payload_commit_id,
+            last_tentative_block_height=last_tentative_block_height,
+            project_id=project_id,
+            redis_conn=redis_conn,
+            contract=request.app.contract
+        )
 
     _ = await redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
     last_snapshot_cid_key = f'projectID:{project_id}:lastSnapshotCid'
@@ -483,7 +482,7 @@ async def commit_payload(
     rest_logger.debug(snapshot_cid)
     _ = await redis_conn.set(last_snapshot_cid_key, snapshot_cid)
     request.app.redis_pool.release(redis_conn_raw)
-    
+
     return {
         'cid': snapshot_cid,
         'tentativeHeight': last_tentative_block_height,
@@ -491,14 +490,14 @@ async def commit_payload(
     }
 
 
-@app.get('/requests/{requestId:str}')
+@app.get('/requests/{request_id:str}')
 async def request_status(
-    request: Request,
-    response: Response,
-    requestId:str,
+        request: Request,
+        response: Response,
+        request_id: str,
 ):
     """
-        Given a requestId, return either the status of that request or retrieve all the payloads for that 
+        Given a request_id, return either the status of that request or retrieve all the payloads for that
     """
 
     redis_conn_raw = await request.app.redis_pool.acquire()
@@ -506,12 +505,12 @@ async def request_status(
 
     # Check if the request is already in the pending list
     requests_list_key = f"pendingRetrievalRequests"
-    out = await redis_conn.sismember(requests_list_key, requestId)
-    if out == True:
-        return {'requestId': requestId, 'requestStatus':'Pending'}
+    out = await redis_conn.sismember(requests_list_key, request_id)
+    if out is True:
+        return {'requestId': request_id, 'requestStatus': 'Pending'}
 
     # Get all the retrieved files
-    retrieval_files_key = f"retrievalRequestFiles:{requestId}"
+    retrieval_files_key = f"retrievalRequestFiles:{request_id}"
     retrieved_files = await redis_conn.zrange(
         key=retrieval_files_key,
         start=0,
@@ -519,20 +518,25 @@ async def request_status(
         withscores=True
     )
 
+    if not retrieved_files:
+        response.status_code = 400
+        return {'error': 'Invalid requestId'}
+
     data = {}
-    files = {}
+    files = []
     for file_, block_height in retrieved_files:
         file_ = file_.decode('utf-8')
         cid = file_.split('/')[-1]
         block_height = int(block_height)
 
         dag_block = {
-            'payloadFile':'/'+file_,
+            'dagCid': cid,
+            'payloadFile': '/' + file_,
             'height': block_height
         }
-        files[cid] = dag_block
+        files.append(dag_block)
 
-    data['requestId'] = requestId
+    data['requestId'] = request_id
     data['requestStatus'] = 'Completed'
     data['files'] = files
     response.status_code = 200
@@ -572,7 +576,8 @@ async def get_latest_project_updates(
                 else:
                     project_diffs_snapshots.append(each_project_info)
         request.app.redis_pool.release(redis_conn_raw)
-    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'], reverse=True)
+    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'],
+                                            reverse=True)
     return sorted_project_diffs_snapshots[:maxCount]
 
 
@@ -646,9 +651,9 @@ async def get_latest_project_updates(
                 else:
                     project_diffs_snapshots.append(each_project_info)
         request.app.redis_pool.release(redis_conn_raw)
-    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'], reverse=True)
+    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'],
+                                            reverse=True)
     return sorted_project_diffs_snapshots[:maxCount]
-
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs')
@@ -730,22 +735,23 @@ async def get_payloads(
             data = False
 
     if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
+        response.status_code = 400
         return {'error': 'Invalid Height'}
 
     if from_height < max_block_height - settings.max_ipfs_blocks:
         """ Create a request Id and start a retrieval request """
         _data = '1' if data else '0'
         request_id = await create_retrieval_request(
-                                projectId, 
-                                from_height, 
-                                to_height, 
-                                _data, 
-                                redis_conn)
+            projectId,
+            from_height,
+            to_height,
+            _data,
+            redis_conn)
         request.app.redis_pool.release(redis_conn_raw)
 
         return {'requestId': request_id}
 
-    blocks = list() # Will hold the list of blocks in range from_height, to_height
+    blocks = list()  # Will hold the list of blocks in range from_height, to_height
     current_height = to_height
     prev_dag_cid = ""
     prev_payload_cid = None
@@ -768,7 +774,7 @@ async def get_payloads(
                 else:
                     return {'error': 'NoRecordsFound'}
         block = None
-        #block = ipfs_client.dag.get(prev_dag_cid).as_json()
+        # block = ipfs_client.dag.get(prev_dag_cid).as_json()
         data_flag = 1 if data else 0
         block = await retrieve_block_data(prev_dag_cid, redis_conn, data_flag=data_flag)
         rest_logger.debug("Block Retrieved: ")
@@ -780,15 +786,16 @@ async def get_payloads(
 
         # Get the diff_map between the current and previous snapshot
         if prev_payload_cid:
-            if prev_payload_cid != block['data']['cid']: # If the cid of previous snapshot does not match with the current snapshot
-                blocks[idx-1]['payloadChanged'] = True
+            if prev_payload_cid != block['data'][
+                'cid']:  # If the cid of previous snapshot does not match with the current snapshot
+                blocks[idx - 1]['payloadChanged'] = True
                 diff_key = f"CidDiff:{prev_payload_cid}:{block['data']['cid']}"
                 diff_b = await redis_conn.get(diff_key)
                 diff_map = dict()
-                if not diff_b: 
+                if not diff_b:
                     # diff not cached already
                     rest_logger.debug('Diff not cached | New CID | Old CID')
-                    rest_logger.debug(blocks[idx-1]['data']['cid'])
+                    rest_logger.debug(blocks[idx - 1]['data']['cid'])
                     rest_logger.debug(block['data']['cid'])
 
                     """ If the payload is not yet retrieved, then get if from ipfs """
@@ -800,8 +807,8 @@ async def get_payloads(
                     rest_logger.debug(prev_data)
                     prev_data = json.loads(prev_data)
 
-                    if 'payload' in blocks[idx-1]['data'].keys():
-                        cur_data = blocks[idx-1]['data']['payload']
+                    if 'payload' in blocks[idx - 1]['data'].keys():
+                        cur_data = blocks[idx - 1]['data']['payload']
                     else:
                         cur_data = await retrieve_payload_data(block['data']['cid'], redis_conn)
                     cur_data = json.loads(cur_data)
@@ -828,9 +835,9 @@ async def get_payloads(
                     rest_logger.debug(blocks[idx - 1]['data']['cid'])
                     rest_logger.debug(block['data']['cid'])
                     rest_logger.debug(diff_map)
-                blocks[idx-1]['diff'] = diff_map
-            else: # If the cid of current snapshot is the same as that of the previous snapshot
-                blocks[idx-1]['payloadChanged'] = False
+                blocks[idx - 1]['diff'] = diff_map
+            else:  # If the cid of current snapshot is the same as that of the previous snapshot
+                blocks[idx - 1]['payloadChanged'] = False
         prev_payload_cid = block['data']['cid']
         blocks.append(formatted_block)
         prev_dag_cid = formatted_block['prevDagCid']
@@ -905,13 +912,13 @@ async def get_block(request: Request,
 
             from_height = block_height
             to_height = block_height
-            _data = 0 # This means, fetch only the DAG Block
+            _data = 0  # This means, fetch only the DAG Block
             request_id = await create_retrieval_request(
-                                    projectId, 
-                                    from_height, 
-                                    to_height, 
-                                    _data, 
-                                    redis_conn)
+                projectId,
+                from_height,
+                to_height,
+                _data,
+                redis_conn)
             request.app.redis_pool.release(redis_conn_raw)
 
             return {'requestId': request_id}
@@ -924,13 +931,14 @@ async def get_block(request: Request,
             max=block_height,
             withscores=False
         )
-        
+
         prev_dag_cid = r[0].decode('utf-8')
 
         block = await retrieve_block_data(prev_dag_cid, redis_conn, data_flag=0)
 
         request.app.redis_pool.release(redis_conn_raw)
         return {prev_dag_cid: block}
+
 
 @app.get('/{projectId:str}/payload/{block_height:int}/data')
 async def get_block_data(
@@ -939,7 +947,6 @@ async def get_block_data(
         projectId: str,
         block_height: int,
 ):
-
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
@@ -969,8 +976,8 @@ async def get_block_data(
             rest_logger.debug(block_height)
             from_height = block_height
             to_height = block_height
-            _data = 2 # Get data only and not the block itself
-            request_id = create_retrieval_request(
+            _data = 2  # Get data only and not the block itself
+            request_id = await create_retrieval_request(
                 projectId,
                 from_height,
                 to_height,
@@ -997,4 +1004,3 @@ async def get_block_data(
 
         """ Return the payload data """
         return {prev_dag_cid: payload}
-

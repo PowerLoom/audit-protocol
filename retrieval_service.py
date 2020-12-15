@@ -66,12 +66,7 @@ async def retrieve_files():
             retrieval_logger.debug("Last Pruned Height:")
             retrieval_logger.debug(last_pruned_height)
 
-            # Get the max_block_height of the projectId
-            block_height_key = f"projectID:{project_id}:blockHeight"
-            max_block_height: bytes = await redis_conn.get(last_block_key)
-            max_block_height = int(max_block_height)
-
-            # Get the token for that projectId
+             # Get the token for that projectId
             token_key = f"filecoinToken:{request_info['projectId']}"
             token = await redis_conn.get(token_key)
             token = token.decode('utf-8')

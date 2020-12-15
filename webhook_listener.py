@@ -55,7 +55,8 @@ async def startup_boilerplate():
         maxsize=5
     )
 
-async def save_event_data(event_data:dict, redis_conn):
+
+async def save_event_data(event_data: dict, redis_conn):
     """
         - Given event_data, save the txHash, timestamp, projectId, snapshotCid, tentativeBlockHeight
         onto a redis HashTable with key: eventData:{payloadCommitId}
@@ -77,96 +78,97 @@ async def save_event_data(event_data:dict, redis_conn):
     )
 
     pending_blocks_key = f"projectId:{event_data['event_data']['projectId']}:pendingBlocks"
-    _ = await redis_conn.zadd (
-            key=pending_blocks_key, 
-            member=event_data['event_data']['payloadCommitId'],
-            score=int(event_data['event_data']['tentativeBlockHeight'])
-        )
+    _ = await redis_conn.zadd(
+        key=pending_blocks_key,
+        member=event_data['event_data']['payloadCommitId'],
+        score=int(event_data['event_data']['tentativeBlockHeight'])
+    )
 
     return 0
 
-async def create_dag_block(event_data:dict, redis_conn):
 
-        txHash = event_data['txHash']
-        project_id = event_data['event_data']['projectId']
-        tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
-        snapshotCid = event_data['event_data']['snapshotCid']
-        timestamp = event_data['event_data']['timestamp']
+async def create_dag_block(event_data: dict, redis_conn):
+    txHash = event_data['txHash']
+    project_id = event_data['event_data']['projectId']
+    tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
+    snapshotCid = event_data['event_data']['snapshotCid']
+    timestamp = event_data['event_data']['timestamp']
 
-        if settings.block_storage == "FILECOIN":
-            """ Get the filecoin token for the project Id """
-            KEY = f"filecoinToken:{project_id}"
-            token = await redis_conn.get(KEY)
-            token = token.decode('utf-8')
+    if settings.block_storage == "FILECOIN":
+        """ Get the filecoin token for the project Id """
+        KEY = f"filecoinToken:{project_id}"
+        token = await redis_conn.get(KEY)
+        token = token.decode('utf-8')
 
-        """ Get the last dag cid for the project_id """
+    """ Get the last dag cid for the project_id """
+    last_dag_cid_key = f"projectId:{project_id}:lastDagCid"
+    last_dag_cid = await redis_conn.get(last_dag_cid_key)
+    if last_dag_cid:
+        last_dag_cid = last_dag_cid.decode('utf-8')
+    else:
+        last_dag_cid = ""
+
+    """ Fill up the dag """
+    dag = settings.dag_structure
+    dag['height'] = tentative_block_height
+    dag['prevCid'] = last_dag_cid
+    dag['data'] = {
+        'cid': snapshotCid,
+        'type': 'COLD_FILECOIN',
+    }
+    dag['txHash'] = txHash
+    dag['timestamp'] = timestamp
+    rest_logger.debug(dag)
+
+    """ Convert dag structure to json and put it on ipfs dag """
+    json_string = json.dumps(dag).encode('utf-8')
+    dag_data = ipfs_client.dag.put(io.BytesIO(json_string))
+    rest_logger.debug("The DAG cid is: ")
+    rest_logger.debug(dag_data['Cid']['/'])
+
+    if settings.block_storage == "FILECOIN":
+        """ Put the dag json on to filecoin """
+        powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+        staged_res = powgate_client.data.stage_bytes(json_string, token=token)
+        job = powgate_client.config.apply(staged_res.cid, override=False, token=token)
+
+        block_filecoin_storage_key = f"blockFilecoinStorage:{project_id}:{tentative_block_height}"
+        fields = {
+            'blockStageCid': staged_res.cid,
+            'blockDagCid': dag_data['Cid']['/'],
+            'jobId': job.jobId
+        }
+
+        _ = await redis_conn.hmset_dict(
+            key=block_filecoin_storage_key,
+            **fields
+        )
+
+        rest_logger.debug("Pushed the block data to filecoin: ")
+        rest_logger.debug("Job: " + job.jobId)
+
+    if settings.METADATA_CACHE == 'skydb':
+        ipfs_table = SkydbTable(
+            table_name=f"{settings.dag_table_name}:{project_id}",
+            columns=['cid'],
+            seed=settings.seed,
+            verbose=1
+        )
+        ipfs_table.add_row({'cid': dag_data['Cid']['/']})
+    elif settings.METADATA_CACHE == 'redis':
         last_dag_cid_key = f"projectId:{project_id}:lastDagCid"
-        last_dag_cid = await redis_conn.get(last_dag_cid_key)
-        if last_dag_cid:
-            last_dag_cid = last_dag_cid.decode('utf-8')
-        else:
-            last_dag_cid = ""
+        await redis_conn.set(last_dag_cid_key, dag_data['Cid']['/'])
+        await redis_conn.zadd(
+            key=f'projectID:{project_id}:Cids',
+            score=tentative_block_height,
+            member=dag_data['Cid']['/']
+        )
+        await redis_conn.set(f'projectID:{project_id}:blockHeight', tentative_block_height)
 
-        """ Fill up the dag """
-        dag = settings.dag_structure
-        dag['height'] = tentative_block_height
-        dag['prevCid'] = last_dag_cid
-        dag['data'] = {
-                    'cid': snapshotCid,
-                    'type': 'COLD_FILECOIN',
-                }
-        dag['txHash'] = txHash
-        dag['timestamp'] = timestamp
-        rest_logger.debug(dag)
+    return dag_data['Cid']['/'], dag
 
-        """ Convert dag structure to json and put it on ipfs dag """
-        json_string = json.dumps(dag).encode('utf-8')
-        dag_data = ipfs_client.dag.put(io.BytesIO(json_string))
-        rest_logger.debug("The DAG cid is: ")
-        rest_logger.debug(dag_data['Cid']['/'])
 
-        if settings.block_storage == "FILECOIN":
-            """ Put the dag json on to filecoin """
-            powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
-            staged_res = powgate_client.data.stage_bytes(json_string, token=token)
-            job = powgate_client.config.apply(staged_res.cid, override=False, token=token)
-
-            block_filecoin_storage_key = f"blockFilecoinStorage:{project_id}:{tentative_block_height}"
-            fields = {
-                'blockStageCid': staged_res.cid,
-                'blockDagCid': dag_data['Cid']['/'],
-                'jobId': job.jobId
-            }
-
-            _ = await redis_conn.hmset_dict(
-                key=block_filecoin_storage_key,
-                **fields
-            )
-            
-            rest_logger.debug("Pushed the block data to filecoin: ")
-            rest_logger.debug("Job: "+job.jobId)
-
-        if settings.METADATA_CACHE == 'skydb':
-            ipfs_table = SkydbTable(
-                table_name=f"{settings.dag_table_name}:{project_id}",
-                columns=['cid'],
-                seed=settings.seed,
-                verbose=1
-            )
-            ipfs_table.add_row({'cid': dag_data['Cid']['/']})
-        elif settings.METADATA_CACHE == 'redis':
-            last_dag_cid_key = f"projectId:{project_id}:lastDagCid"
-            await redis_conn.set(last_dag_cid_key, dag_data['Cid']['/'])
-            await redis_conn.zadd(
-                key=f'projectID:{project_id}:Cids',
-                score=tentative_block_height,
-                member=dag_data['Cid']['/']
-            )
-            await redis_conn.set(f'projectID:{project_id}:blockHeight', tentative_block_height)
-
-        return dag_data['Cid']['/'], dag
-
-async def calculate_diff(dag_cid:str, dag:dict, project_id:str, redis_conn):
+async def calculate_diff(dag_cid: str, dag: dict, project_id: str, redis_conn):
     # cache last seen diffs
     global ipfs_client
     if dag['prevCid']:
@@ -231,12 +233,12 @@ async def calculate_diff(dag_cid:str, dag:dict, project_id:str, redis_conn):
 async def create_dag(
         request: Request,
         response: Response,
-    ):
+):
     event_data = await request.json()
-    #rest_logger.debug(event_data)
+    # rest_logger.debug(event_data)
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
-            #rest_logger.debug(event_data)
+            # rest_logger.debug(event_data)
 
             """ Create a Redis Connection """
             rest_logger.debug("Creating a redis connection....")
@@ -257,16 +259,18 @@ async def create_dag(
             rest_logger.debug("Tentative Block Height and Block Height")
             rest_logger.debug(tentative_block_height)
             rest_logger.debug(max_block_height)
-            if tentative_block_height > max_block_height+1:
+            if tentative_block_height > max_block_height + 1:
                 """ 
                 Since there are events that are yet to come, put this event data 
                 into redis and once the required event arrives, complete the block creation
                 """
                 rest_logger.debug("There are pending block creations left. Caching the event data for: ")
-                rest_logger.debug("Transaction: "+event_data['txHash']+", PayloadCommitId: "+event_data['event_data']['payloadCommitId'])
+                rest_logger.debug(
+                    "Transaction: " + event_data['txHash'] + ", PayloadCommitId: " + event_data['event_data'][
+                        'payloadCommitId'])
                 _ = await save_event_data(event_data, redis_conn)
 
-            elif tentative_block_height == max_block_height+1:
+            elif tentative_block_height == max_block_height + 1:
                 """
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
@@ -293,19 +297,19 @@ async def create_dag(
                         _payload_commit_id = _payload_commit_id.decode('utf-8')
                         _tt_block_height = int(_tt_block_height)
 
-                        if _tt_block_height == max_block_height+1:
+                        if _tt_block_height == max_block_height + 1:
                             rest_logger.debug("Processing:")
-                            rest_logger.debug("payload_commit_id: "+_payload_commit_id)
-                            rest_logger.debug("tentative block height: "+str(_tt_block_height))
+                            rest_logger.debug("payload_commit_id: " + _payload_commit_id)
+                            rest_logger.debug("tentative block height: " + str(_tt_block_height))
 
-                            """ Retrieve the event data for the payload_commit_id """ 
+                            """ Retrieve the event data for the payload_commit_id """
                             event_data_key = f"eventData:{_payload_commit_id}"
                             out = await redis_conn.hgetall(key=event_data_key)
 
-                            _event_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in out.items()}
+                            _event_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
                             fields_to_delete = list(_event_data.keys())
                             _event_data['event_data'] = {}
-                            _event_data['event_data'].update({k:v for k,v in _event_data.items()})
+                            _event_data['event_data'].update({k: v for k, v in _event_data.items()})
                             _event_data['event_data'].pop('txHash')
 
                             """ Create the dag block for this event """
@@ -324,7 +328,7 @@ async def create_dag(
                             rest_logger.debug("There is pending block creation left. Breaking out of the loop..")
                             break
                 else:
-                    """ There are no pending blocks in the chaing """
+                    """ There are no pending blocks in the chain """
                     try:
                         diff_map = await calculate_diff(_dag_cid, dag_block, project_id, redis_conn)
                     except json.decoder.JSONDecodeError as jerr:

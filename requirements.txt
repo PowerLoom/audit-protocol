@@ -1,14 +1,14 @@
-fastapi
+fastapi~=0.62.0
 uvicorn
 pygate_grpc
 git+https://github.com/blockvigil/maticvigil-python-sdk.git
 git+https://github.com/powerloom/py-skydb.git
 eth_utils
-aioredis
+aioredis~=1.3.1
 aiofiles
 aiohttp
-redis
-coloredlogs
+redis~=3.5.3
+coloredlogs~=15.0
 tenacity
 git+https://github.com/ipfs/py-ipfs-http-client.git
 # ipfshttpclient
@@ -29,3 +29,5 @@ httptools==0.1.1  # https://github.com/MagicStack/httptools
 uvloop==0.14.0  # https://github.com/MagicStack/uvloop
 async_timeout
 bloom_filter
+requests
+
