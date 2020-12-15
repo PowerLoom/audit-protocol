@@ -13,3 +13,5 @@ files/
 .secrets.*
 bloom_filter_objects/
 containers/
+startup.sh
+test_eco.config.js

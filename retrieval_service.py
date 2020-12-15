@@ -45,12 +45,31 @@ async def retrieve_files():
             requestId = requestId.decode('utf-8')
             retrieval_logger.debug("Processing request: "+requestId)
 
+
             """ Get the required information about the requestId """
             key = f"retrievalRequestInfo:{requestId}"
             out  = await redis_conn.hgetall(key=key)
             request_info = {k.decode('utf-8'):i.decode('utf-8') for k,i in out.items()}
             retrieval_logger.debug(f"Retrieved information for request: {requestId}")
             retrieval_logger.debug(request_info)
+
+            """ Check if any of the files in this request are not pushed to filecoin yet """
+            # Get the height of last pruned cid
+            last_pruned_key = f"lastPruned:{request_info['projectId']}"
+            out: bytes = await redis_conn.get(last_pruned_key)
+            if out:
+                last_pruned_height = int(out.decode('utf-8'))
+            else:
+                _ = await redis_conn.set(last_pruned_key, 0)
+                last_pruned_height = 0
+
+            retrieval_logger.debug("Last Pruned Height:")
+            retrieval_logger.debug(last_pruned_height)
+
+            # Get the max_block_height of the projectId
+            block_height_key = f"projectID:{project_id}:blockHeight"
+            max_block_height: bytes = await redis_conn.get(last_block_key)
+            max_block_height = int(max_block_height)
 
             # Get the token for that projectId
             token_key = f"filecoinToken:{request_info['projectId']}"
@@ -81,7 +100,7 @@ async def retrieve_files():
                 payload_data = None
                 
                 """ Check if the DAG block is pinned """
-                if block_height < max_block_height - settings.max_ipfs_blocks:
+                if (block_height < max_block_height - settings.max_ipfs_blocks) or (last_pruned_height < int(request_info['to_height'])):
                     """ Get the data directly through the IPFS client """
                     block_dag = ipfs_client.dag.get(block_cid).as_json()
                     payload_data = ipfs_client.cat(block_dag['data']['cid'])

@@ -900,7 +900,7 @@ async def get_block(request: Request,
             return {'error': 'Invalid Block Height'}
 
         if block_height < max_block_height - settings.max_ipfs_blocks:
-            rest_logger.debug("Block at being fetched at height: ")
+            rest_logger.debug("Block being fetched at height: ")
             rest_logger.debug(block_height)
 
             from_height = block_height

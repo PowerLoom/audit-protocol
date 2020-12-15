@@ -28,3 +28,4 @@ loguru==0.5.3
 httptools==0.1.1  # https://github.com/MagicStack/httptools
 uvloop==0.14.0  # https://github.com/MagicStack/uvloop
 async_timeout
+bloom_filter
