@@ -4,6 +4,7 @@ import ipfshttpclient
 from config import settings
 import logging
 from skydb import SkydbTable
+from redis_conn import setup_teardown_boilerplate
 import sys
 import json
 import os
@@ -230,20 +231,19 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, redis_conn):
 
 
 @app.post('/')
+@setup_teardown_boilerplate
 async def create_dag(
         request: Request,
         response: Response,
+        redis_conn=None,
 ):
     event_data = await request.json()
-    # rest_logger.debug(event_data)
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
-            # rest_logger.debug(event_data)
+            rest_logger.debug(event_data)
 
             """ Create a Redis Connection """
             rest_logger.debug("Creating a redis connection....")
-            redis_conn_raw = await request.app.redis_pool.acquire()
-            redis_conn = aioredis.Redis(redis_conn_raw)
 
             """ Get data from the event """
             project_id = event_data['event_data']['projectId']
@@ -338,7 +338,5 @@ async def create_dag(
                         rest_logger.debug("The diff map retrieved")
                         rest_logger.debug(diff_map)
 
-            request.app.redis_pool.release(redis_conn_raw)
-
     response.status_code = 200
-    return {}
+    return dict()

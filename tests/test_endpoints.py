@@ -7,8 +7,8 @@ def test_commit_payloads():
     project_id = "PROJECT_COMMIT_PAYLOAD"
     test_logger.debug("Using the project Id: ")
     test_logger.debug(project_id)
-    for i in range(10):
-        for j in range(5):
+    for i in range(4):
+        for j in range(3):
             test_logger.debug("Using i and j: {}, {}, height: {}".format(i, j, (i * 5) + (j + 1)))
             data = {'data': 'data_' + str(i + 1), 'constant_string': "CONSTANT_STRING_HOLDER"}
             payload = {'payload': data, 'projectId': project_id}
@@ -23,7 +23,7 @@ def test_commit_payloads():
             for k in ['cid', 'tentativeHeight', 'payloadChanged']:
                 assert k in keys, "Invalid response received from the /commit_payload endpoint"
 
-            assert data['tentativeHeight'] == (i * 5) + (j + 1), \
+            assert data['tentativeHeight'] == (i * 3) + (j + 1), \
                 "Invalid tentativeHeight from /commit_payload endpoint response"
 
             if j == 0:
@@ -70,9 +70,7 @@ def test_diff_maps():
 
                 count = out['count']
                 assert count == i, "Error! Getting invalid count from cachedDiffs"
-
-
-
+                test_logger.debug("cachedDiffs Count Test passed successfully")
 
 
 if __name__ == "__main__":

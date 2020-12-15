@@ -22,6 +22,7 @@ from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
 import requests
 import async_timeout
+from redis_conn import setup_teardown_boilerplate
 
 print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
@@ -98,22 +99,25 @@ async def startup_boilerplate():
     )
 
 
-async def get_project_token(request: Request = None, projectId: str = None, override_settings=False):
+@setup_teardown_boilerplate
+async def get_project_token(
+        request: Request = None,
+        projectId: str = None,
+        override_settings=False,
+        redis_conn=None
+):
     """ From the request body, extract the projectId and return back the powergate token."""
     if projectId is None:
         req_args = await request.json()
         projectId = req_args['projectId']
 
     """ Save the project Id on set """
-    redis_conn_raw = await request.app.redis_pool.acquire()
-    redis_conn = aioredis.Redis(redis_conn_raw)
     _ = await redis_conn.sadd("storedProjectIds", projectId)
 
     """ Intitalize powergate client """
     rest_logger.debug("Intitializing powergate client")
     if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (
             override_settings == False):
-        request.app.redis_pool.release(redis_conn_raw)
         return ""
 
     powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
@@ -134,7 +138,6 @@ async def get_project_token(request: Request = None, projectId: str = None, over
             rest_logger.debug("Retrieved token: " + token + ", for project Id: " + str(projectId))
 
         """ Release Redis connection pool"""
-        request.app.redis_pool.release(redis_conn_raw)
 
         return token
 
@@ -307,10 +310,12 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
 
 
 @app.post('/commit_payload')
+@setup_teardown_boilerplate
 async def commit_payload(
         request: Request,
         response: Response,
-        token: str = Depends(get_project_token)
+        token: str = Depends(get_project_token),
+        redis_conn=None
 ):
     """ 
         This endpoint handles the following cases
@@ -340,8 +345,6 @@ async def commit_payload(
     prev_dag_cid = ""
     block_height = 0
     ipfs_table = None
-    redis_conn = None
-    redis_conn_raw = None
     last_tentative_block_height = None
     last_tentative_block_height_key = f'projectID:{project_id}:tentativeBlockHeight'
     last_snapshot_cid = None
@@ -363,8 +366,6 @@ async def commit_payload(
         Retrieve the block height, last dag cid and tentative block height 
         for the project_id
         """
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid = \
             await get_max_block_height(project_id, redis_conn)
 
@@ -481,7 +482,6 @@ async def commit_payload(
     rest_logger.debug("Setting the last snapshot_cid as: ")
     rest_logger.debug(snapshot_cid)
     _ = await redis_conn.set(last_snapshot_cid_key, snapshot_cid)
-    request.app.redis_pool.release(redis_conn_raw)
 
     return {
         'cid': snapshot_cid,
@@ -491,17 +491,17 @@ async def commit_payload(
 
 
 @app.get('/requests/{request_id:str}')
+@setup_teardown_boilerplate
 async def request_status(
         request: Request,
         response: Response,
         request_id: str,
+        redis_conn=None
 ):
     """
         Given a request_id, return either the status of that request or retrieve all the payloads for that
     """
 
-    redis_conn_raw = await request.app.redis_pool.acquire()
-    redis_conn = aioredis.Redis(redis_conn_raw)
 
     # Check if the request is already in the pending list
     requests_list_key = f"pendingRetrievalRequests"
@@ -545,19 +545,18 @@ async def request_status(
 
 # TODO: get API key/token specific updates corresponding to projects committed with those credentials
 @app.get('/projects/updates')
+@setup_teardown_boilerplate
 async def get_latest_project_updates(
         request: Request,
         response: Response,
         namespace: str = Query(default=None),
-        maxCount: int = Query(default=20)
+        maxCount: int = Query(default=20),
+        redis_conn=None
 ):
     project_diffs_snapshots = list()
     if settings.METADATA_CACHE == 'redis':
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.hgetall('auditprotocol:lastSeenSnapshots')
         if len(h) < 1:
-            request.app.redis_pool.release(redis_conn_raw)
             return {}
         for i, d in h.items():
             project_id = i.decode('utf-8')
@@ -575,13 +574,13 @@ async def get_latest_project_updates(
                     pass
                 else:
                     project_diffs_snapshots.append(each_project_info)
-        request.app.redis_pool.release(redis_conn_raw)
     sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'],
                                             reverse=True)
     return sorted_project_diffs_snapshots[:maxCount]
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs/count')
+@setup_teardown_boilerplate
 async def get_payloads_diff_counts(
         request: Request,
         response: Response,
@@ -589,11 +588,10 @@ async def get_payloads_diff_counts(
         from_height: int = Query(default=1),
         to_height: int = Query(default=-1),
         maxCount: int = Query(default=10),
+        redis_conn=None
 ):
     max_block_height = 0
     if settings.METADATA_CACHE == 'redis':
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
         if not h:
             max_block_height = 0
@@ -607,7 +605,6 @@ async def get_payloads_diff_counts(
     if settings.METADATA_CACHE == 'redis':
         diff_snapshots_cache_zset = f'projectID:{projectId}:diffSnapshots'
         r = await redis_conn.zcard(diff_snapshots_cache_zset)
-        request.app.redis_pool.release(redis_conn_raw)
         if not r:
             return {'count': 0}
         else:
@@ -620,19 +617,18 @@ async def get_payloads_diff_counts(
 # TODO: get API key/token specific updates corresponding to projects committed with those credentials
 
 @app.get('/projects/updates')
+@setup_teardown_boilerplate
 async def get_latest_project_updates(
         request: Request,
         response: Response,
         namespace: str = Query(default=None),
-        maxCount: int = Query(default=20)
+        maxCount: int = Query(default=20),
+        redis_conn=None
 ):
     project_diffs_snapshots = list()
     if settings.METADATA_CACHE == 'redis':
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.hgetall('auditprotocol:lastSeenSnapshots')
         if len(h) < 1:
-            request.app.redis_pool.release(redis_conn_raw)
             return {}
         for i, d in h.items():
             project_id = i.decode('utf-8')
@@ -650,13 +646,13 @@ async def get_latest_project_updates(
                     pass
                 else:
                     project_diffs_snapshots.append(each_project_info)
-        request.app.redis_pool.release(redis_conn_raw)
     sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'],
                                             reverse=True)
     return sorted_project_diffs_snapshots[:maxCount]
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs')
+@setup_teardown_boilerplate
 async def get_payloads_diffs(
         request: Request,
         response: Response,
@@ -664,11 +660,10 @@ async def get_payloads_diffs(
         from_height: int = Query(default=1),
         to_height: int = Query(default=-1),
         maxCount: int = Query(default=10),
+        redis_conn=None
 ):
     max_block_height = 0
     if settings.METADATA_CACHE == 'redis':
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
         if not h:
             max_block_height = 0
@@ -689,7 +684,6 @@ async def get_payloads_diffs(
             max=to_height,
             withscores=False
         )
-        request.app.redis_pool.release(redis_conn_raw)
         for diff in r:
             if extracted_count >= maxCount:
                 break
@@ -702,18 +696,19 @@ async def get_payloads_diffs(
 
 
 @app.get('/{projectId:str}/payloads')
+@setup_teardown_boilerplate
 async def get_payloads(
         request: Request,
         response: Response,
         projectId: str,
         from_height: int = Query(None),
         to_height: int = Query(None),
-        data: Optional[str] = Query(None)
+        data: Optional[str] = Query(None),
+        redis_conn=None
 ):
     ipfs_table = None
     max_block_height = None
     redis_conn_raw = None
-    redis_conn = None
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
@@ -721,8 +716,6 @@ async def get_payloads(
                                 verbose=1)
         max_block_height = ipfs_table.index - 1
     elif settings.METADATA_CACHE == 'redis':
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
         if not h:
             max_block_height = 0
@@ -747,7 +740,6 @@ async def get_payloads(
             to_height,
             _data,
             redis_conn)
-        request.app.redis_pool.release(redis_conn_raw)
 
         return {'requestId': request_id}
 
@@ -786,8 +778,7 @@ async def get_payloads(
 
         # Get the diff_map between the current and previous snapshot
         if prev_payload_cid:
-            if prev_payload_cid != block['data'][
-                'cid']:  # If the cid of previous snapshot does not match with the current snapshot
+            if prev_payload_cid != block['data']['cid']:
                 blocks[idx - 1]['payloadChanged'] = True
                 diff_key = f"CidDiff:{prev_payload_cid}:{block['data']['cid']}"
                 diff_b = await redis_conn.get(diff_key)
@@ -843,13 +834,17 @@ async def get_payloads(
         prev_dag_cid = formatted_block['prevDagCid']
         current_height = current_height - 1
         idx += 1
-    if settings.METADATA_CACHE == 'redis':
-        request.app.redis_pool.release(redis_conn_raw)
     return blocks
 
 
 @app.get('/{projectId}/payloads/height')
-async def payload_height(request: Request, response: Response, projectId: str):
+@setup_teardown_boilerplate
+async def payload_height(
+        request: Request,
+        response: Response,
+        projectId: str,
+        redis_conn=None
+):
     max_block_height = -1
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
@@ -857,25 +852,25 @@ async def payload_height(request: Request, response: Response, projectId: str):
                                 seed=settings.seed)
         max_block_height = ipfs_table.index - 1
     elif settings.METADATA_CACHE == 'redis':
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         h = await redis_conn.get(f'projectID:{projectId}:blockHeight')
         if not h:
             max_block_height = 0
         else:
             max_block_height = int(h.decode('utf-8'))
         rest_logger.debug(max_block_height)
-        request.app.redis_pool.release(redis_conn_raw)
 
     return {"height": max_block_height}
 
 
 @app.get('/{projectId}/payload/{block_height}')
-async def get_block(request: Request,
-                    response: Response,
-                    projectId: str,
-                    block_height: int,
-                    ):
+@setup_teardown_boilerplate
+async def get_block(
+        request: Request,
+        response: Response,
+        projectId: str,
+        block_height: int,
+        redis_conn=None
+):
     """ This endpoint is responsible for retrieving only the dag block and not the payload """
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
@@ -892,17 +887,13 @@ async def get_block(request: Request,
             block = ipfs_client.dag.get(row['cid']).as_json()
             return {row['cid']: block}
     elif settings.METADATA_CACHE == 'redis':
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         max_block_height = await redis_conn.get(f"projectID:{projectId}:blockHeight")
         if not max_block_height:
-            request.app.redis_pool.release(redis_conn_raw)
             response.status_code = 400
             return {'error': 'Block does not exist at this block height'}
         max_block_height = int(max_block_height.decode('utf-8'))
         rest_logger.debug(max_block_height)
         if (block_height > max_block_height) or (block_height <= 0):
-            request.app.redis_pool.release(redis_conn_raw)
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 
@@ -919,7 +910,6 @@ async def get_block(request: Request,
                 to_height,
                 _data,
                 redis_conn)
-            request.app.redis_pool.release(redis_conn_raw)
 
             return {'requestId': request_id}
 
@@ -936,16 +926,17 @@ async def get_block(request: Request,
 
         block = await retrieve_block_data(prev_dag_cid, redis_conn, data_flag=0)
 
-        request.app.redis_pool.release(redis_conn_raw)
         return {prev_dag_cid: block}
 
 
 @app.get('/{projectId:str}/payload/{block_height:int}/data')
+@setup_teardown_boilerplate
 async def get_block_data(
         request: Request,
         response: Response,
         projectId: str,
         block_height: int,
+        redis_conn=None
 ):
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
@@ -960,8 +951,6 @@ async def get_block_data(
         return {row['cid']: block['data']}
 
     elif settings.METADATA_CACHE == "redis":
-        redis_conn_raw = await request.app.redis_pool.acquire()
-        redis_conn = aioredis.Redis(redis_conn_raw)
         max_block_height = await redis_conn.get(f"projectID:{projectId}:blockHeight")
         if not max_block_height:
             response.status_code = 400
@@ -984,7 +973,6 @@ async def get_block_data(
                 _data,
                 redis_conn
             )
-            request.app.redis_pool.release(redis_conn_raw)
 
             return {'requestId': request_id}
 
@@ -998,9 +986,6 @@ async def get_block_data(
         prev_dag_cid = r[0].decode('utf-8')
 
         payload = await retrieve_block_data(prev_dag_cid, redis_conn, 2)
-
-        """ Release redis pool """
-        request.app.redis_pool.release(redis_conn_raw)
 
         """ Return the payload data """
         return {prev_dag_cid: payload}
