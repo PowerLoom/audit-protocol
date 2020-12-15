@@ -62,7 +62,14 @@ def test_diff_maps():
                     test_logger.debug("Chain has been updated: {}, {}".format(old_height, new_height))
                     break
             if (j == 0) and (i != 0):
+                test_logger.debug("Getting the cachedDiff count from the audit-protocol")
+                out = requests.get(f"http://localhost:9000/{project_id}/payloads/cachedDiffs/count")
+                out = out.json()
+                test_logger.debug("Got response:")
+                test_logger.debug(out)
 
+                count = out['count']
+                assert count == i, "Error! Getting invalid count from cachedDiffs"
 
 
 
