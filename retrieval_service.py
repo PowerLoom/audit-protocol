@@ -11,7 +11,7 @@ import time
 from bloom_filter import BloomFilter
 
 """ Initialize ipfs client """
-ipfs_client = ipfshttpclient.connect()
+ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 """ Inititalize the logger """
 retrieval_logger = logging.getLogger(__name__)
@@ -188,4 +188,4 @@ if __name__ == "__main__":
         retrieval_logger.debug("Looking for pending retrieval requests....")
         asyncio.run(retrieve_files())
         retrieval_logger.debug("Sleeping for 20 secs")
-        time.sleep(20)
+        time.sleep(settings.retrieval_service_interval)

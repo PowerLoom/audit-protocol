@@ -15,7 +15,7 @@ from maticvigil.EVCore import EVCore
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
 
-ipfs_client = ipfshttpclient.connect()
+ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -113,4 +113,4 @@ if __name__ == "__main__":
     while True:
         asyncio.run(commit_pending_payloads())
         payload_logger.debug("Sleeping for 20 seconds...")
-        time.sleep(20)
+        time.sleep(settings.payload_commit_interval)

@@ -11,21 +11,21 @@
 	"dag_table_name": "DAG_CID",
 	"seed": "THISISRANDOMSEED",
 	"dag_structure" : {
-			"height":-1,
-			"prevCid":"",
-			"data": {
-					"cid":"",
-					"type":""
-				},
-			"txHash":"",
-			"timestamp":""
+		"height":-1,
+		"prevCid":"",
+		"data": {
+				"cid":"",
+				"type":""
 			},
-	  "REDIS": {
-		"HOST": "127.0.0.1",
-		"PORT": 6379,
-		"DB": 0,
-		"PASSWORD": null
-	  },
+		"txHash":"",
+		"timestamp":""
+	},
+	"REDIS": {
+	"HOST": "127.0.0.1",
+	"PORT": 6379,
+	"DB": 0,
+	"PASSWORD": null
+	},
 
 	"table_names": {
 		"api_keys": "api_keys",
@@ -46,5 +46,9 @@
 		"error_rate": 0.0001,
 		"filename": null
 	},
-	"backup_target": "FILECOIN"
+	"backup_target": "FILECOIN",
+	
+	"payload_commit_interval": 20,
+	"pruning_service_interval": 10,
+	"retrieval_service_interval": 10
 }

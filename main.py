@@ -2,6 +2,7 @@ from typing import Optional, Union
 from fastapi import Depends, FastAPI, WebSocket, HTTPException, Security, Request, Response, BackgroundTasks, Cookie, \
     Query, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from functools import wraps
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
 from maticvigil.EVCore import EVCore
@@ -13,7 +14,6 @@ import aioredis
 import io
 import redis
 import time
-import requests
 import async_timeout
 from skydb import SkydbTable
 import ipfshttpclient
@@ -24,7 +24,6 @@ import requests
 import async_timeout
 from redis_conn import setup_teardown_boilerplate
 
-print(settings.as_dict())
 ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -387,7 +386,6 @@ async def commit_payload(
     """ Instead of adding payload to directly IPFS, stage it to Filecoin and get back the Cid"""
     if type(payload) is dict:
         payload = json.dumps(payload)
-    payload = payload.encode('utf-8')
 
     if settings.payload_storage == "FILECOIN":
         powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
@@ -405,8 +403,6 @@ async def commit_payload(
             snapshot_cid = ipfs_client.add_json(payload)
         else:
             try:
-                if type(payload) is bytes:
-                    payload = payload.decode('utf-8')
                 snapshot_cid = ipfs_client.add_str(str(payload))
             except:
                 response.status_code = 400

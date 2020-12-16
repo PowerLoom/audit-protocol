@@ -12,7 +12,7 @@ from pygate_grpc.client import PowerGateClient
 from main import get_project_token
 
 """ Initialize ipfs client """
-ipfs_client = ipfshttpclient.connect()
+ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -121,7 +121,6 @@ async def choose_targets():
     redis_pool.release(redis_conn_raw)
 
 
-
 async def build_container(project_id:str):
     """
         - Generate a unique ID for this container
@@ -134,8 +133,6 @@ async def build_container(project_id:str):
     """ Create a redis connections """
     redis_conn_raw = await redis_pool.acquire()
     redis_conn = aioredis.Redis(redis_conn_raw)
-
-    ipfs_client = ipfshttpclient.connect()
 
     target_height_key = f"projectID:{project_id}:pruneFromHeight"
     from_height = await redis_conn.get(target_height_key)
@@ -330,6 +327,6 @@ if __name__ == "__main__":
         asyncio.run(choose_targets())
         asyncio.run(prune_targets())
         pruning_logger.debug("Sleeping for 10 secs")
-        time.sleep(10)
+        time.sleep(settings.pruning_service_interval)
 
 
