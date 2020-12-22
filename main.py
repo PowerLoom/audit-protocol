@@ -502,7 +502,7 @@ async def request_status(
     # Check if the request is already in the pending list
     requests_list_key = f"pendingRetrievalRequests"
     out = await redis_conn.sismember(requests_list_key, request_id)
-    if out is True:
+    if out == 1:
         return {'requestId': request_id, 'requestStatus': 'Pending'}
 
     # Get all the retrieved files

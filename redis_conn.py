@@ -1,5 +1,6 @@
 import aioredis
 from functools import wraps
+import traceback
 
 
 def setup_teardown_boilerplate(fn):
@@ -14,7 +15,8 @@ def setup_teardown_boilerplate(fn):
         kwargs[arg_conn] = redis_conn
         try:
             return await fn(*args, **kwargs)
-        except:
+        except Exception as e:
+            traceback.print_exception(type(e),e,e.__traceback__)
             return {'error': 'Internal Server Error'}
         finally:
             kwargs['request'].app.redis_pool.release(redis_conn_raw)
