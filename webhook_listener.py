@@ -9,11 +9,11 @@ import sys
 import json
 import os
 import io
+from ipfs_async import client as ipfs_client
 
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
 
-ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 app = FastAPI()
 
@@ -124,7 +124,7 @@ async def create_dag_block(event_data: dict, redis_conn):
 
     """ Convert dag structure to json and put it on ipfs dag """
     json_string = json.dumps(dag).encode('utf-8')
-    dag_data = ipfs_client.dag.put(io.BytesIO(json_string))
+    dag_data = await ipfs_client.dag.put(io.BytesIO(json_string))
     rest_logger.debug("The DAG cid is: ")
     rest_logger.debug(dag_data['Cid']['/'])
 
@@ -172,20 +172,22 @@ async def create_dag_block(event_data: dict, redis_conn):
 
 async def calculate_diff(dag_cid: str, dag: dict, project_id: str, redis_conn):
     # cache last seen diffs
-    global ipfs_client
     if dag['prevCid']:
         payload_cid = dag['data']['cid']
-        prev_dag = ipfs_client.dag.get(dag['prevCid']).as_json()
+        _prev_dag = await ipfs_client.dag.get(dag['prevCid'])
+        prev_dag = _prev_dag.as_json()
         prev_payload_cid = prev_dag['data']['cid']
         if prev_payload_cid != payload_cid:
             diff_map = dict()
-            prev_data = ipfs_client.cat(prev_payload_cid).decode('utf-8')
+            _prev_data = await ipfs_client.cat(prev_payload_cid)
+            prev_data = _prev_data.decode('utf-8')
             rest_logger.debug(prev_data)
             rest_logger.debug(type(prev_data))
             prev_data = json.loads(prev_data)
             # rest_logger.info('Previous payload returned')
             # rest_logger.info(prev_data)
-            payload = ipfs_client.cat(payload_cid).decode('utf-8')
+            _payload = await ipfs_client.cat(payload_cid)
+            payload = _payload.decode('utf-8')
             rest_logger.debug(payload)
             rest_logger.debug(type(payload))
             payload = json.loads(payload)

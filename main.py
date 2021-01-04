@@ -16,15 +16,14 @@ import redis
 import time
 import async_timeout
 from skydb import SkydbTable
-import ipfshttpclient
 from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
 import requests
 import async_timeout
 from redis_conn import setup_teardown_boilerplate
+from ipfs_async import client as ipfs_client
 
-ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -163,7 +162,8 @@ async def retrieve_block_data(block_dag, redis_conn, data_flag=0):
     rest_logger.debug(r)
 
     """ Retrieve the DAG block from ipfs """
-    block = ipfs_client.dag.get(block_dag).as_json()
+    _block = await ipfs_client.dag.get(block_dag)
+    block = _block.as_json()
     if data_flag == 0:
         return block
 
@@ -192,7 +192,8 @@ async def retrieve_payload_data(payload_cid, redis_conn):
     rest_logger.debug(r)
 
     """ Get the payload Data from ipfs """
-    payload_data = ipfs_client.cat(payload_cid).decode('utf-8')
+    _payload_data = await ipfs_client.cat(payload_cid)
+    payload_data = _payload_data.decode('utf-8')
     return payload_data
 
 
@@ -400,10 +401,10 @@ async def commit_payload(
         rest_logger.debug("Job Id: " + job.jobId)
     elif settings.payload_storage == "IPFS":
         if type(payload) is dict:
-            snapshot_cid = ipfs_client.add_json(payload)
+            snapshot_cid = await ipfs_client.add_json(payload)
         else:
             try:
-                snapshot_cid = ipfs_client.add_str(str(payload))
+                snapshot_cid = await ipfs_client.add_str(str(payload))
             except:
                 response.status_code = 400
                 return {'success': False, 'error': 'PayloadNotSuppported'}
@@ -880,7 +881,8 @@ async def get_block(
 
         else:
             row = ipfs_table.fetch_row(row_index=block_height)
-            block = ipfs_client.dag.get(row['cid']).as_json()
+            _block = await ipfs_client.dag.get(row['cid'])
+            block = _block.as_json()
             return {row['cid']: block}
     elif settings.METADATA_CACHE == 'redis':
         max_block_height = await redis_conn.get(f"projectID:{projectId}:blockHeight")
@@ -942,8 +944,10 @@ async def get_block_data(
         if (block_height > ipfs_table.index - 1) or (block_height <= 0):
             return {'error': 'Invalid block Height'}
         row = ipfs_table.fetch_row(row_index=block_height)
-        block = ipfs_client.dag.get(row['cid']).as_json()
-        block['data']['payload'] = ipfs_client.cat(block['data']['cid']).decode()
+        _block = await ipfs_client.dag.get(row['cid'])
+        block = _block.as_json()
+        _temp_data = await ipfs_client.cat(block['data']['cid'])
+        block['data']['payload'] = _temp_data.decode('utf-8')
         return {row['cid']: block['data']}
 
     elif settings.METADATA_CACHE == "redis":

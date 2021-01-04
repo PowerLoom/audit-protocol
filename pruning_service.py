@@ -10,9 +10,7 @@ from eth_utils import keccak
 import json
 from pygate_grpc.client import PowerGateClient
 from main import get_project_token
-
-""" Initialize ipfs client """
-ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
+from ipfs_async import client as ipfs_client
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -173,11 +171,13 @@ async def build_container(project_id:str):
         pruning_logger.debug("Creating dag block for: ")
         pruning_logger.debug(dag_cid)
 
-        dag_block = ipfs_client.dag.get(dag_cid).as_json()
+        _dag_block = await ipfs_client.dag.get(dag_cid)
+        dag_block = _dag_block.as_json()
 
         """ Get the snapshot cid and retrieve the data of the snapshot from ipfs """
         snapshot_cid = dag_block['data']['cid']
-        snapshot_payload = ipfs_client.cat(snapshot_cid).decode('utf-8')
+        _snapshot_payload = await ipfs_client.cat(snapshot_cid)
+        snapshot_payload = _snapshot_payload.decode('utf-8')
 
         """ Add the payload to the container """
         container['payloads'][snapshot_cid] = snapshot_payload
@@ -256,7 +256,6 @@ async def prune_targets():
     :return:
         None
     """
-    global ipfs_client
     redis_conn_raw = await redis_pool.acquire()
     redis_conn = aioredis.Redis(redis_conn_raw)
 
@@ -298,7 +297,7 @@ async def prune_targets():
             dag_cid, dag_block = next(iter(dag_data.items()))
             snapshot_cid = dag_block['data']['cid']
             try:
-                ipfs_client.pin.rm(snapshot_cid)
+                _ = await ipfs_client.pin.rm(snapshot_cid)
             except ipfshttpclient.exceptions.ErrorResponse as e:
                 pruning_logger.debug("This cid is not pinned....")
 

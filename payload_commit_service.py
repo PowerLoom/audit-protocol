@@ -5,7 +5,6 @@ import asyncio
 import sys
 import json
 import io
-import ipfshttpclient
 import time
 from main import get_project_token
 from eth_utils import keccak
@@ -15,7 +14,6 @@ from maticvigil.EVCore import EVCore
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
 
-ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 

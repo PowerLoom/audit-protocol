@@ -3,15 +3,12 @@ import logging
 import sys
 import aioredis
 from config import settings
-import ipfshttpclient
 import asyncio
 import os
 import json
 import time
 from bloom_filter import BloomFilter
-
-""" Initialize ipfs client """
-ipfs_client = ipfshttpclient.connect(settings.IPFS_URL)
+from ipfs_async import client as ipfs_client
 
 """ Inititalize the logger """
 retrieval_logger = logging.getLogger(__name__)
@@ -97,8 +94,9 @@ async def retrieve_files():
                 """ Check if the DAG block is pinned """
                 if (block_height < max_block_height - settings.max_ipfs_blocks) or (last_pruned_height < int(request_info['to_height'])):
                     """ Get the data directly through the IPFS client """
-                    block_dag = ipfs_client.dag.get(block_cid).as_json()
-                    payload_data = ipfs_client.cat(block_dag['data']['cid'])
+                    _block_dag = await ipfs_client.dag.get(block_cid)
+                    block_dag = _block_dag.as_json()
+                    payload_data = await ipfs_client.cat(block_dag['data']['cid'])
                     if isinstance(payload_data, bytes):
                         payload_data = payload_data.decode('utf-8')
 
