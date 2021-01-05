@@ -224,37 +224,38 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
                     if result['payload_changed'][k]:
                         diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
 
-            diff_data = {
-                'cur': {
-                    'height': dag['height'],
-                    'payloadCid': payload_cid,
-                    'dagCid': dag_cid,
-                    'txHash': dag['txHash'],
-                    'timestamp': dag['timestamp']
-                },
-                'prev': {
-                    'height': prev_dag['height'],
-                    'payloadCid': prev_payload_cid,
-                    'dagCid': dag['prevCid']
-                    # this will be used to fetch the previous block timestamp from the DAG
-                },
-                'diff': diff_map
-            }
-            if settings.METADATA_CACHE == 'redis':
-                diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
-                await writer_redis_conn.zadd(
-                    diff_snapshots_cache_zset,
-                    score=dag['height'],
-                    member=json.dumps(diff_data)
-                )
-                latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
-                await writer_redis_conn.hset(
-                    latest_seen_snapshots_htable,
-                    project_id,
-                    json.dumps(diff_data)
-                )
+            if diff_map:
+                diff_data = {
+                    'cur': {
+                        'height': dag['height'],
+                        'payloadCid': payload_cid,
+                        'dagCid': dag_cid,
+                        'txHash': dag['txHash'],
+                        'timestamp': dag['timestamp']
+                    },
+                    'prev': {
+                        'height': prev_dag['height'],
+                        'payloadCid': prev_payload_cid,
+                        'dagCid': dag['prevCid']
+                        # this will be used to fetch the previous block timestamp from the DAG
+                    },
+                    'diff': diff_map
+                }
+                if settings.METADATA_CACHE == 'redis':
+                    diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
+                    await writer_redis_conn.zadd(
+                        diff_snapshots_cache_zset,
+                        score=dag['height'],
+                        member=json.dumps(diff_data)
+                    )
+                    latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
+                    await writer_redis_conn.hset(
+                        latest_seen_snapshots_htable,
+                        project_id,
+                        json.dumps(diff_data)
+                    )
 
-            return diff_data
+                return diff_data
 
     return {}
 

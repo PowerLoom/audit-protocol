@@ -512,8 +512,8 @@ async def commit_payload(
     }
 
 
-@inject_writer_redis_conn
 @app.post('/{projectId:str}/diffRules')
+@inject_writer_redis_conn
 async def configure_project(
         request: Request,
         response: Response,
@@ -526,7 +526,7 @@ async def configure_project(
         "rules": 
             [
                 {
-                    "ruleType: "ignore",    
+                    "ruleType": "ignore",    
                     "field": "trail",
                     "fieldType": "list",
                     "listMemberType": "map",
