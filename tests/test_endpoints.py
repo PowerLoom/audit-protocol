@@ -1,6 +1,7 @@
 import requests
 import time
 from test_logger import test_logger
+import random
 
 
 def test_commit_payloads():
@@ -33,31 +34,6 @@ def test_commit_payloads():
                 assert data['payloadChanged'] is False, \
                     "Invalid payload_changed flag received from /commit_payload endpoint"
 
-
-def get_diff_rules():
-    rules = [
-        {
-            'ruleType': 'ignore',
-            'field': 'field_a',
-            'fieldType': 'list',
-            'listMemberType': 'map',
-            'ignoreMemberFields': ['field_b', 'field_c', 'field_d', 'field_f']
-        }
-    ]
-
-    return rules
-
-
-def set_diff_rules(project_id: str, diff_rules: list):
-    test_logger.debug(f"Setting diff rules for {project_id}")
-    test_logger.debug(diff_rules)
-    url_endpoint = f"http://localhost:9000/{project_id}/diffRules"
-    diff_rules = {'rules': diff_rules}
-    out = requests.post(url_endpoint, json=diff_rules)
-    test_logger.debug("Got response: ")
-    test_logger.debug(out.text)
-    assert out.status_code == 200, "Request to set rules was unsuccessful"
-    
 
 def test_diff_maps():
     project_id = "PROJECT_TEST_DIFF_MAPS"
@@ -98,6 +74,44 @@ def test_diff_maps():
                 test_logger.debug("cachedDiffs Count Test passed successfully")
 
 
+def get_diff_rules():
+    test_rules = [
+        {
+            'ruleType': 'ignore',
+            'field': 'field_a',
+            'fieldType': 'list',
+            'listMemberType': 'map',
+            'ignoreMemberFields': ['field_b', 'field_c', 'field_d', 'field_f'],
+            'payload_changes': False
+        },
+
+        {
+            'ruleType': 'ignore',
+            'field': 'field_a',
+            'fieldType': 'list',
+            'listMemberType': 'map',
+            'ignoreMemberFields': ['field_b', 'field_c.field_d.field_e', 'field_c.field_d.field_f', 'field_f'],
+            'payload_changes': False
+
+        }
+    ]
+
+    rule = random.choice(test_rules)
+    payload_changes = rule.pop('payload_changes')
+    return [rule], payload_changes
+
+
+def set_diff_rules(project_id: str, diff_rules: list):
+    test_logger.debug(f"Setting diff rules for {project_id}")
+    test_logger.debug(diff_rules)
+    url_endpoint = f"http://localhost:9000/{project_id}/diffRules"
+    diff_rules = {'rules': diff_rules}
+    out = requests.post(url_endpoint, json=diff_rules)
+    test_logger.debug("Got response: ")
+    test_logger.debug(out.text)
+    assert out.status_code == 200, "Request to set rules was unsuccessful"
+
+
 def test_diff_rules():
     """
     Goals of this test function:
@@ -110,7 +124,7 @@ def test_diff_rules():
     project_id = "PROJECT_TEST_DIFF_MAPS"
     test_logger.debug("Using the project Id: ")
     test_logger.debug(project_id)
-
+    total_diff_count = 0
     for i in range(3):
         for j in range(2):
             test_logger.debug("\n")
@@ -138,13 +152,16 @@ def test_diff_rules():
                     }
                 ]
             }
+
+            """ Set the diff-rules at a particular point """
+            payload_changes = True
+            if (i == 2) and (j == 0):
+                diff_rules, payload_changes = get_diff_rules()
+                set_diff_rules(project_id=project_id, diff_rules=diff_rules)
+
             payload = {'payload': data, 'projectId': project_id}
             test_logger.debug("Committing payload: ")
             test_logger.debug(payload)
-
-            """ Set the diff-rules at a particular point """
-            if (i == 2) and (j == 0):
-                set_diff_rules(project_id=project_id, diff_rules=get_diff_rules())
 
             """ Commit the payload """
             out = requests.post('http://localhost:9000/commit_payload', json=payload)
@@ -175,10 +192,15 @@ def test_diff_rules():
                 count = out['count']
                 if i == 2:
                     count = out['count']
-                    assert count == i - 1, "Error Diff rules not working"
+                    if payload_changes is False:
+                        assert count == total_diff_count, "Error Diff rules not working"
+                    else:
+                        assert count == total_diff_count + 1, "Error Diff rules not working"
+                        total_diff_count = count
                 else:
                     assert count == i, "Error! Getting invalid count from cachedDiffs"
                     test_logger.debug("cachedDiffs Count Test passed successfully")
+                    total_diff_count = count
 
 
 if __name__ == "__main__":
