@@ -21,12 +21,17 @@
 		"timestamp":""
 	},
 	"REDIS": {
-	"HOST": "127.0.0.1",
-	"PORT": 6379,
-	"DB": 0,
-	"PASSWORD": null
+		"HOST": "127.0.0.1",
+		"PORT": 6379,
+		"DB": 0,
+		"PASSWORD": null
 	},
-
+ 	"redis_reader": {
+      "host": "127.0.0.1",
+      "port": 6379,
+      "db": 0,
+      "password": null
+    },
 	"table_names": {
 		"api_keys": "api_keys",
 		"accounting_records": "accounting_records",

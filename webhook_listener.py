@@ -1,15 +1,15 @@
 from fastapi import FastAPI, Request, Response
 import aioredis
-import ipfshttpclient
 from config import settings
 import logging
 from skydb import SkydbTable
-from redis_conn import setup_teardown_boilerplate
+from redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
 import sys
 import json
 import os
 import io
 from ipfs_async import client as ipfs_client
+from utils import process_payloads_for_diff
 
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
@@ -31,11 +31,18 @@ rest_logger.setLevel(logging.DEBUG)
 rest_logger.addHandler(stdout_handler)
 rest_logger.addHandler(stderr_handler)
 
-REDIS_CONN_CONF = {
+REDIS_WRITER_CONN_CONF = {
     "host": settings['REDIS']['HOST'],
     "port": settings['REDIS']['PORT'],
     "password": settings['REDIS']['PASSWORD'],
     "db": settings['REDIS']['DB']
+}
+
+REDIS_READER_CONN_CONF = {
+    "host": settings['REDIS_READER']['HOST'],
+    "port": settings['REDIS_READER']['PORT'],
+    "password": settings['REDIS_READER']['PASSWORD'],
+    "db": settings['REDIS_READER']['DB']
 }
 
 
@@ -50,15 +57,21 @@ async def startup_boilerplate():
         os.stat(os.getcwd() + '/containers')
     except:
         os.mkdir(os.getcwd() + '/containers')
-    app.redis_pool = await aioredis.create_pool(
-        address=(REDIS_CONN_CONF['host'], REDIS_CONN_CONF['port']),
-        db=REDIS_CONN_CONF['db'],
-        password=REDIS_CONN_CONF['password'],
-        maxsize=5
+    app.writer_redis_pool = await aioredis.create_pool(
+        address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
+        db=REDIS_WRITER_CONN_CONF['db'],
+        password=REDIS_WRITER_CONN_CONF['password'],
+        maxsize=50
+    )
+    app.reader_redis_pool = await aioredis.create_pool(
+        address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
+        db=REDIS_READER_CONN_CONF['db'],
+        password=REDIS_READER_CONN_CONF['password'],
+        maxsize=50
     )
 
 
-async def save_event_data(event_data: dict, redis_conn):
+async def save_event_data(event_data: dict, writer_redis_conn):
     """
         - Given event_data, save the txHash, timestamp, projectId, snapshotCid, tentativeBlockHeight
         onto a redis HashTable with key: eventData:{payloadCommitId}
@@ -74,13 +87,13 @@ async def save_event_data(event_data: dict, redis_conn):
         'snapshotCid': event_data['event_data']['snapshotCid'],
         'tentativeBlockHeight': event_data['event_data']['tentativeBlockHeight']
     }
-    _ = await redis_conn.hmset_dict(
+    _ = await writer_redis_conn.hmset_dict(
         key=event_data_key,
         **fields
     )
 
     pending_blocks_key = f"projectId:{event_data['event_data']['projectId']}:pendingBlocks"
-    _ = await redis_conn.zadd(
+    _ = await writer_redis_conn.zadd(
         key=pending_blocks_key,
         member=event_data['event_data']['payloadCommitId'],
         score=int(event_data['event_data']['tentativeBlockHeight'])
@@ -89,22 +102,16 @@ async def save_event_data(event_data: dict, redis_conn):
     return 0
 
 
-async def create_dag_block(event_data: dict, redis_conn):
+async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_conn):
     txHash = event_data['txHash']
     project_id = event_data['event_data']['projectId']
     tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
     snapshotCid = event_data['event_data']['snapshotCid']
     timestamp = event_data['event_data']['timestamp']
 
-    if settings.block_storage == "FILECOIN":
-        """ Get the filecoin token for the project Id """
-        KEY = f"filecoinToken:{project_id}"
-        token = await redis_conn.get(KEY)
-        token = token.decode('utf-8')
-
     """ Get the last dag cid for the project_id """
     last_dag_cid_key = f"projectId:{project_id}:lastDagCid"
-    last_dag_cid = await redis_conn.get(last_dag_cid_key)
+    last_dag_cid = await reader_redis_conn.get(last_dag_cid_key)
     if last_dag_cid:
         last_dag_cid = last_dag_cid.decode('utf-8')
     else:
@@ -129,6 +136,11 @@ async def create_dag_block(event_data: dict, redis_conn):
     rest_logger.debug(dag_data['Cid']['/'])
 
     if settings.block_storage == "FILECOIN":
+        """ Get the filecoin token for the project Id """
+        KEY = f"filecoinToken:{project_id}"
+        token = await reader_redis_conn.get(KEY)
+        token = token.decode('utf-8')
+
         """ Put the dag json on to filecoin """
         powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
         staged_res = powgate_client.data.stage_bytes(json_string, token=token)
@@ -141,7 +153,7 @@ async def create_dag_block(event_data: dict, redis_conn):
             'jobId': job.jobId
         }
 
-        _ = await redis_conn.hmset_dict(
+        _ = await writer_redis_conn.hmset_dict(
             key=block_filecoin_storage_key,
             **fields
         )
@@ -159,18 +171,18 @@ async def create_dag_block(event_data: dict, redis_conn):
         ipfs_table.add_row({'cid': dag_data['Cid']['/']})
     elif settings.METADATA_CACHE == 'redis':
         last_dag_cid_key = f"projectId:{project_id}:lastDagCid"
-        await redis_conn.set(last_dag_cid_key, dag_data['Cid']['/'])
-        await redis_conn.zadd(
+        await writer_redis_conn.set(last_dag_cid_key, dag_data['Cid']['/'])
+        await writer_redis_conn.zadd(
             key=f'projectID:{project_id}:Cids',
             score=tentative_block_height,
             member=dag_data['Cid']['/']
         )
-        await redis_conn.set(f'projectID:{project_id}:blockHeight', tentative_block_height)
+        await writer_redis_conn.set(f'projectID:{project_id}:blockHeight', tentative_block_height)
 
     return dag_data['Cid']['/'], dag
 
 
-async def calculate_diff(dag_cid: str, dag: dict, project_id: str, redis_conn):
+async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_conn, writer_redis_conn):
     # cache last seen diffs
     if dag['prevCid']:
         payload_cid = dag['data']['cid']
@@ -184,20 +196,34 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, redis_conn):
             rest_logger.debug(prev_data)
             rest_logger.debug(type(prev_data))
             prev_data = json.loads(prev_data)
-            # rest_logger.info('Previous payload returned')
-            # rest_logger.info(prev_data)
             _payload = await ipfs_client.cat(payload_cid)
             payload = _payload.decode('utf-8')
             rest_logger.debug(payload)
             rest_logger.debug(type(payload))
             payload = json.loads(payload)
-            # rest_logger.info('Current payload')
-            # rest_logger.info(prev_data)
-            for k, v in payload.items():
-                if k not in prev_data.keys():
-                    prev_data[k] = None
-                if v != prev_data[k]:
-                    diff_map[k] = {'old': prev_data[k], 'new': v}
+            rest_logger.debug('Before payload clean up')
+            rest_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
+            result = await process_payloads_for_diff(
+                project_id,
+                prev_data,
+                payload,
+                reader_redis_conn
+            )
+            rest_logger.debug('After payload clean up and comparison if any')
+            rest_logger.debug(result)
+            cur_data_copy = result['cur_copy']
+            prev_data_copy = result['prev_copy']
+
+            for k, v in cur_data_copy.items():
+                if k not in result['payload_changed']:
+                    if k not in prev_data_copy.keys():
+                        prev_data_copy[k] = None
+                    if v != prev_data_copy.get(k):
+                        diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
+                else:
+                    if result['payload_changed'][k]:
+                        diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
+
             diff_data = {
                 'cur': {
                     'height': dag['height'],
@@ -216,13 +242,13 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, redis_conn):
             }
             if settings.METADATA_CACHE == 'redis':
                 diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
-                await redis_conn.zadd(
+                await writer_redis_conn.zadd(
                     diff_snapshots_cache_zset,
                     score=dag['height'],
                     member=json.dumps(diff_data)
                 )
                 latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
-                await redis_conn.hset(
+                await writer_redis_conn.hset(
                     latest_seen_snapshots_htable,
                     project_id,
                     json.dumps(diff_data)
@@ -234,11 +260,13 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, redis_conn):
 
 
 @app.post('/')
-@setup_teardown_boilerplate
+@inject_writer_redis_conn
+@inject_reader_redis_conn
 async def create_dag(
         request: Request,
         response: Response,
-        redis_conn=None,
+        reader_redis_conn=None,
+        writer_redis_conn=None,
 ):
     event_data = await request.json()
     if 'event_name' in event_data.keys():
@@ -253,7 +281,7 @@ async def create_dag(
             tentative_block_height = event_data['event_data']['tentativeBlockHeight']
 
             # Get the max block height for the project_id
-            max_block_height = await redis_conn.get(f"projectID:{project_id}:blockHeight")
+            max_block_height = await reader_redis_conn.get(f"projectID:{project_id}:blockHeight")
             if max_block_height:
                 max_block_height = int(max_block_height)
             else:
@@ -271,7 +299,7 @@ async def create_dag(
                 rest_logger.debug(
                     "Transaction: " + event_data['txHash'] + ", PayloadCommitId: " + event_data['event_data'][
                         'payloadCommitId'])
-                _ = await save_event_data(event_data, redis_conn)
+                _ = await save_event_data(event_data, writer_redis_conn=writer_redis_conn)
 
             elif tentative_block_height == max_block_height + 1:
                 """
@@ -281,14 +309,14 @@ async def create_dag(
                 pending_blocks_key = f"projectId:{project_id}:pendingBlocks"
                 pending_block_creations_key = f"projectId:{project_id}:pendingBlockCreation"
 
-                _dag_cid, dag_block = await create_dag_block(event_data, redis_conn)
+                _dag_cid, dag_block = await create_dag_block(event_data, writer_redis_conn=writer_redis_conn, reader_redis_conn=reader_redis_conn)
                 max_block_height = dag_block['height']
                 """ Remove this block from pending block creations SET """
-                _ = await redis_conn.srem(pending_block_creations_key, event_data['event_data']['payloadCommitId'])
-                _ = await redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
+                _ = await writer_redis_conn.srem(pending_block_creations_key, event_data['event_data']['payloadCommitId'])
+                _ = await writer_redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
 
                 """ retrieve all list of all the payload_commit_ids from the pendingBlocks set """
-                all_pending_blocks = await redis_conn.zrange(
+                all_pending_blocks = await reader_redis_conn.zrange(
                     key=pending_blocks_key,
                     start=0,
                     stop=-1,
@@ -307,7 +335,7 @@ async def create_dag(
 
                             """ Retrieve the event data for the payload_commit_id """
                             event_data_key = f"eventData:{_payload_commit_id}"
-                            out = await redis_conn.hgetall(key=event_data_key)
+                            out = await reader_redis_conn.hgetall(key=event_data_key)
 
                             _event_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
                             fields_to_delete = list(_event_data.keys())
@@ -316,15 +344,19 @@ async def create_dag(
                             _event_data['event_data'].pop('txHash')
 
                             """ Create the dag block for this event """
-                            _dag_cid, dag_block = await create_dag_block(_event_data, redis_conn)
+                            _dag_cid, dag_block = await create_dag_block(
+                                _event_data,
+                                writer_redis_conn=writer_redis_conn,
+                                reader_redis_conn=reader_redis_conn
+                            )
                             max_block_height = dag_block['height']
 
                             """ Remove the dag block from pending block creations list """
-                            _ = await redis_conn.srem(pending_block_creations_key, _payload_commit_id)
-                            _ = await redis_conn.zrem(pending_blocks_key, _payload_commit_id)
+                            _ = await writer_redis_conn.srem(pending_block_creations_key, _payload_commit_id)
+                            _ = await writer_redis_conn.zrem(pending_blocks_key, _payload_commit_id)
 
                             """ Delete the event_data """
-                            _ = await redis_conn.hdel(event_data_key, *fields_to_delete)
+                            _ = await writer_redis_conn.hdel(event_data_key, *fields_to_delete)
 
                         else:
                             """ Since there is a pending block creation, stop the loop """
@@ -333,7 +365,13 @@ async def create_dag(
                 else:
                     """ There are no pending blocks in the chain """
                     try:
-                        diff_map = await calculate_diff(_dag_cid, dag_block, project_id, redis_conn)
+                        diff_map = await calculate_diff(
+                            dag_cid=_dag_cid,
+                            dag=dag_block,
+                            project_id=project_id,
+                            reader_redis_conn=reader_redis_conn,
+                            writer_redis_conn=writer_redis_conn
+                        )
                     except json.decoder.JSONDecodeError as jerr:
                         rest_logger.debug("There was an error while decoding the JSON data")
                         rest_logger.debug(jerr)
