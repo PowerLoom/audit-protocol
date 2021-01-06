@@ -758,6 +758,7 @@ async def get_payloads(
         response: Response,
         projectId: str,
         from_height: int = Query(default=1),
+        diffs: str = Query('true'),
         to_height: int = Query(default=-1),
         data: Optional[str] = Query(None),
         reader_redis_conn=None,
@@ -784,6 +785,12 @@ async def get_payloads(
             data = True
         else:
             data = False
+
+    if diffs:
+        if diffs.lower() == 'true':
+            diffs = True
+        else:
+            diffs = False
 
     if to_height == -1:
         to_height = max_block_height
@@ -838,84 +845,85 @@ async def get_payloads(
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
 
         # Get the diff_map between the current and previous snapshot
-        if prev_payload_cid:
-            if prev_payload_cid != block['data']['cid']:
-                blocks[idx - 1]['payloadChanged'] = True
-                diff_key = f"CidDiff:{prev_payload_cid}:{block['data']['cid']}"
-                diff_b = await reader_redis_conn.get(diff_key)
-                diff_map = dict()
-                if not diff_b:
-                    # diff not cached already
-                    rest_logger.debug('Diff not cached | New CID | Old CID')
-                    rest_logger.debug(blocks[idx - 1]['data']['cid'])
-                    rest_logger.debug(block['data']['cid'])
+        if diffs:
+            if prev_payload_cid:
+                if prev_payload_cid != block['data']['cid']:
+                    blocks[idx - 1]['payloadChanged'] = True
+                    diff_key = f"CidDiff:{prev_payload_cid}:{block['data']['cid']}"
+                    diff_b = await reader_redis_conn.get(diff_key)
+                    diff_map = dict()
+                    if not diff_b:
+                        # diff not cached already
+                        rest_logger.debug('Diff not cached | New CID | Old CID')
+                        rest_logger.debug(blocks[idx - 1]['data']['cid'])
+                        rest_logger.debug(block['data']['cid'])
 
-                    """ If the payload is not yet retrieved, then get if from ipfs """
-                    if 'payload' in formatted_block['data'].keys():
-                        prev_data = formatted_block['data']['payload']
-                    else:
-                        prev_data = await retrieve_payload_data(block['data']['cid'], writer_redis_conn=writer_redis_conn)
-                    rest_logger.debug("Got the payload data: ")
-                    rest_logger.debug(prev_data)
-                    prev_data = json.loads(prev_data)
-
-                    if 'payload' in blocks[idx - 1]['data'].keys():
-                        cur_data = blocks[idx - 1]['data']['payload']
-                    else:
-                        cur_data = await retrieve_payload_data(
-                            blocks[idx-1]['data']['cid'],
-                            writer_redis_conn=writer_redis_conn
-                        )
-                    cur_data = json.loads(cur_data)
-
-                    result = await process_payloads_for_diff(
-                        project_id=projectId,
-                        prev_data=prev_data,
-                        cur_data=cur_data,
-                        reader_redis_conn=reader_redis_conn
-                    )
-                    rest_logger.debug('After payload clean up and comparison if any')
-                    rest_logger.debug(result)
-                    cur_data_copy = result['cur_copy']
-                    prev_data_copy = result['prev_copy']
-
-                    # calculate diff
-                    for k, v in cur_data_copy.items():
-                        if k not in result['payload_changed']:
-                            if k not in prev_data_copy.keys():
-                                prev_data_copy[k] = None
-                            if v != prev_data[k]:
-                                diff_map[k] = {
-                                    'old': prev_data.get(k),
-                                    'new': cur_data.get(k)
-                                }
+                        """ If the payload is not yet retrieved, then get if from ipfs """
+                        if 'payload' in formatted_block['data'].keys():
+                            prev_data = formatted_block['data']['payload']
                         else:
-                            if result['payload_changed'][k]:
-                                diff_map[k] = {
-                                    'old': prev_data.get(k),
-                                    'new': cur_data.get(k)
-                                }
+                            prev_data = await retrieve_payload_data(block['data']['cid'], writer_redis_conn=writer_redis_conn)
+                        rest_logger.debug("Got the payload data: ")
+                        rest_logger.debug(prev_data)
+                        prev_data = json.loads(prev_data)
 
-                    if len(diff_map):
-                        rest_logger.debug('Found diff in first time calculation')
+                        if 'payload' in blocks[idx - 1]['data'].keys():
+                            cur_data = blocks[idx - 1]['data']['payload']
+                        else:
+                            cur_data = await retrieve_payload_data(
+                                blocks[idx-1]['data']['cid'],
+                                writer_redis_conn=writer_redis_conn
+                            )
+                        cur_data = json.loads(cur_data)
+
+                        result = await process_payloads_for_diff(
+                            project_id=projectId,
+                            prev_data=prev_data,
+                            cur_data=cur_data,
+                            reader_redis_conn=reader_redis_conn
+                        )
+                        rest_logger.debug('After payload clean up and comparison if any')
+                        rest_logger.debug(result)
+                        cur_data_copy = result['cur_copy']
+                        prev_data_copy = result['prev_copy']
+
+                        # calculate diff
+                        for k, v in cur_data_copy.items():
+                            if k not in result['payload_changed']:
+                                if k not in prev_data_copy.keys():
+                                    prev_data_copy[k] = None
+                                if v != prev_data[k]:
+                                    diff_map[k] = {
+                                        'old': prev_data.get(k),
+                                        'new': cur_data.get(k)
+                                    }
+                            else:
+                                if result['payload_changed'][k]:
+                                    diff_map[k] = {
+                                        'old': prev_data.get(k),
+                                        'new': cur_data.get(k)
+                                    }
+
+                        if len(diff_map):
+                            rest_logger.debug('Found diff in first time calculation')
+                            rest_logger.debug(diff_map)
+                            blocks[idx - 1]['payloadChanged'] = True
+                        # cache in redis
+                        await writer_redis_conn.set(diff_key, json.dumps(diff_map))
+                    else:
+                        diff_map = json.loads(diff_b)
+                        rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
+                        rest_logger.debug(blocks[idx - 1]['data']['cid'])
+                        rest_logger.debug(block['data']['cid'])
                         rest_logger.debug(diff_map)
-                        blocks[idx - 1]['payloadChanged'] = True
-                    # cache in redis
-                    await writer_redis_conn.set(diff_key, json.dumps(diff_map))
-                else:
-                    diff_map = json.loads(diff_b)
-                    rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
-                    rest_logger.debug(blocks[idx - 1]['data']['cid'])
-                    rest_logger.debug(block['data']['cid'])
-                    rest_logger.debug(diff_map)
-                blocks[idx - 1]['diff'] = diff_map
-            else:  # If the cid of current snapshot is the same as that of the previous snapshot
-                blocks[idx - 1]['payloadChanged'] = False
-        prev_payload_cid = block['data']['cid']
-        blocks.append(formatted_block)
-        prev_dag_cid = formatted_block['prevDagCid']
-        current_height = current_height - 1
-        idx += 1
+                    blocks[idx - 1]['diff'] = diff_map
+                else:  # If the cid of current snapshot is the same as that of the previous snapshot
+                    blocks[idx - 1]['payloadChanged'] = False
+            prev_payload_cid = block['data']['cid']
+            blocks.append(formatted_block)
+            prev_dag_cid = formatted_block['prevDagCid']
+            current_height = current_height - 1
+            idx += 1
     return blocks
 
 
