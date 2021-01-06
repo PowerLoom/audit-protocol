@@ -11,6 +11,7 @@ import json
 from pygate_grpc.client import PowerGateClient
 from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils import preprocess_dag
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ async def build_container(
 
         _dag_block = await ipfs_client.dag.get(dag_cid)
         dag_block = _dag_block.as_json()
+        dag_block = preprocess_dag(dag_block)
 
         """ Get the snapshot cid and retrieve the data of the snapshot from ipfs """
         snapshot_cid = dag_block['data']['cid']
@@ -220,6 +222,13 @@ async def backup_to_filecoin(
     fields['bloomFilterSettings'] = json.dumps(fields.pop('bloomFilterSettings'))
     fields['containerCid'] = stage_res.cid
     fields['jobId'] = job.jobId
+
+    job_status = {
+        'jobId': job.jobId,
+        'jobStatus': 'JOB_STATUS_UNCHECKED',
+        'retry': 0,
+    }
+
     container_id = fields.pop('containerId')
     project_id = fields.pop('projectId')
 
@@ -264,7 +273,7 @@ async def prune_targets(
         with open(container_file_path, 'w') as container_file:
             json.dump(container_data, container_file)
 
-        """ Backup the data """
+        """ Backup the container data """
         if settings.backup_target == 'FILECOIN':
             result = await backup_to_filecoin(container_data)
             pruning_logger.debug("Container data has been successfully backed up to filecoin: ")

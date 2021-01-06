@@ -23,7 +23,7 @@ import requests
 import async_timeout
 from redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
 from ipfs_async import client as ipfs_client
-from utils import process_payloads_for_diff
+from utils import process_payloads_for_diff, preprocess_dag
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -182,6 +182,7 @@ async def retrieve_block_data(block_dag, writer_redis_conn, data_flag=0):
     """ Retrieve the DAG block from ipfs """
     _block = await ipfs_client.dag.get(block_dag)
     block = _block.as_json()
+    block = preprocess_dag(block)
     if data_flag == 0:
         return block
 
@@ -724,6 +725,8 @@ async def get_payloads_diffs(
 
     if to_height == -1:
         to_height = max_block_height
+        rest_logger.debug("Max Block Height: ")
+        rest_logger.debug(max_block_height)
     if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
     extracted_count = 0
@@ -754,8 +757,8 @@ async def get_payloads(
         request: Request,
         response: Response,
         projectId: str,
-        from_height: int = Query(None),
-        to_height: int = Query(None),
+        from_height: int = Query(default=1),
+        to_height: int = Query(default=-1),
         data: Optional[str] = Query(None),
         reader_redis_conn=None,
         writer_redis_conn = None
@@ -782,13 +785,16 @@ async def get_payloads(
         else:
             data = False
 
+    if to_height == -1:
+        to_height = max_block_height
+
     if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
         response.status_code = 400
         return {'error': 'Invalid Height'}
 
     if from_height < max_block_height - settings.max_ipfs_blocks:
         """ Create a request Id and start a retrieval request """
-        _data = '1' if data else '0'
+        _data = 1 if data else 0
         request_id = await create_retrieval_request(
             project_id=projectId,
             from_height=from_height,
@@ -857,7 +863,7 @@ async def get_payloads(
                         cur_data = blocks[idx - 1]['data']['payload']
                     else:
                         cur_data = await retrieve_payload_data(
-                            block['data']['cid'],
+                            blocks[idx-1]['data']['cid'],
                             writer_redis_conn=writer_redis_conn
                         )
                     cur_data = json.loads(cur_data)
@@ -965,6 +971,7 @@ async def get_block(
             row = ipfs_table.fetch_row(row_index=block_height)
             _block = await ipfs_client.dag.get(row['cid'])
             block = _block.as_json()
+            block = preprocess_dag(block)
             return {row['cid']: block}
     elif settings.METADATA_CACHE == 'redis':
         max_block_height = await reader_redis_conn.get(f"projectID:{projectId}:blockHeight")
@@ -1031,6 +1038,7 @@ async def get_block_data(
         row = ipfs_table.fetch_row(row_index=block_height)
         _block = await ipfs_client.dag.get(row['cid'])
         block = _block.as_json()
+        block = preprocess_dag(block)
         _temp_data = await ipfs_client.cat(block['data']['cid'])
         block['data']['payload'] = _temp_data.decode('utf-8')
         return {row['cid']: block['data']}

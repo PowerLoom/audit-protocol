@@ -1,7 +1,7 @@
 from copy import deepcopy
 from logging import getLogger
 import json
-
+from config import settings
 
 logger = getLogger(__name__)
 
@@ -29,7 +29,8 @@ async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: 
     for rule in diff_rules:
         if rule['ruleType'] == 'ignore':
             if rule['fieldType'] == 'list':
-                key_rules[rule['field']] = {k: rule[k] for k in ['ignoreMemberFields', 'fieldType', 'ruleType', 'listMemberType']}
+                key_rules[rule['field']] = {k: rule[k] for k in
+                                            ['ignoreMemberFields', 'fieldType', 'ruleType', 'listMemberType']}
             elif rule['fieldType'] == 'map':
                 key_rules[rule['field']] = {k: rule[k] for k in ['ignoreMemberFields', 'fieldType', 'ruleType']}
         elif rule['ruleType'] == 'compare':
@@ -96,7 +97,7 @@ def clean_map_members(data, key_rules):
 def compare_members(prev_data, cur_data, compare_rules):
     comparison_results = dict()
     for field_name in compare_rules:
-        print('*'*40)
+        print('*' * 40)
         print('Applying comparison rule for key')
         print(field_name)
         prev_data_field = prev_data.get(field_name)
@@ -109,7 +110,7 @@ def compare_members(prev_data, cur_data, compare_rules):
         cur_data_comparable_values = list()
         # TODO: check for field type: map, list etc
         for each_comparable_member in compare_rules[field_name]['memberFields']:
-            print('='*40+'\nCollecting value for field')
+            print('=' * 40 + '\nCollecting value for field')
             print(each_comparable_member)
             if '.' in each_comparable_member:
                 path_trail = each_comparable_member.split('.')
@@ -140,3 +141,21 @@ def compare_members(prev_data, cur_data, compare_rules):
             comparison_results[field_name] = collated_prev_comparable != collated_cur_comparable
         print('*' * 40)
     return comparison_results
+
+
+def preprocess_dag(block):
+    if 'Height' in block.keys():
+        _block = deepcopy(block)
+        dag_structure = settings.dag_structure
+
+        dag_structure['height'] = _block.pop('Height')
+        dag_structure['prevCid'] = _block.pop('prevCid')
+        _block['Data']['cid'] = _block['Data'].pop('Cid')
+        _block['Data']['type'] = _block['Data'].pop('Type')
+        dag_structure['data'] = _block.pop('Data')
+        dag_structure['txHash'] = _block.pop('TxHash')
+        dag_structure['timestamp'] = _block.pop('Timestamp')
+
+        return dag_structure
+    else:
+        return block

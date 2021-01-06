@@ -10,6 +10,7 @@ import os
 import io
 from ipfs_async import client as ipfs_client
 from utils import process_payloads_for_diff
+from utils import preprocess_dag
 
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
@@ -110,8 +111,10 @@ async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_con
     timestamp = event_data['event_data']['timestamp']
 
     """ Get the last dag cid for the project_id """
-    last_dag_cid_key = f"projectId:{project_id}:lastDagCid"
+    last_dag_cid_key = f"projectID:{project_id}:lastDagCid"
     last_dag_cid = await reader_redis_conn.get(last_dag_cid_key)
+    rest_logger.debug("Got last Dag Cid: ")
+    rest_logger.debug(last_dag_cid)
     if last_dag_cid:
         last_dag_cid = last_dag_cid.decode('utf-8')
     else:
@@ -170,7 +173,7 @@ async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_con
         )
         ipfs_table.add_row({'cid': dag_data['Cid']['/']})
     elif settings.METADATA_CACHE == 'redis':
-        last_dag_cid_key = f"projectId:{project_id}:lastDagCid"
+        last_dag_cid_key = f"projectID:{project_id}:lastDagCid"
         await writer_redis_conn.set(last_dag_cid_key, dag_data['Cid']['/'])
         await writer_redis_conn.zadd(
             key=f'projectID:{project_id}:Cids',
@@ -184,10 +187,14 @@ async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_con
 
 async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_conn, writer_redis_conn):
     # cache last seen diffs
+    dag_height = dag['height']
+    rest_logger.debug("DAG at point A:")
+    rest_logger.debug(dag)
     if dag['prevCid']:
         payload_cid = dag['data']['cid']
         _prev_dag = await ipfs_client.dag.get(dag['prevCid'])
         prev_dag = _prev_dag.as_json()
+        prev_dag = preprocess_dag(prev_dag)
         prev_payload_cid = prev_dag['data']['cid']
         if prev_payload_cid != payload_cid:
             diff_map = dict()
@@ -225,9 +232,11 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
                         diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
 
             if diff_map:
+                rest_logger.debug("DAG at point B:")
+                rest_logger.debug(dag)
                 diff_data = {
                     'cur': {
-                        'height': dag['height'],
+                        'height': dag_height,
                         'payloadCid': payload_cid,
                         'dagCid': dag_cid,
                         'txHash': dag['txHash'],
@@ -245,7 +254,7 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
                     diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
                     await writer_redis_conn.zadd(
                         diff_snapshots_cache_zset,
-                        score=dag['height'],
+                        score=int(dag['height']),
                         member=json.dumps(diff_data)
                     )
                     latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'

@@ -8,6 +8,7 @@ import time
 from bloom_filter import BloomFilter
 from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
+from utils import preprocess_dag
 
 """ Inititalize the logger """
 retrieval_logger = logging.getLogger(__name__)
@@ -104,6 +105,8 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     """ Get the data directly through the IPFS client """
                     _block_dag = await ipfs_client.dag.get(block_cid)
                     block_dag = _block_dag.as_json()
+                    block_dag = preprocess_dag(block_dag)
+
                     payload_data = await ipfs_client.cat(block_dag['data']['cid'])
                     if isinstance(payload_data, bytes):
                         payload_data = payload_data.decode('utf-8')
