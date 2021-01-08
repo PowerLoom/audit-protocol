@@ -434,8 +434,9 @@ async def commit_payload(
             except:
                 response.status_code = 400
                 return {'success': False, 'error': 'PayloadNotSuppported'}
-    if snapshot_cid != last_snapshot_cid:
-        payload_changed = True
+    if last_snapshot_cid != "":
+        if snapshot_cid != last_snapshot_cid:
+            payload_changed = True
     payload_cid_key = f"projectID:{project_id}:payloadCids"
     _ = await writer_redis_conn.zadd(
         key=payload_cid_key,
@@ -668,40 +669,6 @@ async def get_payloads_diff_counts(
 
 
 # TODO: get API key/token specific updates corresponding to projects committed with those credentials
-
-@app.get('/projects/updates')
-@inject_reader_redis_conn
-async def get_latest_project_updates(
-        request: Request,
-        response: Response,
-        namespace: str = Query(default=None),
-        maxCount: int = Query(default=20),
-        reader_redis_conn=None
-):
-    project_diffs_snapshots = list()
-    if settings.METADATA_CACHE == 'redis':
-        h = await reader_redis_conn.hgetall('auditprotocol:lastSeenSnapshots')
-        if len(h) < 1:
-            return {}
-        for i, d in h.items():
-            project_id = i.decode('utf-8')
-            diff_data = json.loads(d)
-            each_project_info = {
-                'projectId': project_id,
-                'diff_data': diff_data
-            }
-            if namespace and namespace in project_id:
-                project_diffs_snapshots.append(each_project_info)
-            if not namespace:
-                try:
-                    project_id_int = int(project_id)
-                except:
-                    pass
-                else:
-                    project_diffs_snapshots.append(each_project_info)
-    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'],
-                                            reverse=True)
-    return sorted_project_diffs_snapshots[:maxCount]
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs')
