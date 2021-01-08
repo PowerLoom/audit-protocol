@@ -191,7 +191,7 @@ def check_signature(core_payload, signature):
     """
 
     _sign_rebuilt = hmac.new(
-        key=settings['api_key'].encode('utf-8'),
+        key=settings.API_KEY.encode('utf-8'),
         msg=json.dumps(core_payload).encode('utf-8'),
         digestmod='sha256'
     ).hexdigest()
