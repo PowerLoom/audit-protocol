@@ -189,9 +189,30 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
         retrieval_logger.debug(f"No pending requests found....")
 
 
-if __name__ == "__main__":
+def verifier_crash_cb(fut: asyncio.Future):
+    try:
+        exc = fut.exception()
+    except (asyncio.CancelledError):
+        retrieval_logger.error('Respawning retrieval task...')
+        t = asyncio.ensure_future(periodic_retrieval())
+        t.add_done_callback(verifier_crash_cb)
+    except Exception as e:
+        retrieval_logger.error('retrieval task crashed')
+        retrieval_logger.error(e, exc_info=True)
+
+        
+async def periodic_retrieval():
     while True:
-        retrieval_logger.debug("Looking for pending retrieval requests....")
-        asyncio.run(retrieve_files())
-        retrieval_logger.debug("Sleeping for 20 secs")
-        time.sleep(settings.retrieval_service_interval)
+        await asyncio.gather(
+            retrieve_files(),
+            asyncio.sleep(settings.retrieval_service_interval)
+        )
+        
+
+if __name__ == "__main__":
+    f = asyncio.ensure_future(periodic_retrieval())
+    f.add_done_callback(verifier_crash_cb)
+    try:
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
+    except:
+        asyncio.get_event_loop().stop()

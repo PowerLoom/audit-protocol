@@ -26,7 +26,7 @@ REDIS_READER_CONN_CONF = {
 }
 
 
-async def get_reader_redis_pool():
+async def get_writer_redis_pool():
     out = await aioredis.create_pool(
         address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
         db=REDIS_WRITER_CONN_CONF['db'],
@@ -36,7 +36,7 @@ async def get_reader_redis_pool():
     return out
 
 
-async def get_writer_redis_pool():
+async def get_reader_redis_pool():
     out = await aioredis.create_pool(
         address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
         db=REDIS_READER_CONN_CONF['db'],
@@ -46,7 +46,7 @@ async def get_writer_redis_pool():
     return out
 
 
-async def get_reader_redis_conn():
+async def get_writer_redis_conn():
     out = await aioredis.create_redis(
         address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
         db=REDIS_WRITER_CONN_CONF['db'],
@@ -55,7 +55,7 @@ async def get_reader_redis_conn():
     return out
 
 
-async def get_writer_redis_conn():
+async def get_reader_redis_conn():
     out = await aioredis.create_redis(
         address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
         db=REDIS_READER_CONN_CONF['db'],

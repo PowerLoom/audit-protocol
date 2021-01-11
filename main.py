@@ -454,52 +454,22 @@ async def commit_payload(
     rest_logger.debug("Created the unique payload commit id: ")
     rest_logger.debug(payload_commit_id)
 
-    """ Check if there are any pending Block creations left or any pending payloads left to commit """
-    pending_block_creations_key = f"projectId:{project_id}:pendingBlockCreation"
+    """ Create the Hash table for Payload """
+    payload_commit_key = f"payloadCommit:{payload_commit_id}"
+    fields = {
+        'snapshotCid': snapshot_cid,
+        'projectId': project_id,
+        'tentativeBlockHeight': last_tentative_block_height,
+    }
+
+    _ = await writer_redis_conn.hmset_dict(
+        key=payload_commit_key,
+        **fields
+    )
+
+    """ Add this payload commit for pending payload commits list """
     pending_payload_commits_key = f"pendingPayloadCommits"
-    pending_block_creations = await reader_redis_conn.smembers(pending_block_creations_key)
-    pending_payload_commits = await reader_redis_conn.lrange(pending_payload_commits_key, 0, -1)
-    if (len(pending_block_creations) > 0) or (len(pending_payload_commits) > 0):
-        rest_logger.debug("There are pending block creations or pending payloads to commit...")
-        rest_logger.debug(
-            "Queuing up this payload to be processed once all blocks are created or all the pending payloads are committed.")
-
-        """ Create the Hash table for Payload """
-        payload_commit_key = f"payloadCommit:{payload_commit_id}"
-        fields = {
-            'snapshotCid': snapshot_cid,
-            'projectId': project_id,
-            'tentativeBlockHeight': last_tentative_block_height,
-        }
-
-        _ = await writer_redis_conn.hmset_dict(
-            key=payload_commit_key,
-            **fields
-        )
-
-        """ Add this payload commit for pending payload commits list """
-        _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
-
-
-    else:
-        """ Since there are no pending payloads or block creations, commit this payload directly """
-        rest_logger.debug('Payload CID')
-        rest_logger.debug(snapshot_cid)
-        snapshot = dict()
-        snapshot['cid'] = snapshot_cid
-        snapshot['type'] = "COLD_FILECOIN"
-        """ Check if the payload has changed. """
-
-        token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-        _ = await make_transaction(
-            snapshot_cid=snapshot_cid,
-            token_hash=token_hash,
-            payload_commit_id=payload_commit_id,
-            last_tentative_block_height=last_tentative_block_height,
-            project_id=project_id,
-            writer_redis_conn=writer_redis_conn,
-            contract=request.app.contract
-        )
+    _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
 
     _ = await writer_redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
     last_snapshot_cid_key = f'projectID:{project_id}:lastSnapshotCid'

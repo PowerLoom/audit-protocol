@@ -11,6 +11,7 @@ from eth_utils import keccak
 from main import make_transaction
 from maticvigil.EVCore import EVCore
 from redis_conn import RedisPool, provide_async_reader_conn_inst, provide_async_writer_conn_inst
+import multiprocessing
 
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
@@ -88,11 +89,32 @@ async def commit_pending_payloads(
                                     contract=contract
                         )
             payload_logger.debug("The payload: "+payload_commit_id+" has been succesfully committed...")
-                        
+
+
+def verifier_crash_cb(fut: asyncio.Future):
+    try:
+        exc = fut.exception()
+    except (asyncio.CancelledError, aioredis.ConnectionClosedError):
+        payload_logger.error('Respawning commit payload task...')
+        t = asyncio.ensure_future(periodic_commit_payload())
+        t.add_done_callback(verifier_crash_cb)
+    except Exception as e:
+        payload_logger.error('Commit payload task crashed')
+        payload_logger.error(e, exc_info=True)
+
+
+async def periodic_commit_payload():
+    while True:
+        await asyncio.gather(
+            commit_pending_payloads(),
+            asyncio.sleep(settings.PAYLOAD_COMMIT_INTERVAL)
+        )
 
 if __name__ == "__main__":
     payload_logger.debug("Starting the loop")
-    while True:
-        asyncio.run(commit_pending_payloads())
-        payload_logger.debug("Sleeping for 20 seconds...")
-        time.sleep(settings.payload_commit_interval)
+    f = asyncio.ensure_future(periodic_commit_payload())
+    f.add_done_callback(verifier_crash_cb)
+    try:
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
+    except:
+        asyncio.get_running_loop().stop()

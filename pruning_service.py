@@ -214,7 +214,7 @@ async def backup_to_filecoin(
 
     # Stage and push the data
     stage_res = powgate_client.data.stage_bytes(json_data, token=token)
-    job = powgate_client.config.apply(stage_res.cid, override=False, token=token)
+    job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
 
     # Save the jobId and other data
     fields = {k: v for k, v in container_data.items()}
@@ -312,10 +312,35 @@ async def prune_targets(
         pruning_logger.debug('Successfully Pruned....')
 
 
-if __name__ == "__main__":
+def verifier_crash_cb(fut: asyncio.Future):
+    try:
+        exc = fut.exception()
+    except (asyncio.CancelledError, aioredis.ConnectionClosedError):
+        pruning_logger.error('Respawning pruning task...')
+        t = asyncio.ensure_future(periodic_pruning())
+        t.add_done_callback(verifier_crash_cb)
+    except Exception as e:
+        pruning_logger.error('Pruning task crashed')
+        pruning_logger.error(e, exc_info=True)
+
+
+async def periodic_pruning():
     while True:
-        pruning_logger.debug("Running the Prunning Service")
-        asyncio.run(choose_targets())
-        asyncio.run(prune_targets())
-        pruning_logger.debug("Sleeping for 10 secs")
-        time.sleep(settings.pruning_service_interval)
+        await asyncio.gather(
+            choose_targets(),
+        )
+        await asyncio.gather(
+            prune_targets(),
+            asyncio.sleep(settings.pruning_service_interval),
+        )
+
+if __name__ == "__main__":
+    pruning_logger.debug("Starting the loop")
+    f = asyncio.ensure_future(periodic_pruning())
+    f.add_done_callback(verifier_crash_cb)
+    while True:
+        try:
+            asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
+        except:
+            asyncio.get_running_loop().stop()
+
