@@ -514,18 +514,19 @@ async def configure_project(
     rest_logger.debug(rules)
 
 
-@app.post('/{projectId:str}/getDiffRules')
+@app.get('/{projectId:str}/getDiffRules')
 @inject_reader_redis_conn
 async def get_diff_rules(
         request: Request,
         response: Response,
-        project_id: str,
+        projectId: str,
         reader_redis_conn=None,
 ):
     """ This endpoint returs the diffRules set against a projectId """
 
-    diff_rules_key = f"projectID:{project_id}:diffRules"
+    diff_rules_key = f"projectID:{projectId}:diffRules"
     out = await reader_redis_conn.get(diff_rules_key)
+    rest_logger.debug(out)
     rules = json.loads(out.decode('utf-8'))
     return rules
 

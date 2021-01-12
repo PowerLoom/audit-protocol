@@ -12,7 +12,7 @@
 				"header": [],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"payload\": \"a\",\n    \"projectId\": 3\n\n}\n"
+					"raw": "{\n    \"payload\": '{'Hello':'My Data', 'Bye':'JAJAJAJA'}',\n    \"projectId\": 3\n\n}\n"
 				},
 				"url": {
 					"raw": "http://localhost:9000/commit_payload",
@@ -80,7 +80,7 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:9000/3/payload/1",
+					"raw": "http://localhost:9000/3/payload/25",
 					"protocol": "http",
 					"host": [
 						"localhost"
@@ -89,7 +89,7 @@
 					"path": [
 						"3",
 						"payload",
-						"1"
+						"25"
 					]
 				}
 			},
@@ -444,7 +444,72 @@
 				}
 			},
 			"response": []
+		},
+		{
+			"name": "Get requested Payload file",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": ""
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get project updates",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": ""
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Configure diff rules",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"rules\": [\n    {\n      \"ruleType\": \"ignore\",\n      \"field\": \"meta-data\",\n      \"fieldType\": \"map\",\n      \"ignoreMemberFields\": [\n        \"timestamp\"\n      ]\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "http://localhost:9000/test_project_1/diffRules",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"test_project_1",
+						"diffRules"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get the diffRules set for a project",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:9000/test_project_1/getDiffRules",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "9000",
+					"path": [
+						"test_project_1",
+						"getDiffRules"
+					]
+				}
+			},
+			"response": []
 		}
-	],
-	"protocolProfileBehavior": {}
+	]
 }
