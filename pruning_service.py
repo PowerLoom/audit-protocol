@@ -52,7 +52,7 @@ async def choose_targets(
 
         pruning_logger.debug("Retrieved block height:")
         pruning_logger.debug(max_block_height)
-        # Check if the project_id is still a small chain
+        # Check if the project_id is still a small chaiN
         if max_block_height < settings.max_ipfs_blocks:
             continue
 
@@ -338,9 +338,8 @@ if __name__ == "__main__":
     pruning_logger.debug("Starting the loop")
     f = asyncio.ensure_future(periodic_pruning())
     f.add_done_callback(verifier_crash_cb)
-    while True:
-        try:
-            asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
-        except:
-            asyncio.get_running_loop().stop()
+    try:
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
+    except:
+        asyncio.get_running_loop().stop()
 

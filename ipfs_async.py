@@ -2,16 +2,17 @@ import ipfshttpclient
 import asyncio
 from greenletio import async_
 from config import settings
+import io
+import json
 
 
 class AsyncIpfsClient:
-    def __init__(self, get, put, add_json, add_str, cat, pin_rm=None):
+    def __init__(self, get, put, add_json, add_str, cat):
         self.get = get
         self.put = put
         self.add_json = add_json
         self.add_str = add_str
         self.cat = cat
-        self.pin_rm = pin_rm
 
     async def async_get(self, *args, **kwargs):
         return await async_(self.get)(*args, **kwargs)
@@ -28,12 +29,6 @@ class AsyncIpfsClient:
     async def async_cat(self, *args, **kwargs):
         return await async_(self.cat)(*args, **kwargs)
 
-    async def pin_rm(self, *args, **kwargs):
-        if self.pin_rm:
-            return await async_(self.pin_rm)(*args, **kwargs)
-        else:
-            raise ValueError("pin.rm method was not passed while initializing this object")
-
 
 client = ipfshttpclient.connect(settings.IPFS_URL)
 
@@ -43,7 +38,6 @@ async_ipfs_client = AsyncIpfsClient(
     add_json=client.add_json,
     add_str=client.add_str,
     cat=client.cat,
-    pin_rm=client.pin.rm,
 )
 
 # Monkey patch the ipfs client
@@ -52,7 +46,20 @@ client.dag.put = async_ipfs_client.async_put
 client.cat = async_ipfs_client.async_cat
 client.add_json = async_ipfs_client.async_add_json
 client.add_str = async_ipfs_client.async_add_str
-client.pin.rm = async_ipfs_client.pin_rm
 
-# out = asyncio.run(client.add_str("ASYNC add_str function"))
-# print(out)
+
+async def test_async_funcs():
+    out = await client.dag.put(io.BytesIO(json.dumps({'a':'b'}).encode()))
+    print(out)
+    out = await client.dag.get(out.as_json()['Cid']['/'])
+    print(out)
+    out = await client.add_str("asdasad")
+    print(out)
+    out = await client.cat(out)
+    print(out)
+
+# tasks = asyncio.gather(
+#     test_async_funcs()
+# )
+#
+# asyncio.get_event_loop().run_until_complete(tasks)
