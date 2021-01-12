@@ -526,6 +526,9 @@ async def get_diff_rules(
 
     diff_rules_key = f"projectID:{projectId}:diffRules"
     out = await reader_redis_conn.get(diff_rules_key)
+    if out is None:
+        """ For projectId's who dont have any diffRules, return empty dict"""
+        return dict()
     rest_logger.debug(out)
     rules = json.loads(out.decode('utf-8'))
     return rules
