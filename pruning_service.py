@@ -292,7 +292,7 @@ async def prune_targets(
             dag_cid, dag_block = next(iter(dag_data.items()))
             snapshot_cid = dag_block['data']['cid']
             try:
-                _ = await ipfs_client.pin.rm(snapshot_cid)
+                _ = ipfs_client.pin.rm(snapshot_cid)
             except ipfshttpclient.exceptions.ErrorResponse as e:
                 pruning_logger.debug("This cid is not pinned....")
 

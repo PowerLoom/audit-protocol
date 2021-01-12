@@ -53,13 +53,17 @@ async def test_async_funcs():
     print(out)
     out = await client.dag.get(out.as_json()['Cid']['/'])
     print(out)
-    out = await client.add_str("asdasad")
+    cid = await client.add_str("asdasad")
+    print(cid)
+    out = await client.cat(cid)
     print(out)
-    out = await client.cat(out)
+    out = client.pin.rm(cid)
     print(out)
 
-# tasks = asyncio.gather(
-#     test_async_funcs()
-# )
-#
-# asyncio.get_event_loop().run_until_complete(tasks)
+
+if __name__ == "__main__":
+    tasks = asyncio.gather(
+        test_async_funcs()
+    )
+
+    asyncio.get_event_loop().run_until_complete(tasks)
