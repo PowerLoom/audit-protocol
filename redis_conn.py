@@ -147,7 +147,9 @@ def provide_async_reader_conn_inst(fn):
         except Exception as e:
             traceback.print_exception(type(e), e, e.__traceback__)
             return {'error': 'Internal Server Error'}
-
+        finally:
+            reader_redis_conn.close()
+            await reader_redis_conn.wait_closed()
     return async_redis_reader_wrapper
 
 
@@ -162,5 +164,7 @@ def provide_async_writer_conn_inst(fn):
         except Exception as e:
             traceback.print_exception(type(e), e, e.__traceback__)
             return {'error': 'Internal Server Error'}
-
+        finally:
+            writer_redis_conn.close()
+            await writer_redis_conn.wait_closed()
     return async_redis_writer_wrapper
