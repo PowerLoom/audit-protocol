@@ -1,32 +1,58 @@
-from pydantic import BaseModel, ValidationError, validator
-from typing import Union
+from pydantic import BaseModel, validator
+from typing import Union, Set, Optional
 import json
 
 
-class JobData(BaseModel):
-    jobId: str
-    jobStatus: str
-    jobStatusDescription: str
-    retries: int
-    filecoinToken: str
+class FilecoinJobData(BaseModel):
+    stagedCid: str = ""
+    jobId: str = ""
+    jobStatus: str = ""
+    jobStatusDescription: str = ""
+    retries: int = 0
+    filecoinToken: str = ""
 
 
 class BloomFilterSettings(BaseModel):
-    max_elements: int
-    error_rate: float
-    filename: str
+    max_elements: int = 0
+    error_rate: float = 0.0
+    filename: str = ""
+
+
+class SiaData(BaseModel):
+    placeholder: str = "PLACEHOLDER"
+    fileHash: str = ""
+
+
+class BackupMetaData(BaseModel):
+    sia: Optional[SiaData] = SiaData()  # Create empty placeholders
+    filecoin: Optional[FilecoinJobData] = FilecoinJobData()  # Create empty placeholders
+
+    @validator("sia", "filecoin")
+    def validate_json_data(cls, data, values, **kwargs):
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError as jdecerr:
+                print(jdecerr)
+
+        if isinstance(data, dict):
+            if kwargs['field'].name == "sia":
+                data = SiaData(**data)
+            elif kwargs['field'].name == "filecoin":
+                data = FilecoinJobData(**data)
+        return data
 
 
 class ContainerData(BaseModel):
     toHeight: int
     fromHeight: int
-    containerCid: str
     projectId: str
     timestamp: int
+    backupTargets: Set[int]
+    backupMetaData: Union[dict, str, BackupMetaData]
     bloomFilterSettings: Union[dict, str, BloomFilterSettings]
-    jobData: Union[dict, str, JobData]
 
-    @validator('jobData', 'bloomFilterSettings')
+    @validator('backupMetaData', 'bloomFilterSettings')
     def validate_json_data(cls, data, values, **kwargs):
 
         if isinstance(data, str):
@@ -37,25 +63,14 @@ class ContainerData(BaseModel):
 
         if isinstance(data, dict):
 
-            if kwargs['field'].name == 'jobData':
-                try:
-                    data = JobData(**data)
-                except ValidationError as verr:
-                    print(verr)
+            if kwargs['field'].name == 'backupMetaData':
+                data = BackupMetaData(**data)
 
             elif kwargs['field'].name == 'bloomFilterSettings':
-                try:
-                    data = BloomFilterSettings(**data)
-                except ValidationError as verr:
-                    print(verr)
+                data = BloomFilterSettings(**data)
 
         return data
 
     def convert_to_json(self):
-        """
-            - The jobData and bloomFilterSettings will be pydantic models and hence I am not putting any
-            exception here. If they are not pydantic models, then the model is invalid
-        """
-        self.jobData = json.dumps(self.jobData.dict())
+        self.backupMetaData = json.dumps(self.backupMetaData.dict())
         self.bloomFilterSettings = json.dumps(self.bloomFilterSettings.dict())
-

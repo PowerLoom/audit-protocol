@@ -51,11 +51,10 @@
 		"error_rate": 0.0001,
 		"filename": null
 	},
-	"backup_target": "FILECOIN",
-	
 	"payload_commit_interval": 20,
 	"pruning_service_interval": 10,
 	"retrieval_service_interval": 10,
 	"deal_watcher_service_interval": 20,
-	"api_key": ""
+	"api_key": "",
+	"backup_targets": ["sia", "filecoin"]
 }

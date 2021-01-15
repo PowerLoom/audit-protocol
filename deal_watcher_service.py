@@ -72,18 +72,18 @@ async def process_job(
     # Check the job status for this container from filecoin
     job_status, status_description = check_job_status(
         powergate_client=powergate_client,
-        staged_cid=container_data.containerCid,
-        token=container_data.jobData.filecoinToken
+        staged_cid=container_data.backupMetaData.filecoin.stagedCid,
+        token=container_data.backupMetaData.filecoin.filecoinToken
     )
 
     deal_logger.debug("Retrieved jobStatus and jobStatusDescription from filecoin: ")
     deal_logger.debug(job_status)
     deal_logger.debug(status_description)
 
-    if container_data.jobData.jobStatus != "JOB_STATUS_EXECUTING":
+    if container_data.backupMetaData.filecoin.jobStatus != "JOB_STATUS_EXECUTING":
         # Update the jobStatus and jobStatusDescription of the jobData and store it on redis
-        container_data.jobData.jobStatus = job_status
-        container_data.jobData.jobStatusDescription = status_description
+        container_data.backupMetaData.filecoin.jobStatus = job_status
+        container_data.backupMetaData.filecoin.jobStatusDescription = status_description
         try:
             container_data.convert_to_json()
         except TypeError as terr:

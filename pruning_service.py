@@ -11,7 +11,11 @@ import json
 from pygate_grpc.client import PowerGateClient
 from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
-from utils import preprocess_dag
+from utils import preprocess_dag, sia_upload, FailedRequestToSia
+from data_models import ContainerData, FilecoinJobData, SiaData, BackupMetaData
+from pydantic import ValidationError
+from typing import Union, List
+import hashlib
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -173,13 +177,17 @@ async def build_container(
         bloom_filter.add(dag_cid)
         container['dagChain'].append({dag_cid: dag_block})
 
+    """ Create Time stamp"""
+    timestamp = int(time.time())
+
     container_data = {
         'container': container,
         'bloomFilterSettings': bloom_filter_settings,
         'containerId': container_id,
         'fromHeight': int(from_height),
         'toHeight': int(to_height),
-        'projectId': project_id
+        'projectId': project_id,
+        'timestamp': timestamp
     }
     return container_data
 
@@ -190,11 +198,11 @@ async def backup_to_filecoin(
         container_data: dict,
         reader_redis_conn=None,
         writer_redis_conn=None
-):
+) -> Union[int, FilecoinJobData]:
     """
         - Convert container data to json string. 
         - Push it to filecoin
-        - Save the job Id
+        - Save the FilecoinJobData
     """
     powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
 
@@ -210,46 +218,128 @@ async def backup_to_filecoin(
         token = token.decode('utf-8')
 
     """ Convert the data to json string """
-    json_data = json.dumps(container_data).encode('utf-8')
+    try:
+        json_data = json.dumps(container_data).encode('utf-8')
+    except TypeError as terr:
+        pruning_logger.debug("Unable to convert container data to json string")
+        pruning_logger.error(terr, exc_info=True)
+        return -1
 
     # Stage and push the data
-    stage_res = powgate_client.data.stage_bytes(json_data, token=token)
-    job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
+    try:
+        stage_res = powgate_client.data.stage_bytes(json_data, token=token)
+        job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
+    except Exception as eobj:
+        pruning_logger.debug("Failed to backup container data to filecoin")
+        pruning_logger.error(eobj, exc_info=True)
+        return -1
 
     # Save the jobId and other data
-    fields = {k: v for k, v in container_data.items()}
-    _ = fields.pop('container')
-    fields['bloomFilterSettings'] = json.dumps(fields.pop('bloomFilterSettings'))
-    fields['containerCid'] = stage_res.cid
-
-    # Add a timestamp to the containerData
-    timestamp = int(time.time())
-    fields['timestamp'] = timestamp
-
     job_data = {
+        'stagedCid': stage_res.cid,
         'jobId': job.jobId,
         'jobStatus': 'JOB_STATUS_UNCHECKED',
         'jobStatusDescription': "",
         'filecoinToken': token,
         'retries': 0,
     }
+    try:
+        filecoin_job_data = FilecoinJobData(**job_data)
+        return filecoin_job_data
+    except ValidationError as verr:
+        pruning_logger.debug("Invalid data passed to FilecoinJobData")
+        pruning_logger.error(verr, exc_info=True)
+    except json.JSONDecodeError as jerr:
+        pruning_logger.debug("Invalid Json Data passed to FilecoinJobData")
+        pruning_logger.error(jerr, exc_info=True)
 
-    fields['jobData'] = json.dumps(job_data)
+    return -1
 
-    container_id = fields.pop('containerId')
-    project_id = fields.get('projectId')
 
-    """ Add the container_id to the a Redis SET to be watched by a deal watcher service."""
-    new_containers_key = f"executingContainers"
-    _ = await writer_redis_conn.sadd(new_containers_key, container_id)
+async def backup_to_sia(container_data: dict):
+    """
+    - Backup the given container data onto Sia
+    """
 
+    # Convert container data to Json
+    try:
+        json_data = json.dumps(container_data)
+    except TypeError as terr:
+        pruning_logger.debug("Failed to convert container data to json string")
+        pruning_logger.error(terr, exc_info=True)
+        return -1
+
+    file_hash = hashlib.md5(json_data.encode('utf-8')).hexdigest()
+    try:
+        _ = await sia_upload(file_hash=file_hash, file_content=json_data)
+    except FailedRequestToSia as ferr:
+        pruning_logger.debug("Failed to push data to Sia")
+        pruning_logger.debug(ferr, exc_info=True)
+        return -1
+
+    try:
+        sia_data = SiaData(fileHash=file_hash)
+    except ValidationError as verr:
+        pruning_logger.debug("Failed to convert sia data into a model")
+        pruning_logger.error(verr, exc_info=True)
+        return -1
+
+    return sia_data
+
+
+async def store_container_data(
+        container_data: dict,
+        backup_targets: List[str],
+        backup_metadata: dict,
+        writer_redis_conn=None
+) -> int:
+    """
+    - Store the metadata for backed up containers on redis
+    - Returns -1 if there was a failure, else returns 0
+    """
+    _ = container_data.pop('container')
+    container_id = container_data.pop('containerId')
+
+    container_meta_data = {k: v for k, v in container_data.items()}
+
+    try:
+        backup_metadata_obj = BackupMetaData(**backup_metadata)
+    except ValidationError as verr:
+        pruning_logger.debug("There was an error while creating BackupMetaData model:")
+        pruning_logger.error(verr, exc_info=True)
+        return -1
+
+    container_meta_data['backupTargets'] = backup_targets
+    container_meta_data['backupMetaData'] = backup_metadata_obj
+
+    try:
+        container_meta_data = ContainerData(**container_meta_data)
+    except ValidationError as verr:
+        pruning_logger.debug("There was an error while creating ContainerData model:")
+        pruning_logger.error(verr, exc_info=True)
+        return -1
+
+    # Convert some fields to json strings
+    try:
+        container_meta_data.convert_to_json()
+    except TypeError as terr:
+        pruning_logger.debug("There was an error while converting some fields to json: ")
+        pruning_logger.error(terr, exc_info=True)
+        return -1
+
+    # Store the container meta data on redis
     container_data_key = f"containerData:{container_id}"
     _ = await writer_redis_conn.hmset_dict(
         key=container_data_key,
-        **fields
+        **container_meta_data.dict(),
     )
-    result = {'containerCid': stage_res.cid, 'jobId': job.jobId}
-    return result
+
+    # If there is a filecoin backup then add the container_id to list of executing containers
+    if 'filecoin' in backup_targets:
+        new_containers_key = f"executingContainers"
+        _ = await writer_redis_conn.sadd(new_containers_key, container_id)
+
+    return 0
 
 
 @provide_async_writer_conn_inst
@@ -288,10 +378,43 @@ async def prune_targets(
             json.dump(container_data, container_file)
 
         """ Backup the container data """
-        if settings.backup_target == 'FILECOIN':
-            result = await backup_to_filecoin(container_data)
-            pruning_logger.debug("Container data has been successfully backed up to filecoin: ")
-            pruning_logger.debug(result)
+        backup_targets = list()
+        backup_metadata = dict()
+        filecoin_fail, sia_fail = False, False
+        if 'filecoin' in settings.BACKUP_TARGETS:
+            filecoin_job_data: Union[int, FilecoinJobData] = await backup_to_filecoin(container_data=container_data)
+            if filecoin_job_data == -1:
+                pruning_logger.debug("Failed to backup the container to filecoin")
+                filecoin_fail = True
+            else:
+                pruning_logger.debug("Container backed up to filecoin successfully")
+                backup_targets.append('filecoin')
+                backup_metadata['filecoin'] = filecoin_job_data
+
+        if 'sia' in settings.BACKUP_TARGETS:
+            sia_data: Union[int, SiaData] = await backup_to_sia(container_data=container_data)
+            if sia_data == -1:
+                pruning_logger.debug("Failed to backup the container to Sia")
+                sia_fail = True
+            else:
+                pruning_logger.debug("Container backed up to Sia successfully")
+                backup_targets.append('sia')
+                backup_metadata['sia'] = sia_data
+
+        if filecoin_fail and sia_fail:
+            continue
+
+        """ Store the container Data on redis"""
+        result = await store_container_data(
+            container_data=container_data,
+            backup_targets=backup_targets,
+            backup_metadata=backup_metadata,
+            writer_redis_conn=writer_redis_conn
+        )
+
+        if result == -1:
+            pruning_logger.debug("Failed to store container Meta Data on redis...")
+            continue
 
         """ Once the container has been backed up, then add it to the list of containers available """
         containers_created_key = f"projectID:{project_id}:containers"
@@ -300,22 +423,6 @@ async def prune_targets(
             member=container_data['containerId'],
             score=container_data['toHeight']
         )
-
-        # """ For each payload in the dag structure, unpin it """
-        # for dag_data in container_data['container']['dagChain']:
-        #     dag_cid, dag_block = next(iter(dag_data.items()))
-        #     snapshot_cid = dag_block['data']['cid']
-        #     try:
-        #         _ = ipfs_client.pin.rm(snapshot_cid)
-        #     except ipfshttpclient.exceptions.ErrorResponse as e:
-        #         pruning_logger.debug("This cid is not pinned....")
-        #
-        #     """ Remove the dag_block from the list of targetPrunes """
-        #     dag_unpin_key = f"projectID:{project_id}:targetDags"
-        #     _ = await writer_redis_conn.zrem(
-        #         key=dag_unpin_key,
-        #         member=dag_cid
-        #     )
 
         # Set the lastPruned for this projectId
         last_pruned_key = f"lastPruned:{project_id}"
