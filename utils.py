@@ -94,8 +94,7 @@ async def sia_get(file_hash):
                 raise FailedRequestToSia("Request to /renter/stream Failed")
             else:
                 utils_logger.debug("File content successfully retrieved from Sia")
-                async for data in response.content.iter_chunked(n=1024*50):
-                    print(data)
+                return response_text
 
 
 async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, reader_redis_conn):

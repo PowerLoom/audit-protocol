@@ -8,7 +8,8 @@ import time
 from bloom_filter import BloomFilter
 from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
-from utils import preprocess_dag
+from utils import preprocess_dag, sia_get, FailedRequestToSia
+from data_models import ContainerData, FilecoinJobData, SiaData
 
 """ Inititalize the logger """
 retrieval_logger = logging.getLogger(__name__)
@@ -38,10 +39,37 @@ REDIS_READER_CONN_CONF = {
 }
 
 
+async def get_data_from_filecoin(filecoin_job_data: FilecoinJobData):
+    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+    out = powgate_client.data.get(filecoin_job_data.stagedCid, token=filecoin_job_data.filecoinToken).decode('utf-8')
+    container = json.loads(out)['container']
+    return container
+    
+
+async def get_data_from_sia(sia_data: SiaData):
+    try:
+        out = await sia_get(sia_data.fileHash)
+        container = json.loads(out)['container']
+        return container
+    except FailedRequestToSia as ferr:
+        retrieval_logger.debug("Failed to get data from Sia")
+        raise ferr
+
+
+async def get_backup_data(container_data: ContainerData):
+    
+    data = None
+    if "filecoin" in container_data.backupTargets:
+        data = await get_data_from_filecoin(container_data.backupMetaData.filecoin) 
+    elif "sia" in container_data.backupTargets:
+        data = await get_data_from_sia(container_data.backupMetaData.sia)
+    
+    return data
+
+
 @provide_async_writer_conn_inst
 @provide_async_reader_conn_inst
 async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
-    powgate_client = PowerGateClient("127.0.0.1:5002", False)
 
     """ Get all the pending requests """
     requests_list_key = f"pendingRetrievalRequests"
@@ -122,11 +150,11 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
 
                     """ Iterate through each containerId and then check if the block exists in that container """
                     bloom_object = None
-                    container_data = None
+                    container_data = {}
                     for container_id in target_containers:
                         """ Get the data for the container """
                         container_id = container_id.decode('utf-8')
-                        container_data_key = f"projectID:{request_info['projectId']}:containerData:{container_id}"
+                        container_data_key = f"containerData:{container_id}"
                         out = await reader_redis_conn.hgetall(container_data_key)
                         container_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
                         bloom_filter_settings = json.loads(container_data['bloomFilterSettings'])
@@ -138,8 +166,8 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     retrieval_logger.debug("Found the matching container")
                     retrieval_logger.debug(container_data)
 
-                    out = powgate_client.data.get(container_data['containerCid'], token=token).decode('utf-8')
-                    container = json.loads(out)['container']
+                    _container_data = ContainerData(**container_data)
+                    container = await get_backup_data(container_data=_container_data)
                     _block_index = block_height % settings.container_height
                     block_cid, block_dag = next(iter(container['dagChain'][_block_index].items()))
                     payload_data = container['payloads'][block_dag['data']['cid']]
