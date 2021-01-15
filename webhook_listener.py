@@ -298,12 +298,13 @@ async def create_dag(
 ):
     event_data = await request.json()
     # Verify the payload that has arrived.
-    is_safe = check_signature(event_data, x_hook_signature)
-    if is_safe:
-        rest_logger.debug("The arriving payload has been verified")
-    else:
-        rest_logger.debug("Recieved an wrong signature payload")
-        return dict()
+    if x_hook_signature:
+        is_safe = check_signature(event_data, x_hook_signature)
+        if is_safe:
+            rest_logger.debug("The arriving payload has been verified")
+        else:
+            rest_logger.debug("Recieved an wrong signature payload")
+            return dict()
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
             rest_logger.debug(event_data)
