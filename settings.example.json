@@ -56,5 +56,6 @@
 	"payload_commit_interval": 20,
 	"pruning_service_interval": 10,
 	"retrieval_service_interval": 10,
+	"deal_watcher_service_interval": 20,
 	"api_key": ""
 }

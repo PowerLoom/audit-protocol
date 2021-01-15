@@ -113,8 +113,8 @@ async def periodic_commit_payload():
 if __name__ == "__main__":
     payload_logger.debug("Starting the loop")
     f = asyncio.ensure_future(periodic_commit_payload())
-    f.add_done_callback(verifier_crash_cb)
-    try:
-        asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
-    except:
-        asyncio.get_running_loop().stop()
+    #f.add_done_callback(verifier_crash_cb)
+    #try:
+    asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
+    #except:
+    #    asyncio.get_running_loop().stop()

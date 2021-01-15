@@ -24,6 +24,8 @@ import async_timeout
 from redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
 from ipfs_async import client as ipfs_client
 from utils import process_payloads_for_diff, preprocess_dag
+from data_models import ContainerData
+from pydantic import ValidationError
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -1047,3 +1049,95 @@ async def get_block_data(
 
         """ Return the payload data """
         return {prev_dag_cid: payload}
+
+
+# Get the containerData using container_id
+@app.get("/query/containerData/{container_id:str}")
+@inject_reader_redis_conn
+async def get_container_data(
+        request: Request,
+        response: Response,
+        container_id: str,
+        reader_redis_conn=None
+):
+    """
+        - retrieve the containerData from containerData key
+        - return containerData
+    """
+
+    rest_logger.debug("Retrieving containerData for container_id: ")
+    rest_logger.debug(container_id)
+    container_data_key = f"containerData:{container_id}"
+    out = await reader_redis_conn.hgetall(container_data_key)
+    out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
+    if not out:
+        return {"error": f"The container_id:{container_id} is invalid"}
+    try:
+        container_data = ContainerData(**out)
+    except ValidationError as verr:
+        rest_logger.debug("The containerData retrieved from redis is invalid")
+        rest_logger.debug(out)
+        rest_logger.error(verr, exc_info=True)
+        return {}
+
+    return container_data.dict()
+
+@app.get("/query/executingContainers")
+@inject_reader_redis_conn
+async def get_executing_containers(
+        request: Request,
+        response: Response,
+        maxCount: int = Query(default=10),
+        data: str = Query(default="false"),
+        reader_redis_conn=None
+):
+    """
+        - Get all the container_id's from the executingContainers redis SET
+        - if the data field is true, then get the containerData for each of the container as well
+    """
+
+    if isinstance(data, str):
+        if data.lower() == "true":
+            data = True
+        else:
+            data = False
+    else:
+        data = False
+
+    executing_containers_key = f"executingContainers"
+    all_container_ids = await reader_redis_conn.smembers(executing_containers_key)
+
+    containers = list()
+    for container_id in all_container_ids:
+        container_id = container_id.decode('utf-8')
+        if data is True:
+            container_data_key = f"containerData:{container_id}"
+            out = await reader_redis_conn.hgetall(container_data_key)
+            out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
+            if not out:
+                _container = {
+                    'containerId': container_id,
+                    'containerData': dict()
+                }
+            else:
+                try:
+                    container_data = ContainerData(**out)
+                except ValidationError as verr:
+                    rest_logger.debug("The containerData retrieved from redis is invalid")
+                    rest_logger.debug(out)
+                    rest_logger.error(verr, exc_info=True)
+                    _container = {
+                        'containerId': container_id,
+                        'containerData': dict()
+                    }
+                else:
+                    _container = {
+                        'containerId': container_id,
+                        'containerData': container_data.dict()
+                    }
+            containers.append(_container)
+        else:
+            containers.append(container_id)
+
+    return dict(count=len(containers), containers=containers)
+

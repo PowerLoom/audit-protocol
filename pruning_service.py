@@ -221,18 +221,29 @@ async def backup_to_filecoin(
     _ = fields.pop('container')
     fields['bloomFilterSettings'] = json.dumps(fields.pop('bloomFilterSettings'))
     fields['containerCid'] = stage_res.cid
-    fields['jobId'] = job.jobId
 
-    job_status = {
+    # Add a timestamp to the containerData
+    timestamp = int(time.time())
+    fields['timestamp'] = timestamp
+
+    job_data = {
         'jobId': job.jobId,
         'jobStatus': 'JOB_STATUS_UNCHECKED',
-        'retry': 0,
+        'jobStatusDescription': "",
+        'filecoinToken': token,
+        'retries': 0,
     }
 
-    container_id = fields.pop('containerId')
-    project_id = fields.pop('projectId')
+    fields['jobData'] = json.dumps(job_data)
 
-    container_data_key = f"projectID:{project_id}:containerData:{container_id}"
+    container_id = fields.pop('containerId')
+    project_id = fields.get('projectId')
+
+    """ Add the container_id to the a Redis SET to be watched by a deal watcher service."""
+    new_containers_key = f"executingContainers"
+    _ = await writer_redis_conn.sadd(new_containers_key, container_id)
+
+    container_data_key = f"containerData:{container_id}"
     _ = await writer_redis_conn.hmset_dict(
         key=container_data_key,
         **fields
@@ -248,11 +259,14 @@ async def prune_targets(
     writer_redis_conn=None
 ):
     """
-        - Get the list of all projectID's that are in our protocol
-        - iterate through each of the projectID:
-            - get the list of Dag blocks that are chosen as targets
-    :return:
-        None
+        - Get the list of all project_id's that need to be unpinned
+        - For each project_id in all project_id's do:
+            - Build container for the data that needs to be backed up
+            - Backup the container
+            - Store the container metadata on redis
+            - Add the container_id to the list of container_id's which need to be
+            monitored by a deal watcher service and update the storage deals for that
+            container.
     """
     # Get all project_ids
     to_unpin_projects_key = f"toUnpinProjects"
@@ -287,21 +301,21 @@ async def prune_targets(
             score=container_data['toHeight']
         )
 
-        """ For each payload in the dag structure, unpin it """
-        for dag_data in container_data['container']['dagChain']:
-            dag_cid, dag_block = next(iter(dag_data.items()))
-            snapshot_cid = dag_block['data']['cid']
-            try:
-                _ = ipfs_client.pin.rm(snapshot_cid)
-            except ipfshttpclient.exceptions.ErrorResponse as e:
-                pruning_logger.debug("This cid is not pinned....")
-
-            """ Remove the dag_block from the list of targetPrunes """
-            dag_unpin_key = f"projectID:{project_id}:targetDags"
-            _ = await writer_redis_conn.zrem(
-                key=dag_unpin_key,
-                member=dag_cid
-            )
+        # """ For each payload in the dag structure, unpin it """
+        # for dag_data in container_data['container']['dagChain']:
+        #     dag_cid, dag_block = next(iter(dag_data.items()))
+        #     snapshot_cid = dag_block['data']['cid']
+        #     try:
+        #         _ = ipfs_client.pin.rm(snapshot_cid)
+        #     except ipfshttpclient.exceptions.ErrorResponse as e:
+        #         pruning_logger.debug("This cid is not pinned....")
+        #
+        #     """ Remove the dag_block from the list of targetPrunes """
+        #     dag_unpin_key = f"projectID:{project_id}:targetDags"
+        #     _ = await writer_redis_conn.zrem(
+        #         key=dag_unpin_key,
+        #         member=dag_cid
+        #     )
 
         # Set the lastPruned for this projectId
         last_pruned_key = f"lastPruned:{project_id}"
@@ -335,11 +349,11 @@ async def periodic_pruning():
         )
 
 if __name__ == "__main__":
-    pruning_logger.debug("Starting the loop")
-    f = asyncio.ensure_future(periodic_pruning())
-    f.add_done_callback(verifier_crash_cb)
-    try:
-        asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
-    except:
-        asyncio.get_running_loop().stop()
+   pruning_logger.debug("Starting the loop")
+   f = asyncio.ensure_future(periodic_pruning())
+   f.add_done_callback(verifier_crash_cb)
+   try:
+       asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
+   except:
+       asyncio.get_event_loop().stop()
 
