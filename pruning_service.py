@@ -431,6 +431,14 @@ async def prune_targets(
         """ Remove the project Id from the list of target Project IDs """
         _ = await writer_redis_conn.srem(to_unpin_projects_key, project_id)
         pruning_logger.debug('Successfully Pruned....')
+        
+        """ Empty up the targetDags redis ZSET"""
+        target_dags_key = f"projectID:{project_id}:targetDags"
+        _ = await reader_redis_conn.zremrangebyrank(
+            key=target_dags_key,
+            start=0,
+            stop=-1
+        )
 
 
 def verifier_crash_cb(fut: asyncio.Future):
