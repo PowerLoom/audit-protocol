@@ -196,8 +196,10 @@ def check_signature(core_payload, signature):
         digestmod='sha256'
     ).hexdigest()
 
-    rest_logger.debug("Signature the came in the header: " + signature)
-    rest_logger.debug("Signature rebuilt from core payload: " + _sign_rebuilt)
+    rest_logger.debug("Signature the came in the header: ")
+    rest_logger.debug(signature)
+    rest_logger.debug("Signature rebuilt from core payload: ")
+    rest_logger.debug(_sign_rebuilt)
 
     return _sign_rebuilt == signature
 
