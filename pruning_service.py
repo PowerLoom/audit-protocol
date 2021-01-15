@@ -297,10 +297,10 @@ async def store_container_data(
     - Store the metadata for backed up containers on redis
     - Returns -1 if there was a failure, else returns 0
     """
-    _ = container_data.pop('container')
-    container_id = container_data.pop('containerId')
-
     container_meta_data = {k: v for k, v in container_data.items()}
+
+    _ = container_meta_data.pop('container')
+    container_id = container_meta_data.pop('containerId')
 
     try:
         backup_metadata_obj = BackupMetaData(**backup_metadata)

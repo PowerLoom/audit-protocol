@@ -1,5 +1,5 @@
 from pydantic import BaseModel, validator
-from typing import Union, Set, Optional
+from typing import Union, List, Optional
 import json
 
 
@@ -48,7 +48,7 @@ class ContainerData(BaseModel):
     fromHeight: int
     projectId: str
     timestamp: int
-    backupTargets: Set[int]
+    backupTargets: Union[str, List[str]]
     backupMetaData: Union[dict, str, BackupMetaData]
     bloomFilterSettings: Union[dict, str, BloomFilterSettings]
 
@@ -72,5 +72,6 @@ class ContainerData(BaseModel):
         return data
 
     def convert_to_json(self):
+        self.backupTargets = json.dumps(self.backupTargets)
         self.backupMetaData = json.dumps(self.backupMetaData.dict())
         self.bloomFilterSettings = json.dumps(self.bloomFilterSettings.dict())
