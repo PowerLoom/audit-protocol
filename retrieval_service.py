@@ -10,6 +10,10 @@ from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
 from utils import preprocess_dag, sia_get, FailedRequestToSia
 from data_models import ContainerData, FilecoinJobData, SiaData
+from siaskynet import SkynetClient
+import os
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
+
 
 """ Inititalize the logger """
 retrieval_logger = logging.getLogger(__name__)
@@ -44,25 +48,44 @@ async def get_data_from_filecoin(filecoin_job_data: FilecoinJobData):
     out = powgate_client.data.get(filecoin_job_data.stagedCid, token=filecoin_job_data.filecoinToken).decode('utf-8')
     container = json.loads(out)['container']
     return container
-    
 
-async def get_data_from_sia(sia_data: SiaData):
+
+@retry(
+    wait=wait_exponential(min=2, max=18, multiplier=1),
+    stop=stop_after_attempt(6),
+    retry=retry_if_exception(FailedRequestToSia)
+)
+async def get_data_from_sia(sia_data: SiaData, container_id: str):
+    retrieval_logger.debug("Getting container from Sia")
+    retrieval_logger.debug(sia_data.skylink)
+    client = SkynetClient()
+    timestamp = int(time.time())
+    temp_path = f"temp_files/{container_id}"
+    if not os.path.exists(temp_path):
+        try:
+            client.download_file(skylink=sia_data.skylink,  path=temp_path)
+        except Exception as e:
+            retrieval_logger.debug("Failed to get data from Sia")
+            raise FailedRequestToSia
+
+    f = open(temp_path, 'r')
+    data = f.read()
     try:
-        out = await sia_get(sia_data.fileHash)
-        container = json.loads(out)['container']
-        return container
-    except FailedRequestToSia as ferr:
-        retrieval_logger.debug("Failed to get data from Sia")
-        raise ferr
+        json_data = json.loads(data)
+    except json.JSONDecodeError as jdecerr:
+        retrieval_logger.debug("An error occured while loading data from skynet")
+        retrieval_logger.error(jdecerr, exc_info=True)
+        return -1
+    return json_data['container']
 
 
-async def get_backup_data(container_data: ContainerData):
+async def get_backup_data(container_data: ContainerData, container_id: str):
     
     data = None
     if "filecoin" in container_data.backupTargets:
         data = await get_data_from_filecoin(container_data.backupMetaData.filecoin) 
     elif "sia" in container_data.backupTargets:
-        data = await get_data_from_sia(container_data.backupMetaData.sia)
+        data = await get_data_from_sia(container_data.backupMetaData.sia, container_id=container_id)
     
     return data
 
@@ -99,11 +122,6 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
             retrieval_logger.debug("Last Pruned Height:")
             retrieval_logger.debug(last_pruned_height)
 
-            # Get the token for that projectId
-            token_key = f"filecoinToken:{request_info['projectId']}"
-            token = await reader_redis_conn.get(token_key)
-            token = token.decode('utf-8')
-
             """ 
                 - For the project_id, using the from_height and to_height from the request_info, 
                 get all the DAG block cids. 
@@ -128,7 +146,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 payload_data = None
 
                 """ Check if the DAG block is pinned """
-                if (block_height < max_block_height - settings.max_ipfs_blocks) or (
+                if (block_height > (max_block_height - settings.max_ipfs_blocks)) or (
                         last_pruned_height < int(request_info['to_height'])):
                     """ Get the data directly through the IPFS client """
                     _block_dag = await ipfs_client.dag.get(block_cid)
@@ -151,6 +169,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     """ Iterate through each containerId and then check if the block exists in that container """
                     bloom_object = None
                     container_data = {}
+                    container_id = ""
                     for container_id in target_containers:
                         """ Get the data for the container """
                         container_id = container_id.decode('utf-8')
@@ -167,7 +186,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     retrieval_logger.debug(container_data)
 
                     _container_data = ContainerData(**container_data)
-                    container = await get_backup_data(container_data=_container_data)
+                    container = await get_backup_data(container_data=_container_data, container_id=container_id)
                     _block_index = block_height % settings.container_height
                     block_cid, block_dag = next(iter(container['dagChain'][_block_index].items()))
                     payload_data = container['payloads'][block_dag['data']['cid']]

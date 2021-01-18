@@ -69,7 +69,7 @@ async def sia_upload(file_hash, file_content):
 )
 async def sia_get(file_hash):
     """Get the file content for the file hash from Sia"""
-    headers = {'user-agent': 'Sia-Agent', 'Content-Type': 'application/octet-stream'}
+    headers = {'user-agent': 'Sia-Agent'}
     async with aiohttp.ClientSession() as session:
         async with async_timeout.timeout(6) as cm:
             try:
@@ -77,9 +77,11 @@ async def sia_get(file_hash):
                     url=f"http://localhost:9980/renter/stream/{file_hash}",
                     headers=headers,
                 ) as response:
+
                     utils_logger.debug("Got response from Sia /renter/stream")
                     utils_logger.debug("Response status: ")
                     utils_logger.debug(response.status)
+
                     response_text = await response.text()
                     utils_logger.debug("Response text: ")
                     utils_logger.debug(response_text)

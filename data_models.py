@@ -19,7 +19,7 @@ class BloomFilterSettings(BaseModel):
 
 
 class SiaData(BaseModel):
-    placeholder: str = "PLACEHOLDER"
+    skylink: str = ""
     fileHash: str = ""
 
 

@@ -11,11 +11,12 @@ import json
 from pygate_grpc.client import PowerGateClient
 from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
-from utils import preprocess_dag, sia_upload, FailedRequestToSia
+from utils import preprocess_dag
 from data_models import ContainerData, FilecoinJobData, SiaData, BackupMetaData
 from pydantic import ValidationError
 from typing import Union, List
-import hashlib
+import os
+import siaskynet
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -26,6 +27,26 @@ stream_handler.setFormatter(formatter)
 pruning_logger.addHandler(stream_handler)
 pruning_logger.debug("Initialized logger")
 
+def startup_boilerplate():
+    try:
+        os.stat(os.getcwd() + '/containers')
+    except:
+        os.mkdir(os.getcwd() + '/containers')
+
+    try:
+        os.stat(os.getcwd() + '/bloom_filter_objects')
+    except:
+        os.mkdir(os.getcwd() + '/bloom_filter_objects')
+
+    try:
+        os.stat(os.getcwd() + '/bloom_filter_objects')
+    except:
+        os.mkdir(os.getcwd() + '/bloom_filter_objects')
+
+    try:
+        os.stat(os.getcwd() + '/temp_files')
+    except:
+        os.mkdir(os.getcwd() + '/temp_files')
 
 @provide_async_reader_conn_inst
 @provide_async_writer_conn_inst
@@ -262,23 +283,34 @@ async def backup_to_sia(container_data: dict):
     """
 
     # Convert container data to Json
+    # try:
+    #     json_data = json.dumps(container_data)
+    # except TypeError as terr:
+    #     pruning_logger.debug("Failed to convert container data to json string")
+    #     pruning_logger.error(terr, exc_info=True)
+    #     return -1
+    #
+    # file_hash = hashlib.md5(json_data.encode('utf-8')).hexdigest()
+    # try:
+    #     _ = await sia_upload(file_hash=file_hash, file_content=json_data.encode('utf-8'))
+    # except FailedRequestToSia as ferr:
+    #     pruning_logger.debug("Failed to push data to Sia")
+    #     pruning_logger.debug(ferr, exc_info=True)
+    #     return -1
+
+    pruning_logger.debug("Backing up data to Sia")
+    container_id = container_data['containerId']
+    container_file_path = f"containers/{container_id}.json"
+    client = siaskynet.SkynetClient()
     try:
-        json_data = json.dumps(container_data)
-    except TypeError as terr:
-        pruning_logger.debug("Failed to convert container data to json string")
-        pruning_logger.error(terr, exc_info=True)
+        skylink = client.upload_file(container_file_path)
+    except Exception as e:
+        pruning_logger.debug("There was an error while uploading the file to Skynet")
+        pruning_logger.error(e, exc_info=True)
         return -1
 
-    file_hash = hashlib.md5(json_data.encode('utf-8')).hexdigest()
     try:
-        _ = await sia_upload(file_hash=file_hash, file_content=json_data)
-    except FailedRequestToSia as ferr:
-        pruning_logger.debug("Failed to push data to Sia")
-        pruning_logger.debug(ferr, exc_info=True)
-        return -1
-
-    try:
-        sia_data = SiaData(fileHash=file_hash)
+        sia_data = SiaData(skylink=skylink)
     except ValidationError as verr:
         pruning_logger.debug("Failed to convert sia data into a model")
         pruning_logger.error(verr, exc_info=True)
@@ -405,6 +437,7 @@ async def prune_targets(
                 backup_metadata['sia'] = sia_data
 
         if filecoin_fail and sia_fail:
+            pruning_logger.debug("Failed to backup data to any platform")
             continue
 
         """ Store the container Data on redis"""
@@ -467,11 +500,12 @@ async def periodic_pruning():
         )
 
 if __name__ == "__main__":
-   pruning_logger.debug("Starting the loop")
-   f = asyncio.ensure_future(periodic_pruning())
-   f.add_done_callback(verifier_crash_cb)
-   try:
-       asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
-   except:
-       asyncio.get_event_loop().stop()
+    startup_boilerplate()
+    pruning_logger.debug("Starting the loop")
+    f = asyncio.ensure_future(periodic_pruning())
+    f.add_done_callback(verifier_crash_cb)
+    try:
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
+    except:
+        asyncio.get_event_loop().stop()
 
