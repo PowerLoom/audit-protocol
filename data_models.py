@@ -52,7 +52,7 @@ class ContainerData(BaseModel):
     backupMetaData: Union[dict, str, BackupMetaData]
     bloomFilterSettings: Union[dict, str, BloomFilterSettings]
 
-    @validator('backupMetaData', 'bloomFilterSettings')
+    @validator('backupMetaData', 'bloomFilterSettings', 'backupTargets')
     def validate_json_data(cls, data, values, **kwargs):
 
         if isinstance(data, str):

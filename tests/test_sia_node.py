@@ -6,7 +6,7 @@ import asyncio
 import requests
 
 async def test_sia_node():
-	random_text = ''.join([choice(ascii_letters) for i in range(10000)])
+	random_text = ''.join([choice(ascii_letters) for i in range(100)])
 	print(random_text)
 	t_h = hashlib.md5(random_text.encode()).hexdigest()
 	

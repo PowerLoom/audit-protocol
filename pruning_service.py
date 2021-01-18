@@ -322,6 +322,9 @@ async def store_container_data(
     # Convert some fields to json strings
     try:
         container_meta_data.convert_to_json()
+        # I am explicitly encoding the backupTargets because, otherwise there will
+        # be multiple escape strings and you would have to json.loads it twice
+        container_meta_data.backupTargets.encode('utf-8')
     except TypeError as terr:
         pruning_logger.debug("There was an error while converting some fields to json: ")
         pruning_logger.error(terr, exc_info=True)
