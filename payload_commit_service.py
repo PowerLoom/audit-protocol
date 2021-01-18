@@ -88,7 +88,8 @@ async def commit_pending_payloads(
                                     writer_redis_conn=writer_redis_conn,
                                     contract=contract
                         )
-            payload_logger.debug("The payload: "+payload_commit_id+" has been succesfully committed...")
+            payload_logger.debug("Successfully committed payload: ")
+            payload_logger.debug(payload_commit_id)
 
 
 def verifier_crash_cb(fut: asyncio.Future):

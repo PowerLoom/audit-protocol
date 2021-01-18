@@ -9,6 +9,7 @@ uvicorn = "*"
 pygate-grpc = "*"
 redis = "*"
 aioredis = "*"
+siaskynet = "*"
 
 [dev-packages]
 pylint = "*"

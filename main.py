@@ -329,7 +329,7 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         rest_logger.debug(e_obj)
         rest_logger.debug("=" * 80)
 
-    pendingTransactionsKey = f"projectId:{project_id}:pendingBlockCreation"
+    pendingTransactionsKey = f"projectID:{project_id}:pendingBlockCreation"
     _ = await writer_redis_conn.sadd(pendingTransactionsKey, payload_commit_id)
 
 

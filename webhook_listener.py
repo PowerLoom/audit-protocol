@@ -93,7 +93,7 @@ async def save_event_data(event_data: dict, writer_redis_conn):
         **fields
     )
 
-    pending_blocks_key = f"projectId:{event_data['event_data']['projectId']}:pendingBlocks"
+    pending_blocks_key = f"projectID:{event_data['event_data']['projectId']}:pendingBlocks"
     _ = await writer_redis_conn.zadd(
         key=pending_blocks_key,
         member=event_data['event_data']['payloadCommitId'],
@@ -344,8 +344,8 @@ async def create_dag(
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
                 """
-                pending_blocks_key = f"projectId:{project_id}:pendingBlocks"
-                pending_block_creations_key = f"projectId:{project_id}:pendingBlockCreation"
+                pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
+                pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
 
                 _dag_cid, dag_block = await create_dag_block(event_data, writer_redis_conn=writer_redis_conn,
                                                              reader_redis_conn=reader_redis_conn)
