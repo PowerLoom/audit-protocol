@@ -8,8 +8,8 @@ import time
 from bloom_filter import BloomFilter
 from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
-from utils import preprocess_dag, sia_get, FailedRequestToSia
-from data_models import ContainerData, FilecoinJobData, SiaData
+from utils import preprocess_dag, sia_get, FailedRequestToSiaRenter, FailedRequestToSiaSkynet
+from data_models import ContainerData, FilecoinJobData, SiaRenterData, SiaSkynetData
 from siaskynet import SkynetClient
 import os
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
@@ -53,9 +53,9 @@ async def get_data_from_filecoin(filecoin_job_data: FilecoinJobData):
 @retry(
     wait=wait_exponential(min=2, max=18, multiplier=1),
     stop=stop_after_attempt(6),
-    retry=retry_if_exception(FailedRequestToSia)
+    retry=retry_if_exception(FailedRequestToSiaSkynet)
 )
-async def get_data_from_sia(sia_data: SiaData, container_id: str):
+async def get_data_from_sia_skynet(sia_data: SiaSkynetData, container_id: str):
     retrieval_logger.debug("Getting container from Sia")
     retrieval_logger.debug(sia_data.skylink)
     client = SkynetClient()
@@ -65,8 +65,8 @@ async def get_data_from_sia(sia_data: SiaData, container_id: str):
         try:
             client.download_file(skylink=sia_data.skylink,  path=temp_path)
         except Exception as e:
-            retrieval_logger.debug("Failed to get data from Sia")
-            raise FailedRequestToSia
+            retrieval_logger.debug("Failed to get data from Sia Skynet")
+            raise FailedRequestToSiaSkynet
 
     f = open(temp_path, 'r')
     data = f.read()
@@ -79,14 +79,38 @@ async def get_data_from_sia(sia_data: SiaData, container_id: str):
     return json_data['container']
 
 
+@retry(
+    wait=wait_exponential(min=2, max=18, multiplier=1),
+    stop=stop_after_attempt(6),
+    retry=retry_if_exception(FailedRequestToSiaRenter)
+)
+async def get_data_from_sia_renter(sia_renter_data: SiaRenterData, container_id: str):
+    try:
+        out = await sia_get(sia_renter_data.fileHash)
+    except FailedRequestToSiaRenter as ferr:
+        retrieval_logger.debug("Retrying to get the data from sia renter")
+        raise FailedRequestToSiaRenter
+
+    try:
+        container_data = json.loads(out)
+    except json.JSONDecodeError as jdecerr:
+        retrieval_logger.debug("There was an error while loading json data.")
+        retrieval_logger.error(jdecerr, exc_info=True)
+        return -1
+
+    return container_data['container']
+
+
 async def get_backup_data(container_data: ContainerData, container_id: str):
     
     data = None
     if "filecoin" in container_data.backupTargets:
         data = await get_data_from_filecoin(container_data.backupMetaData.filecoin) 
-    elif "sia" in container_data.backupTargets:
-        data = await get_data_from_sia(container_data.backupMetaData.sia, container_id=container_id)
-    
+    elif "sia:skynet" in container_data.backupTargets:
+        data = await get_data_from_sia_skynet(container_data.backupMetaData.sia_skynet, container_id=container_id)
+    elif "sia:renter" in container_data.backupTargets:
+        data = await get_data_from_sia_renter(container_data.backupMetaData.sia_renter, container_id=container_id)
+
     return data
 
 

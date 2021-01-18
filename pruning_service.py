@@ -11,11 +11,12 @@ import json
 from pygate_grpc.client import PowerGateClient
 from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
-from utils import preprocess_dag
-from data_models import ContainerData, FilecoinJobData, SiaData, BackupMetaData
+from utils import preprocess_dag, sia_upload, FailedRequestToSiaRenter, FailedRequestToSiaSkynet
+from data_models import ContainerData, FilecoinJobData, SiaSkynetData, BackupMetaData, SiaRenterData
 from pydantic import ValidationError
 from typing import Union, List
 import os
+import hashlib
 import siaskynet
 
 """ Inititalize the logger """
@@ -277,7 +278,40 @@ async def backup_to_filecoin(
     return -1
 
 
-async def backup_to_sia(container_data: dict):
+async def backup_to_sia_renter(container_data: dict):
+    """
+    - Backup the given container data onto Sia
+    """
+
+    # Convert container data to Json
+    try:
+        json_data = json.dumps(container_data)
+    except TypeError as terr:
+        pruning_logger.debug("Failed to convert container data to json string")
+        pruning_logger.error(terr, exc_info=True)
+        return -1
+
+    file_hash = hashlib.md5(json_data.encode('utf-8')).hexdigest()
+    try:
+        _ = await sia_upload(file_hash=file_hash, file_content=json_data.encode('utf-8'))
+    except FailedRequestToSiaRenter as ferr:
+        pruning_logger.debug("Failed to push data to Sia")
+        pruning_logger.debug(ferr, exc_info=True)
+        return -1
+
+    try:
+        sia_data = SiaRenterData(fileHash=file_hash)
+    except ValidationError as verr:
+        pruning_logger.debug("Failed to convert sia data into a model")
+        pruning_logger.error(verr, exc_info=True)
+        return -1
+
+    return sia_data
+    
+    pass
+
+
+async def backup_to_sia_skynet(container_data: dict):
     """
     - Backup the given container data onto Sia
     """
@@ -310,7 +344,7 @@ async def backup_to_sia(container_data: dict):
         return -1
 
     try:
-        sia_data = SiaData(skylink=skylink)
+        sia_data = SiaSkynetData(skylink=skylink)
     except ValidationError as verr:
         pruning_logger.debug("Failed to convert sia data into a model")
         pruning_logger.error(verr, exc_info=True)
@@ -426,15 +460,25 @@ async def prune_targets(
                 backup_targets.append('filecoin')
                 backup_metadata['filecoin'] = filecoin_job_data
 
-        if 'sia' in settings.BACKUP_TARGETS:
-            sia_data: Union[int, SiaData] = await backup_to_sia(container_data=container_data)
+        if 'sia:skynet' in settings.BACKUP_TARGETS:
+            sia_data: Union[int, SiaSkynetData] = await backup_to_sia_skynet(container_data=container_data)
             if sia_data == -1:
-                pruning_logger.debug("Failed to backup the container to Sia")
+                pruning_logger.debug("Failed to backup the container to Sia Skynet")
                 sia_fail = True
             else:
-                pruning_logger.debug("Container backed up to Sia successfully")
-                backup_targets.append('sia')
-                backup_metadata['sia'] = sia_data
+                pruning_logger.debug("Container backed up to Sia Skynet successfully")
+                backup_targets.append('sia:skynet')
+                backup_metadata['sia_skynet'] = sia_data
+
+        if 'sia:renter' in settings.BACKUP_TARGETS:
+            sia_renter_data: Union[int, SiaRenterData] = await backup_to_sia_renter(container_data=container_data)
+            if sia_renter_data == -1:
+                pruning_logger.debug("Failed to backup the container to Sia Skynet")
+                sia_fail = True
+            else:
+                pruning_logger.debug("Container backed up to Sia Skynet successfully")
+                backup_targets.append('sia:renter')
+                backup_metadata['sia_renter'] = sia_renter_data
 
         if filecoin_fail and sia_fail:
             pruning_logger.debug("Failed to backup data to any platform")

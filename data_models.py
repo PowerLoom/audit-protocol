@@ -18,16 +18,20 @@ class BloomFilterSettings(BaseModel):
     filename: str = ""
 
 
-class SiaData(BaseModel):
+class SiaSkynetData(BaseModel):
     skylink: str = ""
+
+
+class SiaRenterData(BaseModel):
     fileHash: str = ""
 
 
 class BackupMetaData(BaseModel):
-    sia: Optional[SiaData] = SiaData()  # Create empty placeholders
+    sia_skynet: Optional[SiaSkynetData] = SiaSkynetData()  # Create empty placeholders
+    sia_renter: Optional[SiaRenterData] = SiaRenterData()  # Create empty placeholders
     filecoin: Optional[FilecoinJobData] = FilecoinJobData()  # Create empty placeholders
 
-    @validator("sia", "filecoin")
+    @validator("sia_skynet", "sia_renter", "filecoin")
     def validate_json_data(cls, data, values, **kwargs):
         if isinstance(data, str):
             try:
@@ -36,8 +40,10 @@ class BackupMetaData(BaseModel):
                 print(jdecerr)
 
         if isinstance(data, dict):
-            if kwargs['field'].name == "sia":
-                data = SiaData(**data)
+            if kwargs['field'].name == "sia_skynet":
+                data = SiaSkynetData(**data)
+            elif kwargs['field'].name == "sia_renter":
+                data = SiaRenterData(**data)
             elif kwargs['field'].name == "filecoin":
                 data = FilecoinJobData(**data)
         return data

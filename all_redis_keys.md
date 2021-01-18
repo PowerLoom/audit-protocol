@@ -67,3 +67,5 @@ height of each of the block
 
 ##### projectID:{projectId}:diffSnapshots - ZSET
 - This Zset will hold the diff_map between two consectutive snapshots, with the score being the block height of the target snapshot
+
+

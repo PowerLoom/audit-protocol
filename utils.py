@@ -6,6 +6,7 @@ from config import settings
 import aiohttp
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
 import async_timeout
+import os
 
 utils_logger = logging.getLogger(__name__)
 utils_logger.setLevel(logging.DEBUG)
@@ -15,15 +16,18 @@ stream_handler.setFormatter(formatter)
 utils_logger.addHandler(stream_handler)
 
 
-class FailedRequestToSia(Exception):
-    """Raised whenever the call to Sia fails"""
+class FailedRequestToSiaRenter(Exception):
+    """Raised whenever the call to Sia Renter API fails"""
     pass
+
+class FailedRequestToSiaSkynet(Exception):
+    """ Raised whenever the call to Sia Skynet Fails."""
 
 
 @retry(
     wait=wait_exponential(min=2, max=18, multiplier=1),
     stop=stop_after_attempt(6),
-    retry=retry_if_exception(FailedRequestToSia)
+    retry=retry_if_exception(FailedRequestToSiaRenter)
 )
 async def sia_upload(file_hash, file_content):
     headers = {'user-agent': 'Sia-Agent', 'content-type': 'application/octet-stream'}
@@ -51,7 +55,7 @@ async def sia_upload(file_hash, file_content):
 
             if eobj or cm.expired:
                 utils_logger.debug("Retrying post request to /renter/uploadstream")
-                raise FailedRequestToSia("Request to /renter/uploadstream failed")
+                raise FailedRequestToSiaRenter("Request to /renter/uploadstream failed")
 
             if response.status in range(200, 210):
                 utils_logger.debug("File content successfully pushed to Sia")
@@ -59,44 +63,49 @@ async def sia_upload(file_hash, file_content):
                 utils_logger.debug("Failed to push the file to Sia")
             else:
                 utils_logger.debug("Retrying post request to /renter/uploadstream")
-                raise FailedRequestToSia("Request to /renter/uploadstream failed")
+                raise FailedRequestToSiaRenter("Request to /renter/uploadstream failed")
 
 
 @retry(
     wait=wait_exponential(min=2, max=18, multiplier=1),
     stop=stop_after_attempt(6),
-    retry=retry_if_exception(FailedRequestToSia)
+    retry=retry_if_exception(FailedRequestToSiaRenter)
 )
-async def sia_get(file_hash):
+async def sia_get(file_hash, force=True):
     """Get the file content for the file hash from Sia"""
     headers = {'user-agent': 'Sia-Agent'}
-    async with aiohttp.ClientSession() as session:
-        async with async_timeout.timeout(6) as cm:
-            try:
-                async with session.get(
-                    url=f"http://localhost:9980/renter/stream/{file_hash}",
-                    headers=headers,
-                ) as response:
+    file_path = f"temp_files/{file_hash}"
+    if (force is True) or (os.path.exists(file_path) is False):
+        async with aiohttp.ClientSession() as session:
+            async with async_timeout.timeout(6) as cm:
+                try:
+                    async with session.get(
+                        url=f"http://localhost:9980/renter/stream/{file_hash}",
+                        headers=headers,
+                    ) as response:
 
-                    utils_logger.debug("Got response from Sia /renter/stream")
-                    utils_logger.debug("Response status: ")
-                    utils_logger.debug(response.status)
+                        utils_logger.debug("Got response from Sia /renter/stream")
+                        utils_logger.debug("Response status: ")
+                        utils_logger.debug(response.status)
 
-                    response_text = await response.text()
-                    utils_logger.debug("Response text: ")
-                    utils_logger.debug(response_text)
-            except Exception as eobj:
-                utils_logger.debug("An Exception occured: ")
-                utils_logger.debug(eobj)
+                except Exception as eobj:
+                    utils_logger.debug("An Exception occured: ")
+                    utils_logger.debug(eobj)
 
-            if eobj or cm.expired:
-                raise FailedRequestToSia("Request to /renter/stream Failed")
+                if eobj or cm.expired:
+                    raise FailedRequestToSiaRenter("Request to /renter/stream Failed")
 
-            if response.status != 200:
-                raise FailedRequestToSia("Request to /renter/stream Failed")
-            else:
-                utils_logger.debug("File content successfully retrieved from Sia")
-                return response_text
+                if response.status != 200:
+                    raise FailedRequestToSiaRenter("Request to /renter/stream Failed")
+                else:
+                    utils_logger.debug("File content successfully retrieved from Sia")
+                    f = open(file_path, 'ab')
+                    async for data in response.content.iter_chunked(n=1024*50):
+                        f.write(data)
+                    f.close()
+    f = open(file_path, 'rb')
+    data = f.read()
+    return data.decode('utf-8')
 
 
 async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, reader_redis_conn):
