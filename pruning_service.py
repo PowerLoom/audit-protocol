@@ -448,8 +448,9 @@ async def prune_targets(
         """ Backup the container data """
         backup_targets = list()
         backup_metadata = dict()
-        filecoin_fail, sia_skynet_fail, sia_renter_fail = False, False, False
+        filecoin_fail, sia_skynet_fail, sia_renter_fail = True, True, True
         if 'filecoin' in settings.BACKUP_TARGETS:
+            filecoin_fail = False
             filecoin_job_data: Union[int, FilecoinJobData] = await backup_to_filecoin(container_data=container_data)
             if filecoin_job_data == -1:
                 pruning_logger.debug("Failed to backup the container to filecoin")
@@ -460,6 +461,7 @@ async def prune_targets(
                 backup_metadata['filecoin'] = filecoin_job_data
 
         if 'sia:skynet' in settings.BACKUP_TARGETS:
+            sia_skynet_fail = False
             sia_data: Union[int, SiaSkynetData] = await backup_to_sia_skynet(container_data=container_data)
             if sia_data == -1:
                 pruning_logger.debug("Failed to backup the container to Sia Skynet")
@@ -470,6 +472,7 @@ async def prune_targets(
                 backup_metadata['sia_skynet'] = sia_data
 
         if 'sia:renter' in settings.BACKUP_TARGETS:
+            sia_renter_fail = False
             sia_renter_data: Union[int, SiaRenterData] = await backup_to_sia_renter(container_data=container_data)
             if sia_renter_data == -1:
                 pruning_logger.debug("Failed to backup the container to Sia Renter")
