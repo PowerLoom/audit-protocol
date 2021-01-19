@@ -18,6 +18,11 @@ class BloomFilterSettings(BaseModel):
     filename: str = ""
 
 
+class SiaData(BaseModel):
+    fileHash: str = ""
+    skylink: str = ""
+
+
 class SiaSkynetData(BaseModel):
     skylink: str = ""
 

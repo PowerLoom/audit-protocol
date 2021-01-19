@@ -10,6 +10,7 @@ from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
 from utils import preprocess_dag, sia_get, FailedRequestToSiaRenter, FailedRequestToSiaSkynet
 from data_models import ContainerData, FilecoinJobData, SiaRenterData, SiaSkynetData
+from pydantic import ValidationError
 from siaskynet import SkynetClient
 import os
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
@@ -101,9 +102,30 @@ async def get_data_from_sia_renter(sia_renter_data: SiaRenterData, container_id:
     return container_data['container']
 
 
-async def get_backup_data(container_data: ContainerData, container_id: str):
-    
+async def get_backup_data(container_data: dict, container_id: str):
     data = None
+    backupTargets = []
+    if isinstance(container_data['backupTargets'], str):
+        backupTargets = json.loads(container_data['backupTargets'])
+    if isinstance(container_data['backupMetaData'], str):
+        container_data['backupMetaData'] = json.loads(container_data['backupMetaData'])
+    if "sia" in backupTargets:
+        backupTargets.remove("sia")
+        backupTargets.append("sia:skynet")
+
+        sia_data = container_data['backupMetaData']['sia']
+        if isinstance(sia_data, str):
+            sia_data = json.loads(sia_data)
+        container_data['backupTargets'] = backupTargets
+        container_data['backupMetaData']['sia_skynet'] = SiaSkynetData(skylink=sia_data['skylink'])
+
+    try:
+        container_data = ContainerData(**container_data)
+    except ValidationError as verr:
+        retrieval_logger.debug("There was an error while trying to create ContainerData model")
+        retrieval_logger.error(verr, exc_info=True)
+        return -1
+
     if "filecoin" in container_data.backupTargets:
         data = await get_data_from_filecoin(container_data.backupMetaData.filecoin) 
     elif "sia:skynet" in container_data.backupTargets:
@@ -209,8 +231,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     retrieval_logger.debug("Found the matching container")
                     retrieval_logger.debug(container_data)
 
-                    _container_data = ContainerData(**container_data)
-                    container = await get_backup_data(container_data=_container_data, container_id=container_id)
+                    container = await get_backup_data(container_data=container_data, container_id=container_id)
                     _block_index = block_height % settings.container_height
                     block_cid, block_dag = next(iter(container['dagChain'][_block_index].items()))
                     payload_data = container['payloads'][block_dag['data']['cid']]

@@ -56,5 +56,6 @@
 	"retrieval_service_interval": 10,
 	"deal_watcher_service_interval": 20,
 	"api_key": "",
-	"backup_targets": ["sia:skynet", "sia:renter", "filecoin"]
+	"backup_targets": ["sia:skynet", "sia:renter", "filecoin"],
+	"unpin_mode": "all"
 }

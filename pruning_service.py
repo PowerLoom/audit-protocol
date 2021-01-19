@@ -18,6 +18,7 @@ from typing import Union, List
 import os
 import hashlib
 import siaskynet
+from deal_watcher_service import unpin_cids
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -470,6 +471,13 @@ async def prune_targets(
                 pruning_logger.debug("Container backed up to Sia Skynet successfully")
                 backup_targets.append('sia:skynet')
                 backup_metadata['sia_skynet'] = sia_data
+                pruning_logger.debug("Unpinning Cid's")
+                _ = await unpin_cids(
+                    from_height=container_data['fromHeight'],
+                    to_height=container_data['toHeight'],
+                    reader_redis_conn=reader_redis_conn,
+                    project_id=container_data['projectId']
+                )
 
         if 'sia:renter' in settings.BACKUP_TARGETS:
             sia_renter_fail = False
@@ -481,6 +489,13 @@ async def prune_targets(
                 pruning_logger.debug("Container backed up to Sia Renter successfully")
                 backup_targets.append('sia:renter')
                 backup_metadata['sia_renter'] = sia_renter_data
+                pruning_logger.debug("Unpinning Cid's")
+                _ = await unpin_cids(
+                    from_height=container_data['fromHeight'],
+                    to_height=container_data['toHeight'],
+                    reader_redis_conn=reader_redis_conn,
+                    project_id=container_data['projectId']
+                )
 
         if filecoin_fail and sia_skynet_fail and sia_renter_fail:
             pruning_logger.debug("Failed to backup data to any platform")
