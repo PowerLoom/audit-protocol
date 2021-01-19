@@ -472,10 +472,10 @@ async def prune_targets(
         if 'sia:renter' in settings.BACKUP_TARGETS:
             sia_renter_data: Union[int, SiaRenterData] = await backup_to_sia_renter(container_data=container_data)
             if sia_renter_data == -1:
-                pruning_logger.debug("Failed to backup the container to Sia Skynet")
+                pruning_logger.debug("Failed to backup the container to Sia Renter")
                 sia_renter_fail = True
             else:
-                pruning_logger.debug("Container backed up to Sia Skynet successfully")
+                pruning_logger.debug("Container backed up to Sia Renter successfully")
                 backup_targets.append('sia:renter')
                 backup_metadata['sia_renter'] = sia_renter_data
 
