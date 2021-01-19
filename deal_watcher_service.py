@@ -119,6 +119,10 @@ def preprocess_container_data(
             sia_data = json.loads(sia_data)
         container_data['backupTargets'] = backupTargets
         container_data['backupMetaData']['sia_skynet'] = SiaSkynetData(skylink=sia_data['skylink'])
+        try:
+            del container_data['backupMetaData']['sia']
+        except Exception as e:
+            pass
 
     return container_data
 
@@ -139,6 +143,7 @@ async def get_container_data(
         deal_logger.debug(container_data)
         deal_logger.error(verr, exc_info=True)
         return -1
+    deal_logger.debug(container_data)
     return container_data
 
 

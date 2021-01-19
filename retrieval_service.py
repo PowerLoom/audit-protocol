@@ -118,6 +118,10 @@ async def get_backup_data(container_data: dict, container_id: str):
             sia_data = json.loads(sia_data)
         container_data['backupTargets'] = backupTargets
         container_data['backupMetaData']['sia_skynet'] = SiaSkynetData(skylink=sia_data['skylink'])
+        try:
+            del container_data['backupMetaData']['sia']
+        except Exception as e:
+            pass
 
     try:
         container_data = ContainerData(**container_data)
