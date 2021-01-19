@@ -214,9 +214,9 @@ def crash_done_callback(fut: asyncio.Future):
         deal_logger.debug("Respawning deal watcher")
         t = asyncio.ensure_future(periodic_deal_monitoring())
         t.add_done_callback(crash_done_callback)
-    except Exception as e:
+    except Exception as eobj:
         deal_logger.debug("There was an error while running the deal watcher: ")
-        deal_logger.error(e, exc_info=True)
+        deal_logger.error(eobj, exc_info=True)
 
 
 async def periodic_deal_monitoring():

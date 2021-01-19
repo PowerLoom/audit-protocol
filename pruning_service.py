@@ -284,6 +284,7 @@ async def backup_to_sia_renter(container_data: dict):
     """
 
     # Convert container data to Json
+    pruning_logger.debug("Backing up data to Sia Renter")
     try:
         json_data = json.dumps(container_data)
     except TypeError as terr:
@@ -308,8 +309,6 @@ async def backup_to_sia_renter(container_data: dict):
 
     return sia_data
     
-    pass
-
 
 async def backup_to_sia_skynet(container_data: dict):
     """
@@ -332,7 +331,7 @@ async def backup_to_sia_skynet(container_data: dict):
     #     pruning_logger.debug(ferr, exc_info=True)
     #     return -1
 
-    pruning_logger.debug("Backing up data to Sia")
+    pruning_logger.debug("Backing up data to Sia Skynet")
     container_id = container_data['containerId']
     container_file_path = f"containers/{container_id}.json"
     client = siaskynet.SkynetClient()
@@ -449,7 +448,7 @@ async def prune_targets(
         """ Backup the container data """
         backup_targets = list()
         backup_metadata = dict()
-        filecoin_fail, sia_fail = False, False
+        filecoin_fail, sia_skynet_fail, sia_renter_fail = False, False, False
         if 'filecoin' in settings.BACKUP_TARGETS:
             filecoin_job_data: Union[int, FilecoinJobData] = await backup_to_filecoin(container_data=container_data)
             if filecoin_job_data == -1:
@@ -464,7 +463,7 @@ async def prune_targets(
             sia_data: Union[int, SiaSkynetData] = await backup_to_sia_skynet(container_data=container_data)
             if sia_data == -1:
                 pruning_logger.debug("Failed to backup the container to Sia Skynet")
-                sia_fail = True
+                sia_skynet_fail = True
             else:
                 pruning_logger.debug("Container backed up to Sia Skynet successfully")
                 backup_targets.append('sia:skynet')
@@ -474,13 +473,13 @@ async def prune_targets(
             sia_renter_data: Union[int, SiaRenterData] = await backup_to_sia_renter(container_data=container_data)
             if sia_renter_data == -1:
                 pruning_logger.debug("Failed to backup the container to Sia Skynet")
-                sia_fail = True
+                sia_renter_fail = True
             else:
                 pruning_logger.debug("Container backed up to Sia Skynet successfully")
                 backup_targets.append('sia:renter')
                 backup_metadata['sia_renter'] = sia_renter_data
 
-        if filecoin_fail and sia_fail:
+        if filecoin_fail and sia_skynet_fail and sia_renter_fail:
             pruning_logger.debug("Failed to backup data to any platform")
             continue
 
@@ -514,7 +513,7 @@ async def prune_targets(
         
         """ Empty up the targetDags redis ZSET"""
         target_dags_key = f"projectID:{project_id}:targetDags"
-        _ = await reader_redis_conn.zremrangebyrank(
+        _ = await writer_redis_conn.zremrangebyrank(
             key=target_dags_key,
             start=0,
             stop=-1
