@@ -441,7 +441,7 @@ async def prune_targets(
             filecoin_fail = False
             filecoin_job_data: Union[int, FilecoinJobData] = await backup_to_filecoin(container_data=container_data)
             if filecoin_job_data == -1:
-                pruning_logger.debug("Failed to backup the container to filecoin")
+                pruning_logger.warning("Failed to backup the container to filecoin")
                 filecoin_fail = True
             else:
                 pruning_logger.debug("Container backed up to filecoin successfully")
@@ -450,14 +450,14 @@ async def prune_targets(
 
         if 'sia:skynet' in settings.BACKUP_TARGETS:
             sia_skynet_fail = False
-            sia_data: Union[int, SiaSkynetData] = await backup_to_sia_skynet(container_data=container_data)
-            if sia_data == -1:
-                pruning_logger.debug("Failed to backup the container to Sia Skynet")
+            sia_skynet_data: Union[int, SiaSkynetData] = await backup_to_sia_skynet(container_data=container_data)
+            if sia_skynet_data == -1:
+                pruning_logger.warning("Failed to backup the container to Sia Skynet")
                 sia_skynet_fail = True
             else:
                 pruning_logger.debug("Container backed up to Sia Skynet successfully")
                 backup_targets.append('sia:skynet')
-                backup_metadata['sia_skynet'] = sia_data
+                backup_metadata['sia_skynet'] = sia_skynet_data
                 pruning_logger.debug("Unpinning Cid's")
                 _ = await unpin_cids(
                     from_height=container_data['fromHeight'],
@@ -470,7 +470,7 @@ async def prune_targets(
             sia_renter_fail = False
             sia_renter_data: Union[int, SiaRenterData] = await backup_to_sia_renter(container_data=container_data)
             if sia_renter_data == -1:
-                pruning_logger.debug("Failed to backup the container to Sia Renter")
+                pruning_logger.warning("Failed to backup the container to Sia Renter")
                 sia_renter_fail = True
             else:
                 pruning_logger.debug("Container backed up to Sia Renter successfully")
@@ -497,7 +497,7 @@ async def prune_targets(
         )
 
         if result == -1:
-            pruning_logger.debug("Failed to store container Meta Data on redis...")
+            pruning_logger.warning("Failed to store container Meta Data on redis...")
             continue
 
         """ Once the container has been backed up, then add it to the list of containers available """
