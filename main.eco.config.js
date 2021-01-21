@@ -16,5 +16,20 @@ module.exports = {
 			script: "./payload_commit_service.py",
 			watch: true
 		},
+		{
+			name: "ps",
+			script: "./pruning_service.py",
+			watch: true,
+		},
+		{
+			name: "rs",
+			script: "./retrieval_service.py",
+			watch: true,
+		},
+		{
+			name: "dws",
+			script: "./deal_watcher_service.py",
+			watch: true,
+		}
 	]
 }

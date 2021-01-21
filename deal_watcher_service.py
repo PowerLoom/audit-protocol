@@ -8,10 +8,10 @@ import json
 from config import settings
 import asyncio
 import aioredis
-import time
 from ipfs_async import client as ipfs_client
 import ipfshttpclient
 from data_models import ContainerData, SiaSkynetData, SiaRenterData
+import coloredlogs
 
 deal_logger = logging.getLogger(__name__)
 deal_logger.setLevel(logging.DEBUG)
@@ -21,11 +21,16 @@ stream_handler.setFormatter(formatter)
 deal_logger.addHandler(stream_handler)
 deal_logger.debug("Initialized logger")
 
+coloredlogs.install(level="DEBUG", logger=deal_logger)
+
 
 def check_job_status(powergate_client: PowerGateClient, staged_cid: str, token: str):
     """
     - Given the cid and token, find out the status of that storage deal
     """
+
+    deal_logger.debug("Checking Job Status for cid: ")
+    deal_logger.debug(staged_cid)
 
     # Get the cid_info for the cid
     out = powergate_client.data.cid_info([staged_cid], token=token)
@@ -47,34 +52,21 @@ def check_job_status(powergate_client: PowerGateClient, staged_cid: str, token: 
 
 async def process_job(
         container_id: str,
+        container_data: ContainerData,
         powergate_client: PowerGateClient,
-        reader_redis_conn,
         writer_redis_conn
 ):
-    # Retrieve the container data
-    deal_logger.debug("Retrieving containerData for container_id: ")
-    deal_logger.debug(container_id)
-    container_data_key = f"containerData:{container_id}"
-    out = await reader_redis_conn.hgetall(container_data_key)
-    container_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-
-    try:
-        container_data = ContainerData(**container_data)
-    except ValidationError as verr:
-        deal_logger.debug("Invalid container_data: ")
-        deal_logger.debug(container_data)
-        deal_logger.error(verr, exc_info=True)
-        return -1, {}
-    else:
-        deal_logger.debug("Successfully built the ContainerData model: ")
-        deal_logger.debug(container_data)
 
     # Check the job status for this container from filecoin
-    job_status, status_description = check_job_status(
-        powergate_client=powergate_client,
-        staged_cid=container_data.backupMetaData.filecoin.stagedCid,
-        token=container_data.backupMetaData.filecoin.filecoinToken
-    )
+    try:
+        job_status, status_description = check_job_status(
+            powergate_client=powergate_client,
+            staged_cid=container_data.backupMetaData.filecoin.stagedCid,
+            token=container_data.backupMetaData.filecoin.filecoinToken
+        )
+    except Exception as eobj:
+        logging.error(eobj, exc_info=True)
+        return -1, {}
 
     deal_logger.debug("Retrieved jobStatus and jobStatusDescription from filecoin: ")
     deal_logger.debug(job_status)
@@ -92,6 +84,7 @@ async def process_job(
             deal_logger.error(terr, exc_info=True)
             return -1, {}
 
+        container_data_key = f"containerData:{container_id}"
         _ = await writer_redis_conn.hmset_dict(
             key=container_data_key,
             **container_data.dict()
@@ -101,27 +94,32 @@ async def process_job(
     return job_status, container_data
 
 
-def preprocess_container_data(
-        container_data: dict
-):
-    data = None
-    backupTargets = []
+def preprocess_container_data(container_data: dict) -> dict:
+    """
+    - Backup data might contain 'sia' as a backupTarget, which is essentially sia:skynet.
+    This change in the naming convention has to be preprocessed
+    :return: container_data: dict
+                - The updated and preprocessed container_data
+    """
     if isinstance(container_data['backupTargets'], str):
-        backupTargets = json.loads(container_data['backupTargets'])
-    if isinstance(container_data['backupMetaData'], str):
-        container_data['backupMetaData'] = json.loads(container_data['backupMetaData'])
-    if "sia" in backupTargets:
-        backupTargets.remove("sia")
-        backupTargets.append("sia:skynet")
+        container_data['backupTargets'] = json.loads(container_data['backupTargets'])
+
+    if "sia" in container_data['backupTargets']:
+
+        container_data['backupTargets'].remove("sia")
+        container_data['backupTargets'].append("sia:skynet")
+
+        if isinstance(container_data['backupMetaData'], str):
+            container_data['backupMetaData'] = json.loads(container_data['backupMetaData'])
 
         sia_data = container_data['backupMetaData']['sia']
         if isinstance(sia_data, str):
             sia_data = json.loads(sia_data)
-        container_data['backupTargets'] = backupTargets
         container_data['backupMetaData']['sia_skynet'] = SiaSkynetData(skylink=sia_data['skylink'])
+
         try:
             del container_data['backupMetaData']['sia']
-        except Exception as e:
+        except Exception as eobj:
             pass
 
     return container_data
@@ -130,12 +128,26 @@ def preprocess_container_data(
 async def get_container_data(
         container_id: str,
         reader_redis_conn
-):
+) -> Union[int, ContainerData]:
+
+    # Get container_data from redis
     container_data_key = f"containerData:{container_id}"
     out = await reader_redis_conn.hgetall(container_data_key)
-    container_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-    container_data = preprocess_container_data(container_data=container_data)
+    if out:
+        container_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
+    else:
+        deal_logger.warning("Data for this container does not exist on redis")
+        return -1
 
+    # Preprocess the container_data
+    try:
+        container_data = preprocess_container_data(container_data=container_data)
+    except json.JSONDecodeError as jdecerr:
+        deal_logger.warning("Error while converting this container to dict")
+        deal_logger.error(jdecerr, exc_info=True)
+        return -1
+
+    # Convert the container_data to ContainerData model
     try:
         container_data = ContainerData(**container_data)
     except ValidationError as verr:
@@ -143,6 +155,8 @@ async def get_container_data(
         deal_logger.debug(container_data)
         deal_logger.error(verr, exc_info=True)
         return -1
+
+    # Return container_data
     deal_logger.debug(container_data)
     return container_data
 
@@ -151,7 +165,7 @@ async def unpin_cids(
         from_height: int,
         to_height: int,
         project_id: str,
-        reader_redis_conn=None,
+        reader_redis_conn,
 ):
     """
         - Get the list of payloadCids from redis for the given project_id
@@ -169,6 +183,8 @@ async def unpin_cids(
 
     # Unpin each payload_cid one by one
     for payload_cid in payload_cids:
+        if isinstance(payload_cid, bytes):
+            payload_cid = payload_cid.decode('utf-8')
         deal_logger.debug("Unpinning cid: ")
         deal_logger.debug(payload_cid)
         try:
@@ -183,27 +199,13 @@ async def start(
         reader_redis_conn=None,
         writer_redis_conn=None
 ):
-    """
-        - Get the list of all executing container's
-        - For each container_id in all executing containers, do:
-            - Get the containerData for this container_id
-            - Get the jobData present inside the containerData
-            - Check the job status for this container_id through filecoin
-            - If job is still pending, then leave it as it is
-            - Save the jobStatus and jobStatusDescription in redis
-            - If this job status is successful, then do:
-                - Unpin the cid's that are present in this container
-                - remove the container_id from the executingContainers redis set
-            - If this job status has failed, then do:
-                - Add the container_id to the list of failed jobs.
-                - Based on the jobStatusDescription take up an action.
-    """
 
     # Get the list of all projectId's
     failed_containers_key = f"failedContainers"
     executing_containers_key = f"executingContainers"
-    all_containers_key =  f"containerData:*"
+    all_containers_key = f"containerData:*"
     executing_containers = []
+
     if settings.UNPIN_MODE == "all":
         out = await reader_redis_conn.keys(all_containers_key)
         if out:
@@ -216,7 +218,6 @@ async def start(
         executing_containers = await reader_redis_conn.smembers(executing_containers_key)
 
     powergate_client = None
-    # powergate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR)
     full_lines = "="*80
 
     if not executing_containers:
@@ -228,6 +229,7 @@ async def start(
 
         if isinstance(container_id, bytes):
             container_id = container_id.decode('utf-8')
+
         deal_logger.debug("Processing job for container_id: ")
         deal_logger.debug(container_id)
 
@@ -244,20 +246,25 @@ async def start(
             if powergate_client is None:
                 powergate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR)
 
+            if container_data.backupMetaData.filecoin.jobStatus == "JOB_STATUS_SUCCESS":
+                deal_logger.debug("This container has already been processed...")
+                continue
+
             out = await process_job(
                 container_id=container_id,
+                container_data=container_data,
                 powergate_client=powergate_client,
-                reader_redis_conn=reader_redis_conn,
                 writer_redis_conn=writer_redis_conn
             )
             job_status: Union[int, str] = out[0]
             container_data: Union[dict, ContainerData] = out[1]
 
             if job_status == -1:
-                deal_logger.debug("Processing job failed")
+                deal_logger.warning("Processing job failed")
                 continue
 
             elif job_status == "JOB_STATUS_EXECUTING":
+                deal_logger.debug("Job Status Executing....")
                 continue
 
             else:
@@ -276,9 +283,9 @@ async def start(
                         reader_redis_conn=reader_redis_conn
                     )
         else:
-            deal_logger.debug("Non filecoin container. Unpinning cid's")
-            deal_logger.debug("Backedup to:")
+            deal_logger.debug("Non filecoin container. Backed up to: ")
             deal_logger.debug(container_data.backupTargets)
+            deal_logger.debug("Unpinning the cid's")
             _ = await unpin_cids(
                 from_height=container_data.fromHeight,
                 to_height=container_data.toHeight,
@@ -315,8 +322,4 @@ if __name__ == "__main__":
     try:
         asyncio.get_event_loop().run_until_complete(asyncio.gather(f))
     except Exception as e:
-        try:
-            asyncio.get_event_loop().stop()
-        except:
-            pass
-
+        asyncio.get_event_loop().stop()
