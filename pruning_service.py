@@ -19,6 +19,7 @@ import os
 import hashlib
 import siaskynet
 from deal_watcher_service import unpin_cids
+import coloredlogs
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setFormatter(formatter)
 pruning_logger.addHandler(stream_handler)
 pruning_logger.debug("Initialized logger")
+coloredlogs.install(level="DEBUG", logger=pruning_logger)
 
 def startup_boilerplate():
     try:
@@ -63,10 +65,11 @@ async def choose_targets(
 
     # Get the list of all projectIds that are saved in the redis set
     key = f"storedProjectIds"
-    project_ids: set = await reader_redis_conn.smembers(key)  # No await since this is not aioredis connection
+    project_ids: set = await reader_redis_conn.smembers(key)
     for project_id in project_ids:
         project_id = project_id.decode('utf-8')
-        pruning_logger.debug("Getting block height for project: " + project_id)
+        pruning_logger.debug("Getting block height for project: ")
+        pruning_logger.debug(project_id)
 
         # Get the block_height for project_id
         last_block_key = f"projectID:{project_id}:blockHeight"
@@ -230,12 +233,12 @@ async def backup_to_filecoin(
     powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
 
     """ Get the token """
-    KEY = f"filecoinToken:{container_data['projectId']}"
-    token = await reader_redis_conn.get(KEY)
+    filecoin_token_key = f"filecoinToken:{container_data['projectId']}"
+    token = await reader_redis_conn.get(filecoin_token_key)
     if not token:
         user = powgate_client.admin.users.create()
         token = user.token
-        _ = await writer_redis_conn.set(KEY, token)
+        _ = await writer_redis_conn.set(filecoin_token_key, token)
 
     else:
         token = token.decode('utf-8')
@@ -281,7 +284,7 @@ async def backup_to_filecoin(
 
 async def backup_to_sia_renter(container_data: dict):
     """
-    - Backup the given container data onto Sia
+    - Backup the given container data to Sia Renter
     """
 
     # Convert container data to Json
@@ -297,40 +300,24 @@ async def backup_to_sia_renter(container_data: dict):
     try:
         _ = await sia_upload(file_hash=file_hash, file_content=json_data.encode('utf-8'))
     except FailedRequestToSiaRenter as ferr:
-        pruning_logger.debug("Failed to push data to Sia")
+        pruning_logger.debug("Failed to push data to Sia Renter")
         pruning_logger.debug(ferr, exc_info=True)
         return -1
 
     try:
-        sia_data = SiaRenterData(fileHash=file_hash)
+        sia_renter_ata = SiaRenterData(fileHash=file_hash)
     except ValidationError as verr:
-        pruning_logger.debug("Failed to convert sia data into a model")
+        pruning_logger.debug("Failed to convert sia renter data into a model")
         pruning_logger.error(verr, exc_info=True)
         return -1
 
-    return sia_data
+    return sia_renter_ata
     
 
 async def backup_to_sia_skynet(container_data: dict):
     """
     - Backup the given container data onto Sia
     """
-
-    # Convert container data to Json
-    # try:
-    #     json_data = json.dumps(container_data)
-    # except TypeError as terr:
-    #     pruning_logger.debug("Failed to convert container data to json string")
-    #     pruning_logger.error(terr, exc_info=True)
-    #     return -1
-    #
-    # file_hash = hashlib.md5(json_data.encode('utf-8')).hexdigest()
-    # try:
-    #     _ = await sia_upload(file_hash=file_hash, file_content=json_data.encode('utf-8'))
-    # except FailedRequestToSia as ferr:
-    #     pruning_logger.debug("Failed to push data to Sia")
-    #     pruning_logger.debug(ferr, exc_info=True)
-    #     return -1
 
     pruning_logger.debug("Backing up data to Sia Skynet")
     container_id = container_data['containerId']
@@ -344,13 +331,13 @@ async def backup_to_sia_skynet(container_data: dict):
         return -1
 
     try:
-        sia_data = SiaSkynetData(skylink=skylink)
+        sia_skynet_data = SiaSkynetData(skylink=skylink)
     except ValidationError as verr:
-        pruning_logger.debug("Failed to convert sia data into a model")
+        pruning_logger.debug("Failed to convert sia skynet data into a model")
         pruning_logger.error(verr, exc_info=True)
         return -1
 
-    return sia_data
+    return sia_skynet_data
 
 
 async def store_container_data(
@@ -390,7 +377,7 @@ async def store_container_data(
         container_meta_data.convert_to_json()
         # I am explicitly encoding the backupTargets because, otherwise there will
         # be multiple escape strings and you would have to json.loads it twice
-        container_meta_data.backupTargets.encode('utf-8')
+        container_meta_data.backupTargets = container_meta_data.backupTargets.encode('utf-8')
     except TypeError as terr:
         pruning_logger.debug("There was an error while converting some fields to json: ")
         pruning_logger.error(terr, exc_info=True)

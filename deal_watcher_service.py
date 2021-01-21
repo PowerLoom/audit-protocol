@@ -190,7 +190,8 @@ async def unpin_cids(
         try:
             _ = ipfs_client.pin.rm(payload_cid)
         except ipfshttpclient.exceptions.ErrorResponse as err:
-            deal_logger.debug("This cid is not pinned....")
+            warning_message = f"Cid: {payload_cid} is not pinned..."
+            deal_logger.warning(warning_message)
 
 
 @provide_async_reader_conn_inst
