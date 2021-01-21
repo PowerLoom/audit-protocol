@@ -126,7 +126,7 @@ async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_con
     dag['prevCid'] = last_dag_cid
     dag['data'] = {
         'cid': snapshotCid,
-        'type': 'COLD_FILECOIN',
+        'type': 'HOT_IPFS',
     }
     dag['txHash'] = txHash
     dag['timestamp'] = timestamp
@@ -334,9 +334,6 @@ async def create_dag(
                 into redis and once the required event arrives, complete the block creation
                 """
                 rest_logger.debug("There are pending block creations left. Caching the event data for: ")
-                rest_logger.debug(
-                    "Transaction: " + event_data['txHash'] + ", PayloadCommitId: " + event_data['event_data'][
-                        'payloadCommitId'])
                 _ = await save_event_data(event_data, writer_redis_conn=writer_redis_conn)
 
             elif tentative_block_height == max_block_height + 1:
@@ -355,6 +352,10 @@ async def create_dag(
                                                  event_data['event_data']['payloadCommitId'])
                 _ = await writer_redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
 
+                """ Delete this payload commit hash field"""
+                payload_commit_key = f"payloadCommit:{event_data['event_data']['payloadCommitId']}"
+                _ = await writer_redis_conn.delete(payload_commit_key)
+
                 """ retrieve all list of all the payload_commit_ids from the pendingBlocks set """
                 all_pending_blocks = await reader_redis_conn.zrange(
                     key=pending_blocks_key,
@@ -370,15 +371,16 @@ async def create_dag(
 
                         if _tt_block_height == max_block_height + 1:
                             rest_logger.debug("Processing:")
-                            rest_logger.debug("payload_commit_id: " + _payload_commit_id)
-                            rest_logger.debug("tentative block height: " + str(_tt_block_height))
+                            rest_logger.debug("payload_commit_id: ")
+                            rest_logger.debug(_payload_commit_id)
+                            rest_logger.debug("tentative_block_height: ")
+                            rest_logger.debug(tentative_block_height)
 
                             """ Retrieve the event data for the payload_commit_id """
                             event_data_key = f"eventData:{_payload_commit_id}"
                             out = await reader_redis_conn.hgetall(key=event_data_key)
 
                             _event_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-                            fields_to_delete = list(_event_data.keys())
                             _event_data['event_data'] = {}
                             _event_data['event_data'].update({k: v for k, v in _event_data.items()})
                             _event_data['event_data'].pop('txHash')
@@ -396,7 +398,12 @@ async def create_dag(
                             _ = await writer_redis_conn.zrem(pending_blocks_key, _payload_commit_id)
 
                             """ Delete the event_data """
-                            _ = await writer_redis_conn.hdel(event_data_key, *fields_to_delete)
+                            _ = await writer_redis_conn.delete(event_data_key)
+
+                            """ Delete the payload commit data """
+                            payload_commit_key = f"payloadCommit:{_payload_commit_id}"
+                            _ = await writer_redis_conn.delete(payload_commit_key)
+
 
                         else:
                             """ Since there is a pending block creation, stop the loop """

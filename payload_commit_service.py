@@ -4,18 +4,11 @@ import logging
 import asyncio
 import sys
 import json
-import io
-import time
-from main import get_project_token
 from eth_utils import keccak
 from main import make_transaction
 from maticvigil.EVCore import EVCore
-from redis_conn import RedisPool, provide_async_reader_conn_inst, provide_async_writer_conn_inst
-import multiprocessing
-
-""" Powergate Imports """
-from pygate_grpc.client import PowerGateClient
-
+from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+import coloredlogs
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -30,6 +23,7 @@ payload_logger = logging.getLogger(__name__)
 payload_logger.setLevel(logging.DEBUG)
 payload_logger.addHandler(stdout_handler)
 payload_logger.addHandler(stderr_handler)
+coloredlogs.install(level="DEBUG", logger=payload_logger)
 
 payload_logger.debug("Initialized Payload")
 
@@ -67,19 +61,24 @@ async def commit_pending_payloads(
                 payload_logger.debug("All payloads committed...")
                 break
             payload_commit_id = payload_commit_id.decode('utf-8')
-            payload_logger.debug("Processing payload: "+payload_commit_id)
+            payload_logger.debug("Processing payload: ")
+            payload_logger.debug(payload_commit_id)
             
             payload_commit_key = f"payloadCommit:{payload_commit_id}"
             out = await reader_redis_conn.hgetall(payload_commit_key)
-            payload_data = {k.decode('utf-8'):v.decode('utf-8') for k,v in out.items()}
+            if out:
+                payload_data = {k.decode('utf-8'): v.decode('utf-8') for k,v in out.items()}
+            else:
+                payload_logger.warning("No payload data found in redis..")
+                continue
             payload_logger.debug(payload_data)
 
             snapshot = dict()
             snapshot['cid'] = payload_data['snapshotCid']
-            snapshot['type'] = "COLD_FILECOIN"
+            snapshot['type'] = "HOT_IPFS"
 
             token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-            _ = await make_transaction(
+            out = await make_transaction(
                                     snapshot_cid=payload_data['snapshotCid'], 
                                     token_hash=token_hash, 
                                     payload_commit_id=payload_commit_id,
@@ -88,8 +87,10 @@ async def commit_pending_payloads(
                                     writer_redis_conn=writer_redis_conn,
                                     contract=contract
                         )
-            payload_logger.debug("Successfully committed payload: ")
-            payload_logger.debug(payload_commit_id)
+            if out == -1:
+                payload_logger.warning("The payload commit was unsuccessful..")
+            else:
+                payload_logger.debug("Successfully committed payload")
 
 
 def verifier_crash_cb(fut: asyncio.Future):
@@ -120,8 +121,3 @@ if __name__ == "__main__":
     except:
        asyncio.get_event_loop().stop()
 
-    # loop = asyncio.get_event_loop()
-    # try:
-    #     loop.run_until_complete(asyncio.gather(f))
-    # except:
-    #     loop.stop()

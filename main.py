@@ -1,8 +1,6 @@
-from typing import Optional, Union
-from fastapi import Depends, FastAPI, WebSocket, HTTPException, Security, Request, Response, BackgroundTasks, Cookie, \
-    Query, WebSocketDisconnect
+from typing import Optional
+from fastapi import Depends, FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
-from functools import wraps
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
 from maticvigil.EVCore import EVCore
@@ -11,10 +9,7 @@ import logging
 import sys
 import json
 import aioredis
-import io
 import redis
-import time
-import async_timeout
 from skydb import SkydbTable
 from config import settings
 from pygate_grpc.client import PowerGateClient
@@ -132,30 +127,29 @@ async def get_project_token(
     """ Save the project Id on set """
     _ = await writer_redis_conn.sadd("storedProjectIds", projectId)
 
-    """ Intitalize powergate client """
-    rest_logger.debug("Intitializing powergate client")
     if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (
-            override_settings == False):
+            override_settings is False):
         return ""
 
     powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
 
     if settings.METADATA_CACHE == "redis":
         """ Check if there is a filecoin token for the project Id """
-        KEY = f"filecoinToken:{projectId}"
-        token = await reader_redis_conn.get(KEY)
+        filecoin_token_key = f"filecoinToken:{projectId}"
+        token = await reader_redis_conn.get(filecoin_token_key)
         if not token:
             user = powgate_client.admin.users.create()
             token = user.token
-            _ = await writer_redis_conn.set(KEY, token)
+            _ = await writer_redis_conn.set(filecoin_token_key, token)
             rest_logger.debug("Created a token for projectId: " + str(projectId))
             rest_logger.debug("Token: " + token)
 
         else:
             token = token.decode('utf-8')
-            rest_logger.debug("Retrieved token: " + token + ", for project Id: " + str(projectId))
-
-        """ Release Redis connection pool"""
+            rest_logger.debug("Retrieved token: ")
+            rest_logger.debug(token)
+            rest_logger.debug("projectID: ")
+            rest_logger.debug(projectId)
 
         return token
 
@@ -165,14 +159,15 @@ async def retrieve_block_data(block_dag, writer_redis_conn, data_flag=0):
         A function which will get dag block from ipfs and also increment its hits
         Args:
             block_dag:str - The cid of the dag block that needs to be retrieved
-            writer_redis_conn - To increase the hits to the dag cid
+            writer_redis_conn: redis.Redis - To increase the hits to the dag cid
             data_flag:int - This is a flag which can take three values:
                 0 - Return only the dag block and not its payload data
                 1 - Return the dag block along with its payload data
                 2 - Return only the payload data 
     """
 
-    assert data_flag in range(0, 3), f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
+    assert data_flag in range(0, 3), \
+        f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
 
     """ Increment the hits of that block """
     block_dag_hits_key = f"hitsDagBlock"
