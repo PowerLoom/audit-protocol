@@ -282,6 +282,8 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
             # Once the request is complete, then delete the request id from pending retrieval requests set
             _ = await writer_redis_conn.srem(requests_list_key, requestId)
             retrieval_logger.debug(f"Request: {requestId} has been removed from pending retrieveal requests")
+            _ = await writer_redis_conn.delete(key)
+            retrieval_logger.debug("Request Data has been deleted from redis")
     else:
         retrieval_logger.debug(f"No pending requests found....")
 
