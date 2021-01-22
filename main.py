@@ -141,8 +141,8 @@ async def get_project_token(
             user = powgate_client.admin.users.create()
             token = user.token
             _ = await writer_redis_conn.set(filecoin_token_key, token)
-            rest_logger.debug("Created a token for projectId: " + str(projectId))
-            rest_logger.debug("Token: " + token)
+            rest_logger.debug("Created a token for projectId: ")
+            rest_logger.debug(token)
 
         else:
             token = token.decode('utf-8')
@@ -421,7 +421,8 @@ async def commit_payload(
         KEY = f"jobStatus:{snapshot_cid}"
         _ = await writer_redis_conn.set(key=KEY, value=job.jobId)
         rest_logger.debug("Pushed the payload to filecoin.")
-        rest_logger.debug("Job Id: " + job.jobId)
+        rest_logger.debug("Job Id: ")
+        rest_logger.debug(job.jobId)
     elif settings.payload_storage == "IPFS":
         if type(payload) is dict:
             snapshot_cid = await ipfs_client.add_json(payload)
@@ -771,7 +772,8 @@ async def get_payloads(
     prev_payload_cid = None
     idx = 0
     while current_height >= from_height:
-        rest_logger.debug("Fetching block at height: " + str(current_height))
+        rest_logger.debug("Fetching block at height: ")
+        rest_logger.debug(current_height)
         if not prev_dag_cid:
             if settings.METADATA_CACHE == 'skydb':
                 prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']

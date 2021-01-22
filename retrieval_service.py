@@ -150,7 +150,8 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
     if all_requests:
         for requestId in all_requests:
             requestId = requestId.decode('utf-8')
-            retrieval_logger.debug("Processing request: " + requestId)
+            retrieval_logger.debug("Processing request: ")
+            retrieval_logger.debug(requestId)
 
             """ Get the required information about the requestId """
             key = f"retrievalRequestInfo:{requestId}"

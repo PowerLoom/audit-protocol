@@ -162,7 +162,8 @@ async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_con
         )
 
         rest_logger.debug("Pushed the block data to filecoin: ")
-        rest_logger.debug("Job: " + job.jobId)
+        rest_logger.debug("Job: ")
+        rest_logger.debug(job.jobId)
 
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(
