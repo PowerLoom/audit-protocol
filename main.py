@@ -705,6 +705,21 @@ async def get_payloads_diffs(
     }
 
 
+async def get_last_pruned_height(
+        project_id: str,
+        reader_redis_conn,
+        writer_redis_conn
+):
+    last_pruned_key = f"lastPruned:{project_id}"
+    out: bytes = await reader_redis_conn.get(last_pruned_key)
+    if out:
+        last_pruned_height: int = int(out.decode('utf-8'))
+    else:
+        _ = await writer_redis_conn.set(last_pruned_key, 0)
+        last_pruned_height: int = 0
+    return last_pruned_height
+
+
 @app.get('/{projectId:str}/payloads')
 @inject_reader_redis_conn
 @inject_writer_redis_conn
@@ -754,7 +769,12 @@ async def get_payloads(
         response.status_code = 400
         return {'error': 'Invalid Height'}
 
-    if from_height < max_block_height - settings.max_ipfs_blocks:
+    last_pruned_height = await get_last_pruned_height(
+        project_id=projectId,
+        reader_redis_conn=reader_redis_conn,
+        writer_redis_conn=writer_redis_conn
+    )
+    if to_height < last_pruned_height:
         """ Create a request Id and start a retrieval request """
         _data = 1 if data else 0
         request_id = await create_retrieval_request(
@@ -948,7 +968,13 @@ async def get_block(
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 
-        if block_height < max_block_height - settings.max_ipfs_blocks:
+        last_pruned_height = await get_last_pruned_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn,
+            writer_redis_conn=writer_redis_conn
+        )
+
+        if block_height < last_pruned_height:
             rest_logger.debug("Block being fetched at height: ")
             rest_logger.debug(block_height)
 
@@ -1017,7 +1043,12 @@ async def get_block_data(
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 
-        if block_height < max_block_height - settings.max_ipfs_blocks:
+        last_pruned_height = await get_last_pruned_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn,
+            writer_redis_conn=writer_redis_conn
+        )
+        if block_height < last_pruned_height:
             rest_logger.debug("Block is being fetched at height: ")
             rest_logger.debug(block_height)
             from_height = block_height

@@ -12,6 +12,7 @@ from ipfs_async import client as ipfs_client
 from utils import process_payloads_for_diff
 from utils import preprocess_dag
 import hmac
+from eth_utils import keccak
 
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
@@ -103,19 +104,30 @@ async def save_event_data(event_data: dict, writer_redis_conn):
     return 0
 
 
-async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_conn):
+async def create_dag_block(
+        event_data: dict,
+        reader_redis_conn,
+        writer_redis_conn,
+):
+
     txHash = event_data['txHash']
     project_id = event_data['event_data']['projectId']
     tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
     snapshotCid = event_data['event_data']['snapshotCid']
     timestamp = event_data['event_data']['timestamp']
 
-    """ Get the last dag cid for the project_id """
-    last_dag_cid_key = f"projectID:{project_id}:lastDagCid"
-    last_dag_cid = await reader_redis_conn.get(last_dag_cid_key)
-    rest_logger.debug("Got last Dag Cid: ")
-    rest_logger.debug(last_dag_cid)
+    """ Get the last dag cid using the tentativeBlockHeight"""
+    dag_cids_key = f"projectID:{project_id}:Cids"
+    last_dag_cid = await reader_redis_conn.zrangebyscore(
+        key=dag_cids_key,
+        min=tentative_block_height-1,
+        max=tentative_block_height-1
+    )
+
     if last_dag_cid:
+        if isinstance(last_dag_cid, list):
+            last_dag_cid = last_dag_cid.pop()
+
         last_dag_cid = last_dag_cid.decode('utf-8')
     else:
         last_dag_cid = ""
@@ -130,40 +142,17 @@ async def create_dag_block(event_data: dict, reader_redis_conn, writer_redis_con
     }
     dag['txHash'] = txHash
     dag['timestamp'] = timestamp
+
+    rest_logger.debug("DAG created: ")
     rest_logger.debug(dag)
 
     """ Convert dag structure to json and put it on ipfs dag """
-    json_string = json.dumps(dag).encode('utf-8')
+    try:
+        json_string = json.dumps(dag).encode('utf-8')
+    except TypeError as terr:
+        rest_logger.error(terr, exc_info=True)
+        return -1
     dag_data = await ipfs_client.dag.put(io.BytesIO(json_string))
-    rest_logger.debug("The DAG cid is: ")
-    rest_logger.debug(dag_data['Cid']['/'])
-
-    if settings.block_storage == "FILECOIN":
-        """ Get the filecoin token for the project Id """
-        KEY = f"filecoinToken:{project_id}"
-        token = await reader_redis_conn.get(KEY)
-        token = token.decode('utf-8')
-
-        """ Put the dag json on to filecoin """
-        powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
-        staged_res = powgate_client.data.stage_bytes(json_string, token=token)
-        job = powgate_client.config.apply(staged_res.cid, override=False, token=token)
-
-        block_filecoin_storage_key = f"blockFilecoinStorage:{project_id}:{tentative_block_height}"
-        fields = {
-            'blockStageCid': staged_res.cid,
-            'blockDagCid': dag_data['Cid']['/'],
-            'jobId': job.jobId
-        }
-
-        _ = await writer_redis_conn.hmset_dict(
-            key=block_filecoin_storage_key,
-            **fields
-        )
-
-        rest_logger.debug("Pushed the block data to filecoin: ")
-        rest_logger.debug("Job: ")
-        rest_logger.debug(job.jobId)
 
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(
@@ -197,10 +186,10 @@ def check_signature(core_payload, signature):
         digestmod='sha256'
     ).hexdigest()
 
-    rest_logger.debug("Signature the came in the header: ")
-    rest_logger.debug(signature)
-    rest_logger.debug("Signature rebuilt from core payload: ")
-    rest_logger.debug(_sign_rebuilt)
+    # rest_logger.debug("Signature the came in the header: ")
+    # rest_logger.debug(signature)
+    # rest_logger.debug("Signature rebuilt from core payload: ")
+    # rest_logger.debug(_sign_rebuilt)
 
     return _sign_rebuilt == signature
 
@@ -208,8 +197,8 @@ def check_signature(core_payload, signature):
 async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_conn, writer_redis_conn):
     # cache last seen diffs
     dag_height = dag['height']
-    rest_logger.debug("DAG at point A:")
-    rest_logger.debug(dag)
+    # rest_logger.debug("DAG at point A:")
+    # rest_logger.debug(dag)
     if dag['prevCid']:
         payload_cid = dag['data']['cid']
         _prev_dag = await ipfs_client.dag.get(dag['prevCid'])
@@ -220,24 +209,24 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
             diff_map = dict()
             _prev_data = await ipfs_client.cat(prev_payload_cid)
             prev_data = _prev_data.decode('utf-8')
-            rest_logger.debug(prev_data)
-            rest_logger.debug(type(prev_data))
+            # rest_logger.debug(prev_data)
+            # rest_logger.debug(type(prev_data))
             prev_data = json.loads(prev_data)
             _payload = await ipfs_client.cat(payload_cid)
             payload = _payload.decode('utf-8')
-            rest_logger.debug(payload)
-            rest_logger.debug(type(payload))
+            # rest_logger.debug(payload)
+            # rest_logger.debug(type(payload))
             payload = json.loads(payload)
-            rest_logger.debug('Before payload clean up')
-            rest_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
+            # rest_logger.debug('Before payload clean up')
+            # rest_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
             result = await process_payloads_for_diff(
                 project_id,
                 prev_data,
                 payload,
                 reader_redis_conn
             )
-            rest_logger.debug('After payload clean up and comparison if any')
-            rest_logger.debug(result)
+            # rest_logger.debug('After payload clean up and comparison if any')
+            # rest_logger.debug(result)
             cur_data_copy = result['cur_copy']
             prev_data_copy = result['prev_copy']
 
@@ -252,8 +241,8 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
                         diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
 
             if diff_map:
-                rest_logger.debug("DAG at point B:")
-                rest_logger.debug(dag)
+                # rest_logger.debug("DAG at point B:")
+                # rest_logger.debug(dag)
                 diff_data = {
                     'cur': {
                         'height': dag_height,
@@ -304,16 +293,17 @@ async def create_dag(
     if x_hook_signature:
         is_safe = check_signature(event_data, x_hook_signature)
         if is_safe:
-            rest_logger.debug("The arriving payload has been verified")
+            # rest_logger.debug("The arriving payload has been verified")
+            pass
         else:
-            rest_logger.debug("Recieved an wrong signature payload")
+            # rest_logger.debug("Recieved an wrong signature payload")
             return dict()
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
-            rest_logger.debug(event_data)
+            # rest_logger.debug(event_data)
 
             """ Create a Redis Connection """
-            rest_logger.debug("Creating a redis connection....")
+            # rest_logger.debug("Creating a redis connection....")
 
             """ Get data from the event """
             project_id = event_data['event_data']['projectId']
@@ -329,15 +319,82 @@ async def create_dag(
             rest_logger.debug("Tentative Block Height and Block Height")
             rest_logger.debug(tentative_block_height)
             rest_logger.debug(max_block_height)
+
+            process_pending_blocks = False
+
             if tentative_block_height > max_block_height + 1:
                 """ 
                 Since there are events that are yet to come, put this event data 
                 into redis and once the required event arrives, complete the block creation
                 """
-                rest_logger.debug("There are pending block creations left. Caching the event data for: ")
+                # rest_logger.debug("There are pending block creations left. Caching the event data for: ")
                 _ = await save_event_data(event_data, writer_redis_conn=writer_redis_conn)
 
-            elif tentative_block_height == max_block_height + 1:
+                """ 
+                    If the saved pending event chain is bigger than a certain  number, 
+                    the you can assume that the event has failed and you can patch it
+                    with a pseudo block without a transaction Hash.
+                """
+                saved_events_key = f"projectID:{project_id}:pendingBlocks"
+                n_pending_events = await reader_redis_conn.zcard(saved_events_key)
+
+                if n_pending_events >= settings.MAX_PENDING_EVENTS:
+                    """ Create a patch DAG Block for the next block height. """
+                    rest_logger.debug("Creating a patch block at blockHeight: ")
+                    rest_logger.debug(max_block_height+1)
+                    # Get the projectId, snapshot_cid and tentative_block_height to
+                    # re-generate the payload_commit_id
+                    _target_tt_block_height = max_block_height + 1
+                    payload_cid_key = f"projectID:{project_id}:payloadCids"
+                    _target_snapshot_cid = await reader_redis_conn.zrangebyscore(
+                        key=payload_cid_key,
+                        min=_target_tt_block_height,
+                        max=_target_tt_block_height,
+                        withscores=False
+                    )
+
+                    if isinstance(_target_snapshot_cid, list):
+                        _target_snapshot_cid = _target_snapshot_cid.pop()
+                    _target_snapshot_cid = _target_snapshot_cid.decode('utf-8')
+
+                    # Construct event data and then make the dag creation
+                    """ Create the pending blocks left. """
+                    _target_event_data = dict()
+                    _target_event_data['txHash'] = ""
+                    _target_event_data['event_data'] = dict()
+                    _target_event_data['event_data']['projectId'] = project_id
+                    _target_event_data['event_data']['tentativeBlockHeight'] = _target_tt_block_height
+                    _target_event_data['event_data']['snapshotCid'] = _target_snapshot_cid
+                    _target_event_data['event_data']['timestamp'] = -1
+
+                    # Create the DAG Block
+                    _dag_cid, _dag_block = await create_dag_block(
+                        event_data=_target_event_data,
+                        writer_redis_conn=writer_redis_conn,
+                        reader_redis_conn=reader_redis_conn
+                    )
+
+                    """ Delete the pending payload commit Id"""
+                    payload_data = {
+                        'tentativeBlockHeight': _target_tt_block_height,
+                        'payloadCid': _target_snapshot_cid,
+                        'projectId': project_id,
+                    }
+
+                    payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)).hex()
+                    payload_commit_key = f"payloadCommit:{payload_commit_id}"
+
+                    """ Remove this block from pending block creations SET """
+                    pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
+                    _ = await writer_redis_conn.srem(pending_block_creations_key,
+                                                     payload_commit_id)
+                    max_block_height = _target_tt_block_height
+
+                    _ = await writer_redis_conn.delete(payload_commit_key)
+
+                    process_pending_blocks = True
+
+            if (tentative_block_height == max_block_height + 1) or (process_pending_blocks is True):
                 """
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
@@ -345,17 +402,18 @@ async def create_dag(
                 pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
                 pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
 
-                _dag_cid, dag_block = await create_dag_block(event_data, writer_redis_conn=writer_redis_conn,
-                                                             reader_redis_conn=reader_redis_conn)
-                max_block_height = dag_block['height']
-                """ Remove this block from pending block creations SET """
-                _ = await writer_redis_conn.srem(pending_block_creations_key,
-                                                 event_data['event_data']['payloadCommitId'])
-                _ = await writer_redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
+                if process_pending_blocks is False:
+                    _dag_cid, dag_block = await create_dag_block(event_data, writer_redis_conn=writer_redis_conn,
+                                                                 reader_redis_conn=reader_redis_conn)
+                    max_block_height = dag_block['height']
+                    """ Remove this block from pending block creations SET """
+                    _ = await writer_redis_conn.srem(pending_block_creations_key,
+                                                     event_data['event_data']['payloadCommitId'])
+                    _ = await writer_redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
 
-                """ Delete this payload commit hash field"""
-                payload_commit_key = f"payloadCommit:{event_data['event_data']['payloadCommitId']}"
-                _ = await writer_redis_conn.delete(payload_commit_key)
+                    """ Delete this payload commit hash field"""
+                    payload_commit_key = f"payloadCommit:{event_data['event_data']['payloadCommitId']}"
+                    _ = await writer_redis_conn.delete(payload_commit_key)
 
                 """ retrieve all list of all the payload_commit_ids from the pendingBlocks set """
                 all_pending_blocks = await reader_redis_conn.zrange(
@@ -371,9 +429,9 @@ async def create_dag(
                         _tt_block_height = int(_tt_block_height)
 
                         if _tt_block_height == max_block_height + 1:
-                            rest_logger.debug("Processing:")
-                            rest_logger.debug("payload_commit_id: ")
-                            rest_logger.debug(_payload_commit_id)
+                            # rest_logger.debug("Processing:")
+                            # rest_logger.debug("payload_commit_id: ")
+                            # rest_logger.debug(_payload_commit_id)
                             rest_logger.debug("tentative_block_height: ")
                             rest_logger.debug(tentative_block_height)
 
@@ -408,7 +466,7 @@ async def create_dag(
 
                         else:
                             """ Since there is a pending block creation, stop the loop """
-                            rest_logger.debug("There is pending block creation left. Breaking out of the loop..")
+                            # rest_logger.debug("There is pending block creation left. Breaking out of the loop..")
                             break
                 else:
                     """ There are no pending blocks in the chain """
@@ -424,8 +482,9 @@ async def create_dag(
                         rest_logger.debug("There was an error while decoding the JSON data")
                         rest_logger.debug(jerr)
                     else:
-                        rest_logger.debug("The diff map retrieved")
-                        rest_logger.debug(diff_map)
+                        # rest_logger.debug("The diff map retrieved")
+                        # rest_logger.debug(diff_map)
+                        pass
 
     response.status_code = 200
     return dict()

@@ -57,5 +57,6 @@
 	"deal_watcher_service_interval": 20,
 	"api_key": "",
 	"backup_targets": ["sia:skynet", "sia:renter", "filecoin"],
-	"unpin_mode": "all"
+	"unpin_mode": "all",
+	"max_pending_events": 50
 }
