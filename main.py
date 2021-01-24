@@ -21,6 +21,8 @@ from ipfs_async import client as ipfs_client
 from utils import process_payloads_for_diff, preprocess_dag
 from data_models import ContainerData
 from pydantic import ValidationError
+import asyncio
+from functools import partial
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -291,33 +293,57 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         and add it to the set of pending transactions
     """
     e_obj = None
-    async with async_timeout.timeout(5) as cm:
-        try:
-            tx_hash_obj = contract.commitRecord(**dict(
-                payloadCommitId=payload_commit_id,
-                snapshotCid=snapshot_cid,
-                apiKeyHash=token_hash,
-                projectId=project_id,
-                tentativeBlockHeight=last_tentative_block_height,
-            ))
+    try:
+        loop = asyncio.get_event_loop()
+    except Exception as e:
+        rest_logger.warning("There was an error while trying to get event loop")
+        rest_logger.error(e, exc_info=True)
+        return -1
+    kwargs = dict(
+        payloadCommitId=payload_commit_id,
+        snapshotCid=snapshot_cid,
+        apiKeyHash=token_hash,
+        projectId=project_id,
+        tentativeBlockHeight=last_tentative_block_height,
+    )
+    partial_func = partial(contract.commitRecord, **kwargs)
+    try:
+        async with async_timeout.timeout(5) as cm:
+            try:
 
-        except EVBaseException as evbase:
-            e_obj = evbase
-        except requests.exceptions.HTTPError as errh:
-            e_obj = errh
-        except requests.exceptions.ConnectionError as errc:
-            e_obj = errc
-        except requests.exceptions.Timeout as errt:
-            e_obj = errt
-        except requests.exceptions.RequestException as errr:
-            e_obj = errr
-        except Exception as e:
-            e_obj = e
-        else:
-            rest_logger.debug("The transaction went through successfully")
-            rest_logger.debug(tx_hash_obj)
+                tx_hash_obj = await loop.run_in_executor(None, partial_func)
 
-    if e_obj and cm.expired:
+                # tx_hash_obj = contract.commitRecord(**dict(
+                #     payloadCommitId=payload_commit_id,
+                #     snapshotCid=snapshot_cid,
+                #     apiKeyHash=token_hash,
+                #     projectId=project_id,
+                #     tentativeBlockHeight=last_tentative_block_height,
+                # ))
+
+            except EVBaseException as evbase:
+                e_obj = evbase
+            except requests.exceptions.HTTPError as errh:
+                e_obj = errh
+            except requests.exceptions.ConnectionError as errc:
+                e_obj = errc
+            except requests.exceptions.Timeout as errt:
+                e_obj = errt
+            except requests.exceptions.RequestException as errr:
+                e_obj = errr
+            except Exception as e:
+                e_obj = e
+            else:
+                rest_logger.debug("The transaction went through successfully")
+                rest_logger.debug(tx_hash_obj)
+    except asyncio.exceptions.CancelledError as cerr:
+        rest_logger.debug("Transcation task cancelled")
+        return -1
+    except asyncio.exceptions.TimeoutError as terr:
+        rest_logger.debug("The transaction timed-out")
+        return -1
+
+    if e_obj or cm.expired:
         rest_logger.debug("=" * 80)
         rest_logger.debug("The transaction was not succesfull")
         rest_logger.debug("Commit Payload failed to MaticVigil API")
