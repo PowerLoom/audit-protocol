@@ -34,6 +34,58 @@ contract = evc.generate_contract_sdk(
 )
 
 
+async def commit_single_payload(
+        payload_commit_id: str,
+        reader_redis_conn,
+        writer_redis_conn,
+        semaphore: asyncio.BoundedSemaphore,
+):
+    """
+        - This function will take a pending payload and commit it to a smart contract
+    """
+    payload_commit_key = f"payloadCommit:{payload_commit_id}"
+    out = await reader_redis_conn.hgetall(payload_commit_key)
+    if out:
+        payload_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
+    else:
+        payload_logger.warning("No payload data found in redis..")
+        return -1
+
+    payload_logger.debug(payload_data)
+    snapshot = dict()
+    snapshot['cid'] = payload_data['snapshotCid']
+    snapshot['type'] = "HOT_IPFS"
+
+    token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+    _ = await semaphore.acquire()
+    try:
+        result = await make_transaction(
+            snapshot_cid=payload_data['snapshotCid'],
+            token_hash=token_hash,
+            payload_commit_id=payload_commit_id,
+            last_tentative_block_height=payload_data['tentativeBlockHeight'],
+            project_id=payload_data['projectId'],
+            writer_redis_conn=writer_redis_conn,
+            contract=contract
+        )
+    except Exception as e:
+        payload_logger.debug("There was an error while committing record: ")
+        payload_logger.error(e, exc_info=True)
+        result = -1
+    finally:
+        semaphore.release()
+
+    if result == -1:
+        payload_logger.warning("The payload commit was unsuccessful..")
+        pending_payload_commits_key = f"pendingPayloadCommits"
+        _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
+        return -1
+    else:
+        payload_logger.debug("Successfully committed payload")
+
+    return 1
+
+
 @provide_async_reader_conn_inst
 @provide_async_writer_conn_inst
 async def commit_pending_payloads(
@@ -52,46 +104,28 @@ async def commit_pending_payloads(
     if len(pending_payloads) > 0:
         payload_logger.debug("Pending payloads found: ")
         payload_logger.debug(pending_payloads)
+        tasks = []
+
+        semaphore = asyncio.BoundedSemaphore(settings.MAX_PAYLOAD_COMMITS)
 
         """ Processing each of the pending payloads """
         while True:
 
             payload_commit_id = await writer_redis_conn.rpop(pending_payload_commits_key)
             if not payload_commit_id:
-                payload_logger.debug("All payloads committed...")
                 break
+
             payload_commit_id = payload_commit_id.decode('utf-8')
-            payload_logger.debug("Processing payload: ")
-            payload_logger.debug(payload_commit_id)
-            
-            payload_commit_key = f"payloadCommit:{payload_commit_id}"
-            out = await reader_redis_conn.hgetall(payload_commit_key)
-            if out:
-                payload_data = {k.decode('utf-8'): v.decode('utf-8') for k,v in out.items()}
-            else:
-                payload_logger.warning("No payload data found in redis..")
-                continue
-            payload_logger.debug(payload_data)
+            tasks.append(commit_single_payload(
+                payload_commit_id=payload_commit_id,
+                reader_redis_conn=reader_redis_conn,
+                writer_redis_conn=writer_redis_conn,
+                semaphore=semaphore
+            ))
 
-            snapshot = dict()
-            snapshot['cid'] = payload_data['snapshotCid']
-            snapshot['type'] = "HOT_IPFS"
-
-            token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-            out = await make_transaction(
-                                    snapshot_cid=payload_data['snapshotCid'], 
-                                    token_hash=token_hash, 
-                                    payload_commit_id=payload_commit_id,
-                                    last_tentative_block_height=payload_data['tentativeBlockHeight'],
-                                    project_id=payload_data['projectId'],
-                                    writer_redis_conn=writer_redis_conn,
-                                    contract=contract
-                        )
-            if out == -1:
-                payload_logger.warning("The payload commit was unsuccessful..")
-                _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
-            else:
-                payload_logger.debug("Successfully committed payload")
+        await asyncio.gather(*tasks)
+    else:
+        payload_logger.debug("No pending payload's found...")
 
 
 def verifier_crash_cb(fut: asyncio.Future):
