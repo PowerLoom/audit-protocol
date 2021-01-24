@@ -23,7 +23,7 @@ payload_logger = logging.getLogger(__name__)
 payload_logger.setLevel(logging.DEBUG)
 payload_logger.addHandler(stdout_handler)
 payload_logger.addHandler(stderr_handler)
-coloredlogs.install(level="DEBUG", logger=payload_logger)
+coloredlogs.install(level="DEBUG", logger=payload_logger, stream=sys.stdout)
 
 payload_logger.debug("Initialized Payload")
 
@@ -89,6 +89,7 @@ async def commit_pending_payloads(
                         )
             if out == -1:
                 payload_logger.warning("The payload commit was unsuccessful..")
+                _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
             else:
                 payload_logger.debug("Successfully committed payload")
 

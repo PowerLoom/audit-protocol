@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from siaskynet import SkynetClient
 import os
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
+import coloredlogs
 
 
 """ Inititalize the logger """
@@ -24,6 +25,7 @@ stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setFormatter(formatter)
 retrieval_logger.addHandler(stream_handler)
 retrieval_logger.debug("Initialized logger")
+coloredlogs.install(level="DEBUG", logger=retrieval_logger, stream=sys.stdout)
 
 """ aioredis boilerplate """
 reader_redis_pool = None

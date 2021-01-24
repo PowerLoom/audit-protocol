@@ -323,9 +323,11 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         rest_logger.debug("Commit Payload failed to MaticVigil API")
         rest_logger.debug(e_obj)
         rest_logger.debug("=" * 80)
+        return -1
 
     pendingTransactionsKey = f"projectID:{project_id}:pendingBlockCreation"
     _ = await writer_redis_conn.sadd(pendingTransactionsKey, payload_commit_id)
+    return 1
 
 
 @app.post('/commit_payload')

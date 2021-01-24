@@ -29,7 +29,7 @@ stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setFormatter(formatter)
 pruning_logger.addHandler(stream_handler)
 pruning_logger.debug("Initialized logger")
-coloredlogs.install(level="DEBUG", logger=pruning_logger)
+coloredlogs.install(level="DEBUG", logger=pruning_logger, stream=sys.stdout)
 
 def startup_boilerplate():
     try:

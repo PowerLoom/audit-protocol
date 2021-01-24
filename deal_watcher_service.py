@@ -21,7 +21,7 @@ stream_handler.setFormatter(formatter)
 deal_logger.addHandler(stream_handler)
 deal_logger.debug("Initialized logger")
 
-coloredlogs.install(level="DEBUG", logger=deal_logger)
+coloredlogs.install(level="DEBUG", logger=deal_logger, stream=sys.stdout)
 
 
 def check_job_status(powergate_client: PowerGateClient, staged_cid: str, token: str):
