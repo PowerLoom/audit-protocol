@@ -58,5 +58,6 @@
 	"api_key": "",
 	"backup_targets": ["sia:skynet", "sia:renter", "filecoin"],
 	"unpin_mode": "all",
-	"max_pending_events": 50
+	"max_pending_events": 50,
+	"max_payload_commits": 4
 }
