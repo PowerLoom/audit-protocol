@@ -852,7 +852,7 @@ async def get_payloads(
         if diffs:
             if prev_payload_cid:
                 if prev_payload_cid != block['data']['cid']:
-                    blocks[idx - 1]['payloadChanged'] = True
+                    blocks[idx - 1]['payloadChanged'] = False
                     diff_key = f"CidDiff:{prev_payload_cid}:{block['data']['cid']}"
                     diff_b = await reader_redis_conn.get(diff_key)
                     diff_map = dict()
@@ -893,20 +893,11 @@ async def get_payloads(
 
                         # calculate diff
                         for k, v in cur_data_copy.items():
-                            if k not in result['payload_changed']:
-                                if k not in prev_data_copy.keys():
-                                    prev_data_copy[k] = None
-                                if v != prev_data[k]:
-                                    diff_map[k] = {
-                                        'old': prev_data.get(k),
-                                        'new': cur_data.get(k)
-                                    }
-                            else:
-                                if result['payload_changed'][k]:
-                                    diff_map[k] = {
-                                        'old': prev_data.get(k),
-                                        'new': cur_data.get(k)
-                                    }
+                            if k in result['payload_changed'] and result['payload_changed'][k]:
+                                diff_map[k] = {
+                                    'old': prev_data.get(k),
+                                    'new': cur_data.get(k)
+                                }
 
                         if len(diff_map):
                             rest_logger.debug('Found diff in first time calculation')
