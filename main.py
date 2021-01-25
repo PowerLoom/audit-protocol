@@ -852,7 +852,7 @@ async def get_payloads(
         if diffs:
             if prev_payload_cid:
                 if prev_payload_cid != block['data']['cid']:
-                    blocks[idx - 1]['payloadChanged'] = True
+                    blocks[idx - 1]['payloadChanged'] = False
                     diff_key = f"CidDiff:{prev_payload_cid}:{block['data']['cid']}"
                     diff_b = await reader_redis_conn.get(diff_key)
                     diff_map = dict()
