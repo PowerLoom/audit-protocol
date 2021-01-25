@@ -231,14 +231,8 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
             prev_data_copy = result['prev_copy']
 
             for k, v in cur_data_copy.items():
-                if k not in result['payload_changed']:
-                    if k not in prev_data_copy.keys():
-                        prev_data_copy[k] = None
-                    if v != prev_data_copy.get(k):
-                        diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
-                else:
-                    if result['payload_changed'][k]:
-                        diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
+                if k in result['payload_changed'] and result['payload_changed'][k]:
+                    diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
 
             if diff_map:
                 # rest_logger.debug("DAG at point B:")
