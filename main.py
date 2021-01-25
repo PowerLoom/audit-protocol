@@ -1138,6 +1138,7 @@ async def get_container_data(
 
     return container_data.dict()
 
+
 @app.get("/query/executingContainers")
 @inject_reader_redis_conn
 async def get_executing_containers(
@@ -1196,4 +1197,3 @@ async def get_executing_containers(
             containers.append(container_id)
 
     return dict(count=len(containers), containers=containers)
-

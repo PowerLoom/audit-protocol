@@ -13,6 +13,7 @@ from utils import process_payloads_for_diff
 from utils import preprocess_dag
 import hmac
 from eth_utils import keccak
+import time
 
 """ Powergate Imports """
 from pygate_grpc.client import PowerGateClient
@@ -217,16 +218,16 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
             # rest_logger.debug(payload)
             # rest_logger.debug(type(payload))
             payload = json.loads(payload)
-            # rest_logger.debug('Before payload clean up')
-            # rest_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
+            rest_logger.debug('Before payload clean up')
+            rest_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
             result = await process_payloads_for_diff(
                 project_id,
                 prev_data,
                 payload,
                 reader_redis_conn
             )
-            # rest_logger.debug('After payload clean up and comparison if any')
-            # rest_logger.debug(result)
+            rest_logger.debug('After payload clean up and comparison if any')
+            rest_logger.debug(result)
             cur_data_copy = result['cur_copy']
             prev_data_copy = result['prev_copy']
 
@@ -300,10 +301,7 @@ async def create_dag(
             return dict()
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
-            # rest_logger.debug(event_data)
-
-            """ Create a Redis Connection """
-            # rest_logger.debug("Creating a redis connection....")
+            rest_logger.debug(event_data)
 
             """ Get data from the event """
             project_id = event_data['event_data']['projectId']
@@ -320,81 +318,78 @@ async def create_dag(
             rest_logger.debug(tentative_block_height)
             rest_logger.debug(max_block_height)
 
-            process_pending_blocks = False
+            tentative_block_height_key = f"projectID:{project_id}:tentativeBlockHeight"
+            actual_tt_block_height = await reader_redis_conn.get(tentative_block_height_key)
+            if isinstance(actual_tt_block_height, bytes):
+                actual_tt_block_height = int(actual_tt_block_height)
+
+            if actual_tt_block_height == max_block_height:
+                rest_logger.debug("Discarded event at height:")
+                rest_logger.debug(tentative_block_height)
+                return dict()
+
+            if tentative_block_height == max_block_height:
+                rest_logger.debug("Discarded event at height: ")
+                rest_logger.debug(tentative_block_height)
+                return dict()
 
             if tentative_block_height > max_block_height + 1:
                 """ 
-                Since there are events that are yet to come, put this event data 
-                into redis and once the required event arrives, complete the block creation
+                    - Check the number of pending records and then make the
+                    last available record the current best
                 """
-                # rest_logger.debug("There are pending block creations left. Caching the event data for: ")
-                _ = await save_event_data(event_data, writer_redis_conn=writer_redis_conn)
+                rest_logger.debug("An out of order event arrived...")
 
-                """ 
-                    If the saved pending event chain is bigger than a certain  number, 
-                    the you can assume that the event has failed and you can patch it
-                    with a pseudo block without a transaction Hash.
-                """
-                saved_events_key = f"projectID:{project_id}:pendingBlocks"
-                n_pending_events = await reader_redis_conn.zcard(saved_events_key)
+                target_tt_block_height = max_block_height + 1
 
-                if n_pending_events >= settings.MAX_PENDING_EVENTS:
-                    """ Create a patch DAG Block for the next block height. """
-                    rest_logger.debug("Creating a patch block at blockHeight: ")
-                    rest_logger.debug(max_block_height+1)
-                    # Get the projectId, snapshot_cid and tentative_block_height to
-                    # re-generate the payload_commit_id
-                    _target_tt_block_height = max_block_height + 1
-                    payload_cid_key = f"projectID:{project_id}:payloadCids"
-                    _target_snapshot_cid = await reader_redis_conn.zrangebyscore(
-                        key=payload_cid_key,
-                        min=_target_tt_block_height,
-                        max=_target_tt_block_height,
-                        withscores=False
-                    )
+                if (actual_tt_block_height - max_block_height) >= settings.MAX_PENDING_EVENTS:
 
-                    if isinstance(_target_snapshot_cid, list):
-                        _target_snapshot_cid = _target_snapshot_cid.pop()
-                    _target_snapshot_cid = _target_snapshot_cid.decode('utf-8')
-
-                    # Construct event data and then make the dag creation
-                    """ Create the pending blocks left. """
-                    _target_event_data = dict()
-                    _target_event_data['txHash'] = ""
-                    _target_event_data['event_data'] = dict()
-                    _target_event_data['event_data']['projectId'] = project_id
-                    _target_event_data['event_data']['tentativeBlockHeight'] = _target_tt_block_height
-                    _target_event_data['event_data']['snapshotCid'] = _target_snapshot_cid
-                    _target_event_data['event_data']['timestamp'] = -1
-
-                    # Create the DAG Block
+                    rest_logger.debug("Creating DAG for the arrived event")
+                    event_data['event_data']['tentativeBlockHeight'] = target_tt_block_height
                     _dag_cid, _dag_block = await create_dag_block(
-                        event_data=_target_event_data,
+                        event_data=event_data,
                         writer_redis_conn=writer_redis_conn,
                         reader_redis_conn=reader_redis_conn
                     )
 
-                    """ Delete the pending payload commit Id"""
-                    payload_data = {
-                        'tentativeBlockHeight': _target_tt_block_height,
-                        'payloadCid': _target_snapshot_cid,
-                        'projectId': project_id,
-                    }
+                    """ Reset the tenatativeBlockHeight"""
+                    rest_logger.debug("Resetting the tentativeBlockHeight to: ")
+                    rest_logger.debug(target_tt_block_height)
+                    _ = await writer_redis_conn.set(tentative_block_height_key, target_tt_block_height)
 
-                    payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)).hex()
-                    payload_commit_key = f"payloadCommit:{payload_commit_id}"
-
-                    """ Remove this block from pending block creations SET """
+                    """ Remove the keys for discarded events """
+                    pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
                     pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
-                    _ = await writer_redis_conn.srem(pending_block_creations_key,
-                                                     payload_commit_id)
-                    max_block_height = _target_tt_block_height
+                    all_pending_blocks = await reader_redis_conn.zrangebyscore(
+                        key=pending_blocks_key,
+                        max=tentative_block_height,
+                        min=max_block_height,
+                    )
 
-                    _ = await writer_redis_conn.delete(payload_commit_key)
+                    for pending_block in all_pending_blocks:
+                        pending_block = pending_block.decode('utf-8')
+                        _payload_commit_id = pending_block.split(':')[-1]
 
-                    process_pending_blocks = True
+                        # Delete the payload commit id from pending blocks
+                        _ = await writer_redis_conn.srem(pending_block_creations_key, _payload_commit_id)
+                        _ = await writer_redis_conn.zrem(pending_blocks_key, _payload_commit_id)
 
-            if (tentative_block_height == max_block_height + 1) or (process_pending_blocks is True):
+                        # Delete the eventData
+                        event_data_key = f"eventData:{_payload_commit_id}"
+                        _ = await writer_redis_conn.delete(event_data_key)
+
+                        # Delete the payloadCommit data
+                        _payload_commit_key = f"payloadCommit:{_payload_commit_id}"
+                        _ = await writer_redis_conn.delete(_payload_commit_key)
+                else:
+                    rest_logger.debug("Saving Event data for height: ")
+                    rest_logger.debug(tentative_block_height)
+                    _ = await save_event_data(
+                        event_data=event_data,
+                        writer_redis_conn=writer_redis_conn,
+                    )
+
+            if tentative_block_height == max_block_height + 1:
                 """
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
@@ -402,18 +397,17 @@ async def create_dag(
                 pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
                 pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
 
-                if process_pending_blocks is False:
-                    _dag_cid, dag_block = await create_dag_block(event_data, writer_redis_conn=writer_redis_conn,
-                                                                 reader_redis_conn=reader_redis_conn)
-                    max_block_height = dag_block['height']
-                    """ Remove this block from pending block creations SET """
-                    _ = await writer_redis_conn.srem(pending_block_creations_key,
-                                                     event_data['event_data']['payloadCommitId'])
-                    _ = await writer_redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
+                _dag_cid, dag_block = await create_dag_block(event_data, writer_redis_conn=writer_redis_conn,
+                                                             reader_redis_conn=reader_redis_conn)
+                max_block_height = dag_block['height']
+                """ Remove this block from pending block creations SET """
+                _ = await writer_redis_conn.srem(pending_block_creations_key,
+                                                 event_data['event_data']['payloadCommitId'])
+                _ = await writer_redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
 
-                    """ Delete this payload commit hash field"""
-                    payload_commit_key = f"payloadCommit:{event_data['event_data']['payloadCommitId']}"
-                    _ = await writer_redis_conn.delete(payload_commit_key)
+                """ Delete this payload commit hash field"""
+                payload_commit_key = f"payloadCommit:{event_data['event_data']['payloadCommitId']}"
+                _ = await writer_redis_conn.delete(payload_commit_key)
 
                 """ retrieve all list of all the payload_commit_ids from the pendingBlocks set """
                 all_pending_blocks = await reader_redis_conn.zrange(
@@ -429,10 +423,7 @@ async def create_dag(
                         _tt_block_height = int(_tt_block_height)
 
                         if _tt_block_height == max_block_height + 1:
-                            # rest_logger.debug("Processing:")
-                            # rest_logger.debug("payload_commit_id: ")
-                            # rest_logger.debug(_payload_commit_id)
-                            rest_logger.debug("tentative_block_height: ")
+                            rest_logger.debug("Processing tentative_block_height: ")
                             rest_logger.debug(tentative_block_height)
 
                             """ Retrieve the event data for the payload_commit_id """
@@ -463,10 +454,9 @@ async def create_dag(
                             payload_commit_key = f"payloadCommit:{_payload_commit_id}"
                             _ = await writer_redis_conn.delete(payload_commit_key)
 
-
                         else:
                             """ Since there is a pending block creation, stop the loop """
-                            # rest_logger.debug("There is pending block creation left. Breaking out of the loop..")
+                            rest_logger.debug("There is pending block creation left. Breaking out of the loop..")
                             break
                 else:
                     """ There are no pending blocks in the chain """
@@ -482,8 +472,8 @@ async def create_dag(
                         rest_logger.debug("There was an error while decoding the JSON data")
                         rest_logger.debug(jerr)
                     else:
-                        # rest_logger.debug("The diff map retrieved")
-                        # rest_logger.debug(diff_map)
+                        rest_logger.debug("The diff map retrieved")
+                        rest_logger.debug(diff_map)
                         pass
 
     response.status_code = 200
