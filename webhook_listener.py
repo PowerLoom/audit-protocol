@@ -380,7 +380,12 @@ async def create_dag(
                             member=_tx_hash
                         )
 
-                        _ = await writer_redis_conn.zremrangebyscore(pending_transactions_key, _tx_tt_height)
+                        _ = await writer_redis_conn.zremrangebyscore(
+                            key=pending_transactions_key,
+                            max=_tx_tt_height,
+                            min=_tx_tt_height
+                        )
+
 
                     """ Remove the keys for discarded events """
                     pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
