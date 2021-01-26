@@ -481,13 +481,13 @@ async def create_dag(
                 else:
                     """ There are no pending blocks in the chain """
                     try:
-                        diff_map = await diffmap_utils.calculate_diff(
+                        diff_map = await calculate_diff(
                             dag_cid=_dag_cid,
                             dag=dag_block,
                             project_id=project_id,
-                            ipfs_client=ipfs_client
-                            # reader_redis_conn=reader_redis_conn,
-                            # writer_redis_conn=writer_redis_conn
+                            # ipfs_client=ipfs_client
+                            reader_redis_conn=reader_redis_conn,
+                            writer_redis_conn=writer_redis_conn
                         )
                     except json.decoder.JSONDecodeError as jerr:
                         rest_logger.debug("There was an error while decoding the JSON data")
