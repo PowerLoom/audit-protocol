@@ -316,17 +316,12 @@ async def create_dag(
             actual_tt_block_height = await reader_redis_conn.get(tentative_block_height_key)
             actual_tt_block_height = int(actual_tt_block_height)
 
-            if actual_tt_block_height == max_block_height:
+            if (actual_tt_block_height == max_block_height) or (tentative_block_height == max_block_height):
                 rest_logger.debug("Discarded event at height:")
                 rest_logger.debug(tentative_block_height)
                 return dict()
 
-            if tentative_block_height == max_block_height:
-                rest_logger.debug("Discarded event at height: ")
-                rest_logger.debug(tentative_block_height)
-                return dict()
-
-            if tentative_block_height > max_block_height + 1:
+            elif tentative_block_height > max_block_height + 1:
                 """ 
                     - Check the number of pending records and then make the
                     last available record the current best
@@ -392,7 +387,7 @@ async def create_dag(
                         writer_redis_conn=writer_redis_conn,
                     )
 
-            if tentative_block_height == max_block_height + 1:
+            elif tentative_block_height == max_block_height + 1:
                 """
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
