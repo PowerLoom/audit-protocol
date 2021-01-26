@@ -12,6 +12,7 @@ from ipfs_async import client as ipfs_client
 import ipfshttpclient
 from data_models import ContainerData, SiaSkynetData, SiaRenterData
 import coloredlogs
+import redis_keys
 
 deal_logger = logging.getLogger(__name__)
 deal_logger.setLevel(logging.DEBUG)
@@ -84,7 +85,7 @@ async def process_job(
             deal_logger.error(terr, exc_info=True)
             return -1, {}
 
-        container_data_key = f"containerData:{container_id}"
+        container_data_key = redis_keys.get_container_data_key(container_id=container_id)
         _ = await writer_redis_conn.hmset_dict(
             key=container_data_key,
             **container_data.dict()
@@ -131,7 +132,7 @@ async def get_container_data(
 ) -> Union[int, ContainerData]:
 
     # Get container_data from redis
-    container_data_key = f"containerData:{container_id}"
+    container_data_key = redis_keys.get_container_data_key(container_id=container_id)
     out = await reader_redis_conn.hgetall(container_data_key)
     if out:
         container_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
@@ -173,7 +174,7 @@ async def unpin_cids(
     """
 
     # Get the list of payloadCid's from redis
-    payload_cid_key = f"projectID:{project_id}:payloadCids"
+    payload_cid_key = redis_keys.get_payload_cids_key(project_id=project_id)
     payload_cids = await reader_redis_conn.zrangebyscore(
         key=payload_cid_key,
         min=from_height,

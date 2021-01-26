@@ -23,6 +23,8 @@ from data_models import ContainerData
 from pydantic import ValidationError
 import asyncio
 from functools import partial
+import helper_functions
+import redis_keys
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -127,7 +129,7 @@ async def get_project_token(
         projectId = req_args['projectId']
 
     """ Save the project Id on set """
-    _ = await writer_redis_conn.sadd("storedProjectIds", projectId)
+    _ = await writer_redis_conn.sadd(redis_keys.get_stored_project_ids_key(), projectId)
 
     if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (
             override_settings is False):
@@ -137,7 +139,7 @@ async def get_project_token(
 
     if settings.METADATA_CACHE == "redis":
         """ Check if there is a filecoin token for the project Id """
-        filecoin_token_key = f"filecoinToken:{projectId}"
+        filecoin_token_key = redis_keys.get_filecoin_token_key(project_id=projectId)
         token = await reader_redis_conn.get(filecoin_token_key)
         if not token:
             user = powgate_client.admin.users.create()
@@ -172,7 +174,7 @@ async def retrieve_block_data(block_dag, writer_redis_conn, data_flag=0):
         f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
 
     """ Increment the hits of that block """
-    block_dag_hits_key = f"hitsDagBlock"
+    block_dag_hits_key = redis_keys.get_hits_dag_block_key()
     r = await writer_redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag)
     rest_logger.debug("Block hit for: ")
     rest_logger.debug(block_dag)
@@ -223,45 +225,14 @@ async def get_max_block_height(project_id: str, reader_redis_conn):
         - Given the projectId and redis_conn, get the prev_dag_cid, block height and
         tetative block height of that projectId from redis
     """
-    rest_logger.debug("Fetching Data from Redis")
-
-    """ Fetch the cid of latest DAG block along with the latest block height. """
-    prev_dag_cid = None
-    block_height = None
-    last_tentative_block_height = None
-    last_snapshot_cid = None
-
-    last_known_dag_cid_key = f'projectID:{project_id}:lastDagCid'
-    r = await reader_redis_conn.get(last_known_dag_cid_key)
-
-    last_tentative_block_height_key = f'projectID:{project_id}:tentativeBlockHeight'
-    if r:
-        """ Retrieve the height of the latest block only if the DAG projectId is not empty """
-        prev_dag_cid = r.decode('utf-8')
-        last_block_height_key = f'projectID:{project_id}:blockHeight'
-        r2 = await reader_redis_conn.get(last_block_height_key)
-        if r2:
-            block_height = int(r2)
-    else:
-        prev_dag_cid = ""
-
-    last_snapshot_cid_key = f'projectID:{project_id}:lastSnapshotCid'
-    out = await reader_redis_conn.get(last_snapshot_cid_key)
-    rest_logger.debug("The last snapshot cid was:")
-    rest_logger.debug(out)
-    if out:
-        last_snapshot_cid = out.decode('utf-8')
-    else:
-        last_snapshot_cid = ""
-
-    out = await reader_redis_conn.get(last_tentative_block_height_key)
-    rest_logger.debug("From Redis Last tentative block height: ")
-    rest_logger.debug(out)
-    if out:
-        last_tentative_block_height = int(out)
-    else:
-        last_tentative_block_height = 0
-    return prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid
+    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id, reader_redis_conn)
+    block_height = await helper_functions.get_block_height(project_id, reader_redis_conn)
+    last_tentative_block_height = await helper_functions.get_tentative_block_height(
+        project_id=project_id,
+        reader_redis_conn=reader_redis_conn
+    )
+    last_payload_cid = await helper_functions.get_last_payload_cid(project_id,reader_redis_conn)
+    return prev_dag_cid, block_height, last_tentative_block_height, last_payload_cid
 
 
 async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn):
@@ -312,14 +283,6 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
             try:
 
                 tx_hash_obj = await loop.run_in_executor(None, partial_func)
-
-                # tx_hash_obj = contract.commitRecord(**dict(
-                #     payloadCommitId=payload_commit_id,
-                #     snapshotCid=snapshot_cid,
-                #     apiKeyHash=token_hash,
-                #     projectId=project_id,
-                #     tentativeBlockHeight=last_tentative_block_height,
-                # ))
 
             except EVBaseException as evbase:
                 e_obj = evbase
@@ -403,7 +366,7 @@ async def commit_payload(
     block_height = 0
     ipfs_table = None
     last_tentative_block_height = None
-    last_tentative_block_height_key = f'projectID:{project_id}:tentativeBlockHeight'
+    last_tentative_block_height_key = redis_keys.get_tentative_block_height_key(project_id)
     last_snapshot_cid = None
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(
@@ -444,7 +407,6 @@ async def commit_payload(
     """ Instead of adding payload to directly IPFS, stage it to Filecoin and get back the Cid"""
     if type(payload) is dict:
         payload = json.dumps(payload)
-
 
     snapshot_cid = ""
     if settings.payload_storage == "FILECOIN":
@@ -670,16 +632,17 @@ async def get_payloads_diff_counts(
 ):
     max_block_height = 0
     if settings.METADATA_CACHE == 'redis':
-        h = await reader_redis_conn.get(f'projectID:{projectId}:blockHeight')
-        if not h:
-            max_block_height = 0
-        else:
-            max_block_height = int(h.decode('utf-8'))
+        max_block_height = await helper_functions.get_block_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn
+        )
 
     if to_height == -1:
         to_height = max_block_height
+
     if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
+
     if settings.METADATA_CACHE == 'redis':
         diff_snapshots_cache_zset = f'projectID:{projectId}:diffSnapshots'
         r = await reader_redis_conn.zcard(diff_snapshots_cache_zset)
@@ -708,11 +671,10 @@ async def get_payloads_diffs(
 ):
     max_block_height = 0
     if settings.METADATA_CACHE == 'redis':
-        h = await reader_redis_conn.get(f'projectID:{projectId}:blockHeight')
-        if not h:
-            max_block_height = 0
-        else:
-            max_block_height = int(h.decode('utf-8'))
+        max_block_height = await helper_functions.get_block_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn
+        )
 
     if to_height == -1:
         to_height = max_block_height
@@ -741,19 +703,6 @@ async def get_payloads_diffs(
     }
 
 
-async def get_last_pruned_height(
-        project_id: str,
-        reader_redis_conn,
-        writer_redis_conn
-):
-    last_pruned_key = f"lastPruned:{project_id}"
-    out: bytes = await reader_redis_conn.get(last_pruned_key)
-    if out:
-        last_pruned_height: int = int(out.decode('utf-8'))
-    else:
-        _ = await writer_redis_conn.set(last_pruned_key, 0)
-        last_pruned_height: int = 0
-    return last_pruned_height
 
 
 @app.get('/{projectId:str}/payloads')
@@ -768,7 +717,7 @@ async def get_payloads(
         to_height: int = Query(default=-1),
         data: Optional[str] = Query(None),
         reader_redis_conn=None,
-        writer_redis_conn = None
+        writer_redis_conn=None
 
 ):
     ipfs_table = None
@@ -781,11 +730,10 @@ async def get_payloads(
                                 verbose=1)
         max_block_height = ipfs_table.index - 1
     elif settings.METADATA_CACHE == 'redis':
-        h = await reader_redis_conn.get(f'projectID:{projectId}:blockHeight')
-        if not h:
-            max_block_height = 0
-        else:
-            max_block_height = int(h.decode('utf-8'))
+        max_block_height = await helper_functions.get_block_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn
+        )
     if data:
         if data.lower() == 'true':
             data = True
@@ -805,7 +753,7 @@ async def get_payloads(
         response.status_code = 400
         return {'error': 'Invalid Height'}
 
-    last_pruned_height = await get_last_pruned_height(
+    last_pruned_height = await helper_functions.get_last_pruned_height(
         project_id=projectId,
         reader_redis_conn=reader_redis_conn,
         writer_redis_conn=writer_redis_conn
@@ -945,11 +893,10 @@ async def payload_height(
                                 seed=settings.seed)
         max_block_height = ipfs_table.index - 1
     elif settings.METADATA_CACHE == 'redis':
-        h = await reader_redis_conn.get(f'projectID:{projectId}:blockHeight')
-        if not h:
-            max_block_height = 0
-        else:
-            max_block_height = int(h.decode('utf-8'))
+        max_block_height = await helper_functions.get_block_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn
+        )
         rest_logger.debug(max_block_height)
 
     return {"height": max_block_height}
@@ -985,17 +932,20 @@ async def get_block(
             block = preprocess_dag(block)
             return {row['cid']: block}
     elif settings.METADATA_CACHE == 'redis':
-        max_block_height = await reader_redis_conn.get(f"projectID:{projectId}:blockHeight")
-        if not max_block_height:
+        max_block_height = await helper_functions.get_block_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn
+        )
+        if max_block_height == 0:
             response.status_code = 400
             return {'error': 'Block does not exist at this block height'}
-        max_block_height = int(max_block_height.decode('utf-8'))
+
         rest_logger.debug(max_block_height)
         if (block_height > max_block_height) or (block_height <= 0):
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 
-        last_pruned_height = await get_last_pruned_height(
+        last_pruned_height = await helper_functions.get_last_pruned_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn,
             writer_redis_conn=writer_redis_conn
@@ -1061,16 +1011,19 @@ async def get_block_data(
         return {row['cid']: block['data']}
 
     elif settings.METADATA_CACHE == "redis":
-        max_block_height = await reader_redis_conn.get(f"projectID:{projectId}:blockHeight")
-        if not max_block_height:
+        max_block_height = await helper_functions.get_block_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn
+        )
+        if max_block_height == 0:
             response.status_code = 400
-            return {'error': 'Invalid Block Height'}
-        max_block_height = int(max_block_height.decode('utf-8'))
+            return {'error': 'Block does not exist at this block height'}
+
         if (block_height > max_block_height) or (block_height <= 0):
             response.status_code = 400
             return {'error': 'Invalid Block Height'}
 
-        last_pruned_height = await get_last_pruned_height(
+        last_pruned_height = await helper_functions.get_last_pruned_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn,
             writer_redis_conn=writer_redis_conn

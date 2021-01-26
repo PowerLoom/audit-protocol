@@ -12,6 +12,8 @@ from ipfs_async import client as ipfs_client
 from utils import process_payloads_for_diff
 from utils import preprocess_dag
 import hmac
+import redis_keys
+import helper_functions
 from eth_utils import keccak
 import time
 
@@ -118,20 +120,11 @@ async def create_dag_block(
     timestamp = event_data['event_data']['timestamp']
 
     """ Get the last dag cid using the tentativeBlockHeight"""
-    dag_cids_key = f"projectID:{project_id}:Cids"
-    last_dag_cid = await reader_redis_conn.zrangebyscore(
-        key=dag_cids_key,
-        min=tentative_block_height-1,
-        max=tentative_block_height-1
+    last_dag_cid = await helper_functions.get_dag_cid(
+        project_id=project_id,
+        block_height=tentative_block_height - 1,
+        reader_redis_conn=reader_redis_conn
     )
-
-    if last_dag_cid:
-        if isinstance(last_dag_cid, list):
-            last_dag_cid = last_dag_cid.pop()
-
-        last_dag_cid = last_dag_cid.decode('utf-8')
-    else:
-        last_dag_cid = ""
 
     """ Fill up the dag """
     dag = settings.dag_structure
@@ -164,14 +157,15 @@ async def create_dag_block(
         )
         ipfs_table.add_row({'cid': dag_data['Cid']['/']})
     elif settings.METADATA_CACHE == 'redis':
-        last_dag_cid_key = f"projectID:{project_id}:lastDagCid"
+        last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id)
         await writer_redis_conn.set(last_dag_cid_key, dag_data['Cid']['/'])
         await writer_redis_conn.zadd(
-            key=f'projectID:{project_id}:Cids',
+            key=redis_keys.get_dag_cids_key(project_id),
             score=tentative_block_height,
             member=dag_data['Cid']['/']
         )
-        await writer_redis_conn.set(f'projectID:{project_id}:blockHeight', tentative_block_height)
+        block_height_key = redis_keys.get_block_height_key(project_id=project_id)
+        await writer_redis_conn.set(block_height_key, tentative_block_height)
 
     return dag_data['Cid']['/'], dag
 
@@ -302,19 +296,19 @@ async def create_dag(
             tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
 
             # Get the max block height for the project_id
-            max_block_height = await reader_redis_conn.get(f"projectID:{project_id}:blockHeight")
-            if max_block_height:
-                max_block_height = int(max_block_height)
-            else:
-                max_block_height = 0
+            max_block_height = await helper_functions.get_block_height(
+                project_id=project_id,
+                reader_redis_conn=reader_redis_conn
+            )
 
             rest_logger.debug("Tentative Block Height and Block Height")
             rest_logger.debug(tentative_block_height)
             rest_logger.debug(max_block_height)
 
-            tentative_block_height_key = f"projectID:{project_id}:tentativeBlockHeight"
-            actual_tt_block_height = await reader_redis_conn.get(tentative_block_height_key)
-            actual_tt_block_height = int(actual_tt_block_height)
+            actual_tt_block_height = await helper_functions.get_tentative_block_height(
+                project_id=project_id,
+                reader_redis_conn=reader_redis_conn
+            )
 
             if (actual_tt_block_height == max_block_height) or (tentative_block_height == max_block_height):
                 rest_logger.debug("Discarded event at height:")
@@ -360,6 +354,8 @@ async def create_dag(
                     """ Reset the tenatativeBlockHeight"""
                     rest_logger.debug("Resetting the tentativeBlockHeight to: ")
                     rest_logger.debug(target_tt_block_height)
+
+                    tentative_block_height_key = redis_keys.get_tentative_block_height_key(project_id)
                     _ = await writer_redis_conn.set(tentative_block_height_key, target_tt_block_height)
 
                     """ Remove this txHash from the ZSET pending transactions """

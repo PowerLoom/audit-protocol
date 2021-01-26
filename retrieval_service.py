@@ -15,6 +15,8 @@ from siaskynet import SkynetClient
 import os
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
 import coloredlogs
+import redis_keys
+import helper_functions
 
 
 """ Inititalize the logger """
@@ -164,13 +166,11 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
 
             """ Check if any of the files in this request are not pushed to filecoin yet """
             # Get the height of last pruned cid
-            last_pruned_key = f"lastPruned:{request_info['projectId']}"
-            out: bytes = await reader_redis_conn.get(last_pruned_key)
-            if out:
-                last_pruned_height = int(out.decode('utf-8'))
-            else:
-                _ = await writer_redis_conn.set(last_pruned_key, 0)
-                last_pruned_height = 0
+            last_pruned_height = await helper_functions.get_last_pruned_height(
+                project_id=request_info['projectId'],
+                reader_redis_conn=reader_redis_conn,
+                writer_redis_conn=writer_redis_conn
+            )
 
             retrieval_logger.debug("Last Pruned Height:")
             retrieval_logger.debug(last_pruned_height)
@@ -187,9 +187,10 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 withscores=True
             )
 
-            block_height_key = f"projectID:{request_info['projectId']}:blockHeight"
-            max_block_height = await reader_redis_conn.get(block_height_key)
-            max_block_height = int(max_block_height)
+            max_block_height = await helper_functions.get_block_height(
+                project_id=request_info['projectId'],
+                reader_redis_conn=reader_redis_conn
+            )
 
             # Iterate through each dag block
             for block_cid, block_height in all_cids:
@@ -293,7 +294,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
 def verifier_crash_cb(fut: asyncio.Future):
     try:
         exc = fut.exception()
-    except (asyncio.CancelledError):
+    except asyncio.CancelledError:
         retrieval_logger.error('Respawning retrieval task...')
         t = asyncio.ensure_future(periodic_retrieval())
         t.add_done_callback(verifier_crash_cb)

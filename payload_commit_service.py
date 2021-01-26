@@ -9,6 +9,7 @@ from main import make_transaction
 from maticvigil.EVCore import EVCore
 from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 import coloredlogs
+import redis_keys
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -43,7 +44,7 @@ async def commit_single_payload(
     """
         - This function will take a pending payload and commit it to a smart contract
     """
-    payload_commit_key = f"payloadCommit:{payload_commit_id}"
+    payload_commit_key = redis_keys.get_payload_commit_key(payload_commit_id=payload_commit_id)
     out = await reader_redis_conn.hgetall(payload_commit_key)
     if out:
         payload_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
@@ -77,7 +78,7 @@ async def commit_single_payload(
 
     if result == -1:
         payload_logger.warning("The payload commit was unsuccessful..")
-        pending_payload_commits_key = f"pendingPayloadCommits"
+        pending_payload_commits_key = redis_keys.get_pending_payload_commits_key()
         _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
         return -1
     else:
@@ -99,7 +100,7 @@ async def commit_pending_payloads(
     global contract
 
     payload_logger.debug("Checking for pending payloads to commit...")
-    pending_payload_commits_key = f"pendingPayloadCommits"
+    pending_payload_commits_key = redis_keys.get_pending_payload_commits_key()
     pending_payloads = await reader_redis_conn.lrange(pending_payload_commits_key, 0, -1)
     if len(pending_payloads) > 0:
         payload_logger.debug("Pending payloads found: ")
