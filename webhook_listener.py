@@ -330,6 +330,19 @@ async def create_dag(
                     - Check the number of pending records and then make the
                     last available record the current best
                 """
+                rest_logger.debug("Checking if that txHash is in the list of pending Transactions")
+                discarded_transactions_key = f"projectID:{project_id}:discardedTransactions"
+                pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
+                out = await reader_redis_conn.zscore(pending_transactions_key, event_data['txHash'])
+                if out is None:
+                    rest_logger.debug("Discarding the event...")
+                    _ = await writer_redis_conn.zadd(
+                        key=discarded_transactions_key,
+                        score=tentative_block_height,
+                        member=event_data['txHash']
+                    )
+                    return dict()
+
                 rest_logger.debug("An out of order event arrived...")
 
                 target_tt_block_height = max_block_height + 1
@@ -350,19 +363,35 @@ async def create_dag(
                     _ = await writer_redis_conn.set(tentative_block_height_key, target_tt_block_height)
 
                     """ Remove this txHash from the ZSET pending transactions """
-                    pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
                     _ = await writer_redis_conn.zremrangebyscore(
                         key=pending_transactions_key,
                         max=tentative_block_height,
                         min=tentative_block_height
                     )
 
+                    """ Move the payload_commit_id's from pendingTransactions into discardedTransactions """
+                    pending_transactions = await reader_redis_conn.zrangebyscore(
+                        key=pending_transactions_key,
+                        max=actual_tt_block_height,
+                        min=max_block_height+1,
+                        withscores=True
+                    )
+
+                    for _tx_hash, _tx_tt_height in pending_transactions:
+                        _ = await writer_redis_conn.zadd(
+                            key=discarded_transactions_key,
+                            score=_tx_tt_height,
+                            member=_tx_hash
+                        )
+
+                        _ = await writer_redis_conn.zremrangebyscore(pending_transactions_key, _tx_tt_height)
+
                     """ Remove the keys for discarded events """
                     pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
                     all_pending_blocks = await reader_redis_conn.zrangebyscore(
                         key=pending_blocks_key,
                         max=tentative_block_height,
-                        min=max_block_height,
+                        min=max_block_height+1,
                     )
 
                     pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
@@ -381,6 +410,7 @@ async def create_dag(
                         # Delete the payloadCommit data
                         _payload_commit_key = f"payloadCommit:{_payload_commit_id}"
                         _ = await writer_redis_conn.delete(_payload_commit_key)
+
 
 
                 else:
