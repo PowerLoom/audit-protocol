@@ -52,6 +52,7 @@ async def get_dag_cid(
 
     return dag_cid
 
+
 async def get_last_payload_cid(
         project_id: str,
         reader_redis_conn

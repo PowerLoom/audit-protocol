@@ -14,6 +14,8 @@ from utils import preprocess_dag
 import hmac
 import redis_keys
 import helper_functions
+from test_utils import diffmap_utils
+from test_utils.dag import clear_payload_commit_data, discard_event
 from eth_utils import keccak
 import time
 
@@ -180,10 +182,10 @@ def check_signature(core_payload, signature):
         digestmod='sha256'
     ).hexdigest()
 
-    # rest_logger.debug("Signature the came in the header: ")
-    # rest_logger.debug(signature)
-    # rest_logger.debug("Signature rebuilt from core payload: ")
-    # rest_logger.debug(_sign_rebuilt)
+    rest_logger.debug("Signature the came in the header: ")
+    rest_logger.debug(signature)
+    rest_logger.debug("Signature rebuilt from core payload: ")
+    rest_logger.debug(_sign_rebuilt)
 
     return _sign_rebuilt == signature
 
@@ -229,8 +231,6 @@ async def calculate_diff(dag_cid: str, dag: dict, project_id: str, reader_redis_
                     diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
 
             if diff_map:
-                # rest_logger.debug("DAG at point B:")
-                # rest_logger.debug(dag)
                 diff_data = {
                     'cur': {
                         'height': dag_height,
@@ -281,10 +281,10 @@ async def create_dag(
     if x_hook_signature:
         is_safe = check_signature(event_data, x_hook_signature)
         if is_safe:
-            # rest_logger.debug("The arriving payload has been verified")
+            rest_logger.debug("The arriving payload has been verified")
             pass
         else:
-            # rest_logger.debug("Recieved an wrong signature payload")
+            rest_logger.debug("Recieved an wrong signature payload")
             return dict()
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
@@ -311,39 +311,50 @@ async def create_dag(
 
             if (actual_tt_block_height == max_block_height) or \
                     (tentative_block_height <= max_block_height):
-                rest_logger.debug("Discarded event at height:")
+                rest_logger.debug("Discarding event at height:")
                 rest_logger.debug(tentative_block_height)
-
-                _payload_commit_id = event_data['event_data']['payloadCommitId']
-                payload_commit_key = f"payloadCommit:{_payload_commit_id}"
-                _ = await writer_redis_conn.delete(payload_commit_key)
+                redis_output = await discard_event(
+                    project_id=project_id,
+                    payload_commit_id=event_data['event_data']['payloadCommitId'],
+                    tx_hash=event_data['txHash'],
+                    payload_cid=event_data['event_data']['snapshotCid'],
+                    tentative_block_height=tentative_block_height,
+                )
+                rest_logger.debug("Redis operations output: ")
+                rest_logger.debug(redis_output)
                 return dict()
 
             elif tentative_block_height > max_block_height + 1:
-                """ 
-                    - Check the number of pending records and then make the
-                    last available record the current best
-                """
+                rest_logger.debug("An out of order event arrived...")
                 rest_logger.debug("Checking if that txHash is in the list of pending Transactions")
+
                 discarded_transactions_key = f"projectID:{project_id}:discardedTransactions"
                 pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
+
                 out = await reader_redis_conn.zscore(pending_transactions_key, event_data['txHash'])
                 if out is None:
                     rest_logger.debug("Discarding the event...")
+                    _ = await clear_payload_commit_data(
+                        project_id=project_id,
+                        tx_hash=event_data['txHash'],
+                        payload_commit_id=event_data['event_data']['payloadCommitId']
+                    )
+
                     _ = await writer_redis_conn.zadd(
                         key=discarded_transactions_key,
                         score=tentative_block_height,
                         member=event_data['txHash']
                     )
+
                     return dict()
-
-                rest_logger.debug("An out of order event arrived...")
-
-                target_tt_block_height = max_block_height + 1
 
                 if (actual_tt_block_height - max_block_height) >= settings.MAX_PENDING_EVENTS:
 
-                    rest_logger.debug("Creating DAG for the arrived event")
+                    target_tt_block_height = max_block_height + 1
+
+                    rest_logger.debug("Creating DAG for the arrived event at height: ")
+                    rest_logger.debug(target_tt_block_height)
+
                     event_data['event_data']['tentativeBlockHeight'] = target_tt_block_height
                     _dag_cid, _dag_block = await create_dag_block(
                         event_data=event_data,
@@ -358,11 +369,10 @@ async def create_dag(
                     tentative_block_height_key = redis_keys.get_tentative_block_height_key(project_id)
                     _ = await writer_redis_conn.set(tentative_block_height_key, target_tt_block_height)
 
-                    """ Remove this txHash from the ZSET pending transactions """
-                    _ = await writer_redis_conn.zremrangebyscore(
-                        key=pending_transactions_key,
-                        max=tentative_block_height,
-                        min=tentative_block_height
+                    await clear_payload_commit_data(
+                        project_id=project_id,
+                        tx_hash=event_data['txHash'],
+                        payload_commit_id=event_data['event_data']['payloadCommitId']
                     )
 
                     """ Move the payload_commit_id's from pendingTransactions into discardedTransactions """
@@ -380,44 +390,28 @@ async def create_dag(
                             member=_tx_hash
                         )
 
-                        _ = await writer_redis_conn.zremrangebyscore(
+                        _ = await writer_redis_conn.zrem(
                             key=pending_transactions_key,
-                            max=_tx_tt_height,
-                            min=_tx_tt_height
+                            member=_tx_hash
                         )
 
-                    """ Delete the payload commit for this transaction"""
-                    payload_commit_key = redis_keys.get_payload_commit_key(
-                        payload_commit_id=event_data['event_data']['payloadCommitId']
-                    )
-                    _ = await writer_redis_conn.delete(payload_commit_key)
-
                     """ Remove the keys for discarded events """
-                    pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
+                    pending_blocks_key = redis_keys.get_pending_blocks_key(project_id)
                     all_pending_blocks = await reader_redis_conn.zrangebyscore(
                         key=pending_blocks_key,
                         max=tentative_block_height,
                         min=max_block_height + 1,
                     )
 
-                    pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
                     for pending_block in all_pending_blocks:
-                        pending_block = pending_block.decode('utf-8')
-                        _payload_commit_id = pending_block.split(':')[-1]
+                        _payload_commit_id = pending_block.decode('utf-8')
 
                         # Delete the payload commit id from pending blocks
-                        _ = await writer_redis_conn.srem(pending_block_creations_key, _payload_commit_id)
-                        _ = await writer_redis_conn.zrem(pending_blocks_key, _payload_commit_id)
-
-                        # Delete the eventData
-                        event_data_key = f"eventData:{_payload_commit_id}"
-                        _ = await writer_redis_conn.delete(event_data_key)
-
-                        # Delete the payloadCommit data
-                        _payload_commit_key = f"payloadCommit:{_payload_commit_id}"
-                        _ = await writer_redis_conn.delete(_payload_commit_key)
-
-
+                        await clear_payload_commit_data(
+                            project_id=project_id,
+                            payload_commit_id=_payload_commit_id,
+                            tx_hash="",
+                        )
 
                 else:
                     rest_logger.debug("Saving Event data for height: ")
@@ -432,31 +426,18 @@ async def create_dag(
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
                 """
-                pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
-                pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
 
                 _dag_cid, dag_block = await create_dag_block(event_data, writer_redis_conn=writer_redis_conn,
                                                              reader_redis_conn=reader_redis_conn)
-                max_block_height = dag_block['height']
-                """ Remove this block from pending block creations SET """
-                _ = await writer_redis_conn.srem(pending_block_creations_key,
-                                                 event_data['event_data']['payloadCommitId'])
-                _ = await writer_redis_conn.zrem(pending_blocks_key, event_data['event_data']['payloadCommitId'])
-
-                """ Delete this payload commit hash field"""
-                payload_commit_key = f"payloadCommit:{event_data['event_data']['payloadCommitId']}"
-                _ = await writer_redis_conn.delete(payload_commit_key)
-
-                pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
-                _ = await writer_redis_conn.zremrangebyscore(
-                    key=pending_transactions_key,
-                    max=tentative_block_height,
-                    min=tentative_block_height
+                await clear_payload_commit_data(
+                    project_id=project_id,
+                    payload_commit_id=event_data['event_data']['payloadCommitId'],
+                    tx_hash=event_data['txHash'],
                 )
 
-                """ retrieve all list of all the payload_commit_ids from the pendingBlocks set """
+                """ retrieve all list of all the payload_commit_ids from the pendingBlocks zset """
                 all_pending_blocks = await reader_redis_conn.zrange(
-                    key=pending_blocks_key,
+                    key=redis_keys.get_pending_blocks_key(project_id=project_id),
                     start=0,
                     stop=-1,
                     withscores=True
@@ -478,7 +459,7 @@ async def create_dag(
                             _event_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
                             _event_data['event_data'] = {}
                             _event_data['event_data'].update({k: v for k, v in _event_data.items()})
-                            _event_data['event_data'].pop('txHash')
+                            _tx_hash = _event_data['event_data'].pop('txHash')
 
                             """ Create the dag block for this event """
                             _dag_cid, dag_block = await create_dag_block(
@@ -487,23 +468,10 @@ async def create_dag(
                                 reader_redis_conn=reader_redis_conn
                             )
                             max_block_height = dag_block['height']
-
-                            """ Remove the dag block from pending block creations list """
-                            _ = await writer_redis_conn.srem(pending_block_creations_key, _payload_commit_id)
-                            _ = await writer_redis_conn.zrem(pending_blocks_key, _payload_commit_id)
-
-                            """ Delete the event_data """
-                            _ = await writer_redis_conn.delete(event_data_key)
-
-                            """ Delete the payload commit data """
-                            payload_commit_key = f"payloadCommit:{_payload_commit_id}"
-                            _ = await writer_redis_conn.delete(payload_commit_key)
-
-                            pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
-                            _ = await writer_redis_conn.zremrangebyscore(
-                                key=pending_transactions_key,
-                                max=_tt_block_height,
-                                min=_tt_block_height
+                            await clear_payload_commit_data(
+                                project_id=project_id,
+                                payload_commit_id=_payload_commit_id,
+                                tx_hash=_tx_hash,
                             )
 
                         else:
@@ -513,12 +481,13 @@ async def create_dag(
                 else:
                     """ There are no pending blocks in the chain """
                     try:
-                        diff_map = await calculate_diff(
+                        diff_map = await diffmap_utils.calculate_diff(
                             dag_cid=_dag_cid,
                             dag=dag_block,
                             project_id=project_id,
-                            reader_redis_conn=reader_redis_conn,
-                            writer_redis_conn=writer_redis_conn
+                            ipfs_client=ipfs_client
+                            # reader_redis_conn=reader_redis_conn,
+                            # writer_redis_conn=writer_redis_conn
                         )
                     except json.decoder.JSONDecodeError as jerr:
                         rest_logger.debug("There was an error while decoding the JSON data")
@@ -527,6 +496,5 @@ async def create_dag(
                         rest_logger.debug("The diff map retrieved")
                         rest_logger.debug(diff_map)
                         pass
-
     response.status_code = 200
     return dict()

@@ -148,3 +148,14 @@ def get_job_status_key(snapshot_cid: str):
 def get_diff_rules_key(project_id: str):
     diff_rules_key = "projectID:{}:diffRules".format(project_id)
     return diff_rules_key
+
+
+def get_pending_transactions_key(project_id: str):
+    pending_transaction_key = "projectID:{}:pendingTransactions".format(project_id)
+    return pending_transaction_key
+
+
+def get_discarded_transactions_key(project_id: str):
+    discarded_transactions_key = "projectID:{}:discardedTransactions".format(project_id)
+    return discarded_transactions_key
+

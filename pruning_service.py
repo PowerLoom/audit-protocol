@@ -105,7 +105,7 @@ async def choose_targets(
 
         to_height, from_height = last_pruned_height + settings.container_height, last_pruned_height + 1
 
-        # Get all the blockCids and payloadCids
+        # Get all the blockCids
         block_cids_key = f"projectID:{project_id}:Cids"
         block_cids_to_prune = await reader_redis_conn.zrangebyscore(
             key=block_cids_key,

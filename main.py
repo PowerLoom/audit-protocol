@@ -464,11 +464,11 @@ async def commit_payload(
     )
 
     """ Add this payload commit for pending payload commits list """
-    pending_payload_commits_key = f"pendingPayloadCommits"
+    pending_payload_commits_key = redis_keys.get_pending_payload_commits_key()
     _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
 
     _ = await writer_redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
-    last_snapshot_cid_key = f'projectID:{project_id}:lastSnapshotCid'
+    last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
     rest_logger.debug("Setting the last snapshot_cid as: ")
     rest_logger.debug(snapshot_cid)
     _ = await writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
