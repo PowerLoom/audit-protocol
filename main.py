@@ -351,8 +351,16 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         rest_logger.debug("=" * 80)
         return -1
 
-    pendingTransactionsKey = f"projectID:{project_id}:pendingBlockCreation"
-    _ = await writer_redis_conn.sadd(pendingTransactionsKey, payload_commit_id)
+    pending_block_creation_key = f"projectID:{project_id}:pendingBlockCreation"
+    pending_transaction_key = f"projectID:{project_id}:pendingTransactions"
+    tx_hash = tx_hash_obj[0]['txHash']
+
+    _ = await writer_redis_conn.zadd(
+            key=pending_transaction_key,
+            score=int(last_tentative_block_height),
+            member=tx_hash
+     )
+    _ = await writer_redis_conn.sadd(pending_block_creation_key, payload_commit_id)
     return 1
 
 
