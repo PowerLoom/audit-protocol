@@ -112,7 +112,6 @@ async def create_dag_block(
         reader_redis_conn,
         writer_redis_conn,
 ):
-
     txHash = event_data['txHash']
     project_id = event_data['event_data']['projectId']
     tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
@@ -310,7 +309,8 @@ async def create_dag(
                 reader_redis_conn=reader_redis_conn
             )
 
-            if (actual_tt_block_height == max_block_height) or (tentative_block_height == max_block_height):
+            if (actual_tt_block_height == max_block_height) or \
+                    (tentative_block_height <= max_block_height):
                 rest_logger.debug("Discarded event at height:")
                 rest_logger.debug(tentative_block_height)
 
@@ -369,7 +369,7 @@ async def create_dag(
                     pending_transactions = await reader_redis_conn.zrangebyscore(
                         key=pending_transactions_key,
                         max=actual_tt_block_height,
-                        min=max_block_height+1,
+                        min=max_block_height + 1,
                         withscores=True
                     )
 
@@ -386,13 +386,18 @@ async def create_dag(
                             min=_tx_tt_height
                         )
 
+                    """ Delete the payload commit for this transaction"""
+                    payload_commit_key = redis_keys.get_payload_commit_key(
+                        payload_commit_id=event_data['event_data']['payloadCommitId']
+                    )
+                    _ = await writer_redis_conn.delete(payload_commit_key)
 
                     """ Remove the keys for discarded events """
                     pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
                     all_pending_blocks = await reader_redis_conn.zrangebyscore(
                         key=pending_blocks_key,
                         max=tentative_block_height,
-                        min=max_block_height+1,
+                        min=max_block_height + 1,
                     )
 
                     pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
