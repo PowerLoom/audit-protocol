@@ -858,7 +858,6 @@ async def get_payloads(
                         if len(diff_map):
                             rest_logger.debug('Found diff in first time calculation')
                             rest_logger.debug(diff_map)
-                            blocks[idx - 1]['payloadChanged'] = True
                         # cache in redis
                         await writer_redis_conn.set(diff_key, json.dumps(diff_map))
                     else:
@@ -868,6 +867,8 @@ async def get_payloads(
                         rest_logger.debug(block['data']['cid'])
                         rest_logger.debug(diff_map)
                     blocks[idx - 1]['diff'] = diff_map
+                    if len(diff_map.keys()):
+                        blocks[idx - 1]['payloadChanged'] = True
                 else:  # If the cid of current snapshot is the same as that of the previous snapshot
                     blocks[idx - 1]['payloadChanged'] = False
             prev_payload_cid = block['data']['cid']
