@@ -319,6 +319,10 @@ async def create_dag(
             if (actual_tt_block_height == max_block_height) or (tentative_block_height == max_block_height):
                 rest_logger.debug("Discarded event at height:")
                 rest_logger.debug(tentative_block_height)
+
+                _payload_commit_id = event_data['event_data']['payloadCommitId']
+                payload_commit_key = f"payloadCommit:{_payload_commit_id}"
+                _ = await writer_redis_conn.delete(payload_commit_key)
                 return dict()
 
             elif tentative_block_height > max_block_height + 1:
