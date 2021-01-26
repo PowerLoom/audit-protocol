@@ -299,7 +299,7 @@ async def create_dag(
 
             """ Get data from the event """
             project_id = event_data['event_data']['projectId']
-            tentative_block_height = event_data['event_data']['tentativeBlockHeight']
+            tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
 
             # Get the max block height for the project_id
             max_block_height = await reader_redis_conn.get(f"projectID:{project_id}:blockHeight")
@@ -314,8 +314,7 @@ async def create_dag(
 
             tentative_block_height_key = f"projectID:{project_id}:tentativeBlockHeight"
             actual_tt_block_height = await reader_redis_conn.get(tentative_block_height_key)
-            if isinstance(actual_tt_block_height, bytes):
-                actual_tt_block_height = int(actual_tt_block_height)
+            actual_tt_block_height = int(actual_tt_block_height)
 
             if actual_tt_block_height == max_block_height:
                 rest_logger.debug("Discarded event at height:")
@@ -351,15 +350,23 @@ async def create_dag(
                     rest_logger.debug(target_tt_block_height)
                     _ = await writer_redis_conn.set(tentative_block_height_key, target_tt_block_height)
 
+                    """ Remove this txHash from the ZSET pending transactions """
+                    pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
+                    _ = await writer_redis_conn.zremrangebyscore(
+                        key=pending_transactions_key,
+                        max=tentative_block_height,
+                        min=tentative_block_height
+                    )
+
                     """ Remove the keys for discarded events """
                     pending_blocks_key = f"projectID:{project_id}:pendingBlocks"
-                    pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
                     all_pending_blocks = await reader_redis_conn.zrangebyscore(
                         key=pending_blocks_key,
                         max=tentative_block_height,
                         min=max_block_height,
                     )
 
+                    pending_block_creations_key = f"projectID:{project_id}:pendingBlockCreation"
                     for pending_block in all_pending_blocks:
                         pending_block = pending_block.decode('utf-8')
                         _payload_commit_id = pending_block.split(':')[-1]
@@ -375,6 +382,8 @@ async def create_dag(
                         # Delete the payloadCommit data
                         _payload_commit_key = f"payloadCommit:{_payload_commit_id}"
                         _ = await writer_redis_conn.delete(_payload_commit_key)
+
+
                 else:
                     rest_logger.debug("Saving Event data for height: ")
                     rest_logger.debug(tentative_block_height)
@@ -402,6 +411,13 @@ async def create_dag(
                 """ Delete this payload commit hash field"""
                 payload_commit_key = f"payloadCommit:{event_data['event_data']['payloadCommitId']}"
                 _ = await writer_redis_conn.delete(payload_commit_key)
+
+                pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
+                _ = await writer_redis_conn.zremrangebyscore(
+                    key=pending_transactions_key,
+                    max=tentative_block_height,
+                    min=tentative_block_height
+                )
 
                 """ retrieve all list of all the payload_commit_ids from the pendingBlocks set """
                 all_pending_blocks = await reader_redis_conn.zrange(
@@ -447,6 +463,13 @@ async def create_dag(
                             """ Delete the payload commit data """
                             payload_commit_key = f"payloadCommit:{_payload_commit_id}"
                             _ = await writer_redis_conn.delete(payload_commit_key)
+
+                            pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
+                            _ = await writer_redis_conn.zremrangebyscore(
+                                key=pending_transactions_key,
+                                max=_tt_block_height,
+                                min=_tt_block_height
+                            )
 
                         else:
                             """ Since there is a pending block creation, stop the loop """
