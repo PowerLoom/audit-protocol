@@ -108,7 +108,7 @@ async def startup_boilerplate():
     )
     app.evc = EVCore(verbose=True)
     app.contract = app.evc.generate_contract_sdk(
-        contract_address=settings.audit_contract,
+        contract_address=settings.AUDIT_CONTRACT,
         app_name='auditrecords'
     )
 
@@ -131,7 +131,7 @@ async def get_project_token(
     """ Save the project Id on set """
     _ = await writer_redis_conn.sadd(redis_keys.get_stored_project_ids_key(), projectId)
 
-    if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (
+    if (settings.PAYLOAD_STORAGE != "FILECOIN") and (settings.BLOCK_STORAGE != "FILECOIN") and (
             override_settings is False):
         return ""
 
@@ -368,7 +368,7 @@ async def commit_payload(
     last_snapshot_cid = None
     if settings.METADATA_CACHE == 'skydb':
         ipfs_table = SkydbTable(
-            table_name=f"{settings.dag_table_name}:{project_id}",
+            table_name=f"{settings.DAG_TABLE_NAME}:{project_id}",
             columns=['cid'],
             seed=settings.seed,
             verbose=1
@@ -407,7 +407,7 @@ async def commit_payload(
         payload = json.dumps(payload)
 
     snapshot_cid = ""
-    if settings.payload_storage == "FILECOIN":
+    if settings.PAYLOAD_STORAGE == "FILECOIN":
         powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
         stage_res = powgate_client.data.stage_bytes(payload, token=token)
         """ Since the same data may come back for snapshotting, I have added override=True"""
@@ -419,7 +419,7 @@ async def commit_payload(
         rest_logger.debug("Pushed the payload to filecoin.")
         rest_logger.debug("Job Id: ")
         rest_logger.debug(job.jobId)
-    elif settings.payload_storage == "IPFS":
+    elif settings.PAYLOAD_STORAGE == "IPFS":
         if type(payload) is dict:
             snapshot_cid = await ipfs_client.add_json(payload)
         else:

@@ -140,7 +140,7 @@ async def create_dag_block(
     )
 
     """ Fill up the dag """
-    dag = settings.dag_structure
+    dag = settings.DAG_STRUCTURE
     dag['height'] = tentative_block_height
     dag['prevCid'] = last_dag_cid
     dag['data'] = {

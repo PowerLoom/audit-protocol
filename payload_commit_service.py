@@ -30,7 +30,7 @@ payload_logger.debug("Initialized Payload")
 
 evc = EVCore(verbose=True)
 contract = evc.generate_contract_sdk(
-    contract_address=settings.audit_contract,
+    contract_address=settings.AUDIT_CONTRACT,
     app_name='auditrecords'
 )
 

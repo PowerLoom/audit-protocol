@@ -7,8 +7,8 @@ from utils import dag_utils
 from utils import redis_keys
 from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 
-logger = logging.getLogger(__name__)
-logger.setLevel(level="DEBUG")
+utils_logger = logging.getLogger(__name__)
+utils_logger.setLevel(level="DEBUG")
 
 
 @provide_async_reader_conn_inst
@@ -25,7 +25,7 @@ async def get_diff_rules(
         try:
             diff_rules = json.loads(diff_rules_key)
         except json.JSONDecodeError as jerr:
-            logger.error(jerr, exc_info=True)
+            utils_logger.error(jerr, exc_info=True)
 
     return diff_rules
 
@@ -191,15 +191,15 @@ async def calculate_diff(
             _payload = await ipfs_client.cat(payload_cid)
             payload = _payload.decode('utf-8')
             payload = json.loads(payload)
-            logger.debug('Before payload clean up')
-            logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
+            utils_logger.debug('Before payload clean up')
+            utils_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
             result = await process_payloads_for_diff(
                 project_id,
                 prev_data,
                 payload,
             )
-            logger.debug('After payload clean up and comparison if any')
-            logger.debug(result)
+            utils_logger.debug('After payload clean up and comparison if any')
+            utils_logger.debug(result)
             cur_data_copy = result['cur_copy']
             prev_data_copy = result['prev_copy']
 
