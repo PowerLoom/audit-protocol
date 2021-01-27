@@ -1,10 +1,11 @@
-from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
-import redis_keys
 import json
 from copy import deepcopy
 import logging
 from config import settings
+
 from utils import dag_utils
+from utils import redis_keys
+from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level="DEBUG")

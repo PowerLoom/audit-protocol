@@ -1,4 +1,3 @@
-import ipfshttpclient
 import logging
 import sys
 import aioredis
@@ -8,19 +7,17 @@ import asyncio
 from bloom_filter import BloomFilter
 from eth_utils import keccak
 import json
-from pygate_grpc.client import PowerGateClient
 from utils.ipfs_async import client as ipfs_client
-from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 from utils.diffmap_utils import preprocess_dag
-from utils.backup_utils import sia_upload, FailedRequestToSiaRenter, FailedRequestToSiaSkynet
 from data_models import ContainerData, FilecoinJobData, SiaSkynetData, BackupMetaData, SiaRenterData
 from pydantic import ValidationError
 from typing import Union, List
 import os
-import hashlib
-import siaskynet
 from deal_watcher_service import unpin_cids
 import coloredlogs
+from utils import helper_functions
+from utils import redis_keys, backup_utils
 
 """ Inititalize the logger """
 pruning_logger = logging.getLogger(__name__)
@@ -53,6 +50,7 @@ def startup_boilerplate():
     except:
         os.mkdir(os.getcwd() + '/temp_files')
 
+
 @provide_async_reader_conn_inst
 @provide_async_writer_conn_inst
 async def choose_targets(
@@ -73,13 +71,10 @@ async def choose_targets(
         pruning_logger.debug(project_id)
 
         # Get the block_height for project_id
-        last_block_key = f"projectID:{project_id}:blockHeight"
-        out: bytes = await reader_redis_conn.get(last_block_key)
-        if out:
-            max_block_height: int = int(out.decode('utf-8'))
-        else:
-            """ No blocks exists for that projectId"""
-            max_block_height: int = 0
+        max_block_height = await helper_functions.get_block_height(
+            project_id=project_id,
+            reader_redis_conn=reader_redis_conn
+        )
 
         pruning_logger.debug("Retrieved block height:")
         pruning_logger.debug(max_block_height)
@@ -88,13 +83,11 @@ async def choose_targets(
             continue
 
         # Get the height of last pruned cid
-        last_pruned_key = f"lastPruned:{project_id}"
-        out: bytes = await reader_redis_conn.get(last_pruned_key)
-        if out:
-            last_pruned_height = int(out.decode('utf-8'))
-        else:
-            _ = await writer_redis_conn.set(last_pruned_key, 0)
-            last_pruned_height = 0
+        last_pruned_height = await helper_functions.get_last_pruned_height(
+            project_id=project_id,
+            reader_redis_conn=reader_redis_conn,
+            writer_redis_conn=writer_redis_conn
+        )
         pruning_logger.debug("Last Pruned Height: ")
         pruning_logger.debug(last_pruned_height)
 
@@ -107,7 +100,7 @@ async def choose_targets(
         to_height, from_height = last_pruned_height + settings.container_height, last_pruned_height + 1
 
         # Get all the blockCids
-        block_cids_key = f"projectID:{project_id}:Cids"
+        block_cids_key = redis_keys.get_dag_cids_key(project_id=project_id)
         block_cids_to_prune = await reader_redis_conn.zrangebyscore(
             key=block_cids_key,
             min=from_height,
@@ -116,7 +109,7 @@ async def choose_targets(
         )
 
         """ Add dag blocks to the to-unpin-list """
-        dag_unpin_key = f"projectID:{project_id}:targetDags"
+        dag_unpin_key = redis_keys.get_target_dags_key(project_id=project_id)
         for cid, height in block_cids_to_prune:
             _ = await writer_redis_conn.zadd(
                 key=dag_unpin_key,
@@ -125,16 +118,17 @@ async def choose_targets(
             )
 
         """ Store the min and max heights of the dag blocks that need to be pruned """
-        target_height_key = f"projectID:{project_id}:pruneFromHeight"
+        target_height_key = redis_keys.get_prune_from_height_key(project_id)
         _ = await writer_redis_conn.set(target_height_key, from_height)
-        target_height_key = f"projectID:{project_id}:pruneToHeight"
+        target_height_key = redis_keys.get_prune_to_height_key(project_id)
         _ = await writer_redis_conn.set(target_height_key, to_height)
+
         pruning_logger.debug("Saving from and to height:")
         pruning_logger.debug(from_height)
         pruning_logger.debug(to_height)
 
         # Add this project_id to the set toBeUnpinned ProjectIds
-        to_unpin_projects_key = f"toUnpinProjects"
+        to_unpin_projects_key = redis_keys.get_to_unpin_projects_key()
         _ = await writer_redis_conn.sadd(to_unpin_projects_key, project_id)
 
 
@@ -151,10 +145,11 @@ async def build_container(
         - Add the block_dag_cid to the bloom_filter of this container
     """
 
-    target_height_key = f"projectID:{project_id}:pruneFromHeight"
+    target_height_key = redis_keys.get_prune_from_height_key(project_id)
     from_height = await reader_redis_conn.get(target_height_key)
-    target_height_key = f"projectID:{project_id}:pruneToHeight"
+    target_height_key = redis_keys.get_prune_to_height_key(project_id)
     to_height = await reader_redis_conn.get(target_height_key)
+
     pruning_logger.debug("Retrieved from and to height")
     pruning_logger.debug(from_height)
     pruning_logger.debug(to_height)
@@ -173,7 +168,7 @@ async def build_container(
     bloom_filter = BloomFilter(**bloom_filter_settings)
 
     """ Get all the targets """
-    dag_unpin_key = f"projectID:{project_id}:targetDags"
+    dag_unpin_key = redis_keys.get_target_dags_key(project_id)
     dag_cids = await reader_redis_conn.zrevrange(
         key=dag_unpin_key,
         start=0,
@@ -217,128 +212,6 @@ async def build_container(
         'timestamp': timestamp
     }
     return container_data
-
-
-@provide_async_reader_conn_inst
-@provide_async_writer_conn_inst
-async def backup_to_filecoin(
-        container_data: dict,
-        reader_redis_conn=None,
-        writer_redis_conn=None
-) -> Union[int, FilecoinJobData]:
-    """
-        - Convert container data to json string. 
-        - Push it to filecoin
-        - Save the FilecoinJobData
-    """
-    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
-
-    """ Get the token """
-    filecoin_token_key = f"filecoinToken:{container_data['projectId']}"
-    token = await reader_redis_conn.get(filecoin_token_key)
-    if not token:
-        user = powgate_client.admin.users.create()
-        token = user.token
-        _ = await writer_redis_conn.set(filecoin_token_key, token)
-
-    else:
-        token = token.decode('utf-8')
-
-    """ Convert the data to json string """
-    try:
-        json_data = json.dumps(container_data).encode('utf-8')
-    except TypeError as terr:
-        pruning_logger.debug("Unable to convert container data to json string")
-        pruning_logger.error(terr, exc_info=True)
-        return -1
-
-    # Stage and push the data
-    try:
-        stage_res = powgate_client.data.stage_bytes(json_data, token=token)
-        job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
-    except Exception as eobj:
-        pruning_logger.debug("Failed to backup container data to filecoin")
-        pruning_logger.error(eobj, exc_info=True)
-        return -1
-
-    # Save the jobId and other data
-    job_data = {
-        'stagedCid': stage_res.cid,
-        'jobId': job.jobId,
-        'jobStatus': 'JOB_STATUS_UNCHECKED',
-        'jobStatusDescription': "",
-        'filecoinToken': token,
-        'retries': 0,
-    }
-    try:
-        filecoin_job_data = FilecoinJobData(**job_data)
-        return filecoin_job_data
-    except ValidationError as verr:
-        pruning_logger.debug("Invalid data passed to FilecoinJobData")
-        pruning_logger.error(verr, exc_info=True)
-    except json.JSONDecodeError as jerr:
-        pruning_logger.debug("Invalid Json Data passed to FilecoinJobData")
-        pruning_logger.error(jerr, exc_info=True)
-
-    return -1
-
-
-async def backup_to_sia_renter(container_data: dict):
-    """
-    - Backup the given container data to Sia Renter
-    """
-
-    # Convert container data to Json
-    pruning_logger.debug("Backing up data to Sia Renter")
-    try:
-        json_data = json.dumps(container_data)
-    except TypeError as terr:
-        pruning_logger.debug("Failed to convert container data to json string")
-        pruning_logger.error(terr, exc_info=True)
-        return -1
-
-    file_hash = hashlib.md5(json_data.encode('utf-8')).hexdigest()
-    try:
-        _ = await sia_upload(file_hash=file_hash, file_content=json_data.encode('utf-8'))
-    except FailedRequestToSiaRenter as ferr:
-        pruning_logger.debug("Failed to push data to Sia Renter")
-        pruning_logger.debug(ferr, exc_info=True)
-        return -1
-
-    try:
-        sia_renter_ata = SiaRenterData(fileHash=file_hash)
-    except ValidationError as verr:
-        pruning_logger.debug("Failed to convert sia renter data into a model")
-        pruning_logger.error(verr, exc_info=True)
-        return -1
-
-    return sia_renter_ata
-    
-
-async def backup_to_sia_skynet(container_data: dict):
-    """
-    - Backup the given container data onto Sia
-    """
-
-    pruning_logger.debug("Backing up data to Sia Skynet")
-    container_id = container_data['containerId']
-    container_file_path = f"containers/{container_id}.json"
-    client = siaskynet.SkynetClient()
-    try:
-        skylink = client.upload_file(container_file_path)
-    except Exception as e:
-        pruning_logger.debug("There was an error while uploading the file to Skynet")
-        pruning_logger.error(e, exc_info=True)
-        return -1
-
-    try:
-        sia_skynet_data = SiaSkynetData(skylink=skylink)
-    except ValidationError as verr:
-        pruning_logger.debug("Failed to convert sia skynet data into a model")
-        pruning_logger.error(verr, exc_info=True)
-        return -1
-
-    return sia_skynet_data
 
 
 async def store_container_data(
@@ -440,7 +313,7 @@ async def prune_targets(
         filecoin_fail, sia_skynet_fail, sia_renter_fail = True, True, True
         if 'filecoin' in settings.BACKUP_TARGETS:
             filecoin_fail = False
-            filecoin_job_data: Union[int, FilecoinJobData] = await backup_to_filecoin(container_data=container_data)
+            filecoin_job_data: Union[int, FilecoinJobData] = await backup_utils.backup_to_filecoin(container_data=container_data)
             if filecoin_job_data == -1:
                 pruning_logger.warning("Failed to backup the container to filecoin")
                 filecoin_fail = True
@@ -451,7 +324,7 @@ async def prune_targets(
 
         if 'sia:skynet' in settings.BACKUP_TARGETS:
             sia_skynet_fail = False
-            sia_skynet_data: Union[int, SiaSkynetData] = await backup_to_sia_skynet(container_data=container_data)
+            sia_skynet_data: Union[int, SiaSkynetData] = await backup_utils.backup_to_sia_skynet(container_data=container_data)
             if sia_skynet_data == -1:
                 pruning_logger.warning("Failed to backup the container to Sia Skynet")
                 sia_skynet_fail = True
@@ -469,7 +342,7 @@ async def prune_targets(
 
         if 'sia:renter' in settings.BACKUP_TARGETS:
             sia_renter_fail = False
-            sia_renter_data: Union[int, SiaRenterData] = await backup_to_sia_renter(container_data=container_data)
+            sia_renter_data: Union[int, SiaRenterData] = await backup_utils.backup_to_sia_renter(container_data=container_data)
             if sia_renter_data == -1:
                 pruning_logger.warning("Failed to backup the container to Sia Renter")
                 sia_renter_fail = True

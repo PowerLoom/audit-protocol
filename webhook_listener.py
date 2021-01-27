@@ -2,15 +2,16 @@ from fastapi import FastAPI, Request, Response, Header
 import aioredis
 from config import settings
 import logging
-from redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
 import sys
 import json
 import os
-import redis_keys
-import helper_functions
+
+from utils import redis_keys
+from utils import helper_functions
 from utils import diffmap_utils
 from utils import dag_utils
 from utils.ipfs_async import client as ipfs_client
+from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
 
 
 app = FastAPI()

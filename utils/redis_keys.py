@@ -22,7 +22,7 @@ def get_retrieval_request_info_key(request_id: str):
 
 def get_last_pruned_key(project_id: str):
     last_pruned_key = "lastPruned:{}".format(project_id)
-    return project_id
+    return last_pruned_key
 
 
 def get_dag_cids_key(project_id: str):

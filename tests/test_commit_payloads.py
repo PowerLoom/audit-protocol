@@ -22,6 +22,6 @@ for i in range(30):
 	else:
 		print(f"Success {i}: {out.text}")
 	print("*"*40)
-	time.sleep(3)
+	time.sleep(5)
 
 

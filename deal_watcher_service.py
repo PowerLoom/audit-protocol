@@ -1,7 +1,7 @@
 from pygate_grpc.client import PowerGateClient
 import logging
 import sys
-from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 from typing import Union
 from pydantic import ValidationError
 import json
@@ -10,9 +10,9 @@ import asyncio
 import aioredis
 from utils.ipfs_async import client as ipfs_client
 import ipfshttpclient
-from data_models import ContainerData, SiaSkynetData, SiaRenterData
+from data_models import ContainerData, SiaSkynetData
 import coloredlogs
-import redis_keys
+from utils import redis_keys
 
 deal_logger = logging.getLogger(__name__)
 deal_logger.setLevel(logging.DEBUG)

@@ -16,15 +16,15 @@ from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
 import requests
 import async_timeout
-from redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
+from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
 from utils.ipfs_async import client as ipfs_client
 from utils.diffmap_utils import process_payloads_for_diff, preprocess_dag
 from data_models import ContainerData
 from pydantic import ValidationError
 import asyncio
 from functools import partial
-import helper_functions
-import redis_keys
+from utils import helper_functions
+from utils import redis_keys
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")

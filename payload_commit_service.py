@@ -7,9 +7,9 @@ import json
 from eth_utils import keccak
 from main import make_transaction
 from maticvigil.EVCore import EVCore
-from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 import coloredlogs
-import redis_keys
+from utils import redis_keys
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 

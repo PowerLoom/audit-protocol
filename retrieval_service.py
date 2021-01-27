@@ -1,14 +1,14 @@
-from pygate_grpc.client import PowerGateClient
 import logging
 import sys
 from config import settings
 import asyncio
 import json
 from bloom_filter import BloomFilter
-from redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
 import coloredlogs
-import redis_keys
-import helper_functions
+from utils import helper_functions
+
+from utils.redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
+from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
 from utils.diffmap_utils import preprocess_dag
 from utils.backup_utils import get_backup_data

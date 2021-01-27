@@ -16,3 +16,5 @@ containers/
 startup.sh
 test_eco.config.js
 backup_height.json
+Pipfile
+Pipfile.lock

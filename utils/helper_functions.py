@@ -1,7 +1,9 @@
-import redis_keys
+from utils import redis_keys
 import aioredis
+from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 
 
+@provide_async_reader_conn_inst
 async def get_tentative_block_height(
         project_id: str,
         reader_redis_conn
@@ -15,6 +17,7 @@ async def get_tentative_block_height(
     return tentative_block_height
 
 
+@provide_async_reader_conn_inst
 async def get_last_dag_cid(
         project_id: str,
         reader_redis_conn
@@ -29,6 +32,7 @@ async def get_last_dag_cid(
     return last_dag_cid
 
 
+@provide_async_reader_conn_inst
 async def get_dag_cid(
         project_id: str,
         block_height: int,
@@ -53,6 +57,7 @@ async def get_dag_cid(
     return dag_cid
 
 
+@provide_async_reader_conn_inst
 async def get_last_payload_cid(
         project_id: str,
         reader_redis_conn
@@ -67,6 +72,7 @@ async def get_last_payload_cid(
     return last_payload_cid
 
 
+@provide_async_reader_conn_inst
 async def get_block_height(
         project_id: str,
         reader_redis_conn,
@@ -81,6 +87,8 @@ async def get_block_height(
     return block_height
 
 
+@provide_async_writer_conn_inst
+@provide_async_reader_conn_inst
 async def get_last_pruned_height(
         project_id: str,
         reader_redis_conn,
