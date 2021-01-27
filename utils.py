@@ -255,7 +255,7 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
             utils_logger.debug(k)
             prev_val = prev_data[k]
             cur_val = cur_data.get(k)
-            comparison_results[k] = prev_val == cur_val
+            comparison_results[k] = prev_val != cur_val
             utils_logger.debug(comparison_results)
             keys_compared_for_rules.add(k)
             utils_logger.debug('*' * 40)
