@@ -15,7 +15,7 @@ class FilecoinJobData(BaseModel):
 class BloomFilterSettings(BaseModel):
     max_elements: int = 0
     error_rate: float = 0.0
-    filename: str = ""
+    filename: Optional[str] = ""
 
 
 class SiaData(BaseModel):
