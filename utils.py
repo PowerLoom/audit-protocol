@@ -140,9 +140,7 @@ async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: 
                 compare_rules[rule['field']] = {k: rule[k] for k in ['fieldType', 'operation', 'memberFields']}
     prev_copy = clean_map_members(prev_data, key_rules)
     cur_copy = clean_map_members(cur_data, key_rules)
-    payload_changed = dict()
-    if len(compare_rules) > 0:
-        payload_changed = compare_members(prev_copy, cur_copy, compare_rules)
+    payload_changed = compare_members(prev_copy, cur_copy, compare_rules)
     return dict(
         prev_copy=prev_copy,
         cur_copy=cur_copy,
@@ -196,9 +194,10 @@ def clean_map_members(data, key_rules):
     return data_copy
 
 
-def compare_members(prev_data, cur_data, compare_rules):
+def compare_members(prev_data, cur_data, compare_rules: dict):
     comparison_results = dict()
-    for field_name in compare_rules:
+    keys_compared_for_rules = set()
+    for field_name in compare_rules.keys():
         print('*' * 40)
         print('Applying comparison rule for key')
         print(field_name)
@@ -210,7 +209,11 @@ def compare_members(prev_data, cur_data, compare_rules):
         # collect data fields
         prev_data_comparable_values = list()
         cur_data_comparable_values = list()
-        # TODO: check for field type: map, list etc
+        # TODO: expand on checks for field type: map, list etc
+        if compare_rules[field_name]['fieldType'] == 'map':
+            pass
+        else:
+            continue
         for each_comparable_member in compare_rules[field_name]['memberFields']:
             print('=' * 40 + '\nCollecting value for field')
             print(each_comparable_member)
@@ -241,7 +244,21 @@ def compare_members(prev_data, cur_data, compare_rules):
             collated_prev_comparable = sum(prev_data_comparable_values)
             collated_cur_comparable = sum(cur_data_comparable_values)
             comparison_results[field_name] = collated_prev_comparable != collated_cur_comparable
+        keys_compared_for_rules.add(field_name)
         print('*' * 40)
+    if type(prev_data) is dict and type(cur_data) is dict:
+        for k in prev_data:
+            if k in keys_compared_for_rules:
+                continue
+            utils_logger.debug('*' * 40)
+            utils_logger.debug('Comparing for field without comparison rule | Comparison results')
+            utils_logger.debug(k)
+            prev_val = prev_data[k]
+            cur_val = cur_data.get(k)
+            comparison_results[k] = prev_val == cur_val
+            utils_logger.debug(comparison_results)
+            keys_compared_for_rules.add(k)
+            utils_logger.debug('*' * 40)
     return comparison_results
 
 
