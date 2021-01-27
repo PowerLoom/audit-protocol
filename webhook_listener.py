@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response, Header
 import aioredis
-from dynaconf import settings
+from config import settings
 import logging
 import sys
 import json
@@ -31,17 +31,17 @@ rest_logger.addHandler(stdout_handler)
 rest_logger.addHandler(stderr_handler)
 
 REDIS_WRITER_CONN_CONF = {
-    "host": settings['REDIS']['HOST'],
-    "port": settings['REDIS']['PORT'],
-    "password": settings['REDIS']['PASSWORD'],
-    "db": settings['REDIS']['DB']
+    "host": settings.redis.host,
+    "port": settings.redis.port,
+    "password": settings.redis.password,
+    "db": settings.redis.db
 }
 
 REDIS_READER_CONN_CONF = {
-    "host": settings['REDIS_READER']['HOST'],
-    "port": settings['REDIS_READER']['PORT'],
-    "password": settings['REDIS_READER']['PASSWORD'],
-    "db": settings['REDIS_READER']['DB']
+    "host": settings.redis_reader.host,
+    "port": settings.redis_reader.port,
+    "password": settings.redis_reader.password,
+    "db": settings.redis_reader.db
 }
 
 
@@ -151,7 +151,7 @@ async def create_dag(
 
                     return dict()
 
-                if (actual_tt_block_height - max_block_height) >= settings.MAX_PENDING_EVENTS:
+                if (actual_tt_block_height - max_block_height) >= settings.max_pending_events:
 
                     target_tt_block_height = max_block_height + 1
 

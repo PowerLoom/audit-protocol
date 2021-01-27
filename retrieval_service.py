@@ -1,6 +1,6 @@
 import logging
 import sys
-from dynaconf import settings
+from config import settings
 import asyncio
 import json
 from bloom_filter import BloomFilter
@@ -23,24 +23,6 @@ stream_handler.setFormatter(formatter)
 retrieval_logger.addHandler(stream_handler)
 retrieval_logger.debug("Initialized logger")
 coloredlogs.install(level="DEBUG", logger=retrieval_logger, stream=sys.stdout)
-
-""" aioredis boilerplate """
-reader_redis_pool = None
-writer_redis_pool = None
-
-REDIS_WRITER_CONN_CONF = {
-    "host": settings['REDIS']['HOST'],
-    "port": settings['REDIS']['PORT'],
-    "password": settings['REDIS']['PASSWORD'],
-    "db": settings['REDIS']['DB']
-}
-
-REDIS_READER_CONN_CONF = {
-    "host": settings['REDIS_READER']['HOST'],
-    "port": settings['REDIS_READER']['PORT'],
-    "password": settings['REDIS_READER']['PASSWORD'],
-    "db": settings['REDIS_READER']['DB']
-}
 
 
 @provide_async_writer_conn_inst
@@ -99,7 +81,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 payload_data = None
 
                 """ Check if the DAG block is pinned """
-                if (block_height > (max_block_height - settings.MAX_IPFS_BLOCKS)) or (
+                if (block_height > (max_block_height - settings.max_ipfs_blocks)) or (
                         last_pruned_height < int(request_info['to_height'])):
                     """ Get the data directly through the IPFS client """
                     _block_dag = await ipfs_client.dag.get(block_cid)
@@ -115,8 +97,8 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     containers_created_key = redis_keys.get_containers_created_key(request_info['projectId'])
                     target_containers = await reader_redis_conn.zrangebyscore(
                         key=containers_created_key,
-                        max=settings.CONTAINER_HEIGHT * 2 + block_height + 1,
-                        min=block_height - settings.CONTAINER_HEIGHT * 2 - 1
+                        max=settings.container_height * 2 + block_height + 1,
+                        min=block_height - settings.container_height * 2 - 1
                     )
 
                     """ Iterate through each containerId and then check if the block exists in that container """
@@ -139,7 +121,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     retrieval_logger.debug(container_data)
 
                     container = await get_backup_data(container_data=container_data, container_id=container_id)
-                    _block_index = block_height % settings.CONTAINER_HEIGHT
+                    _block_index = block_height % settings.container_height
                     block_cid, block_dag = next(iter(container['dagChain'][_block_index].items()))
                     payload_data = container['payloads'][block_dag['data']['cid']]
 
@@ -206,7 +188,7 @@ async def periodic_retrieval():
     while True:
         await asyncio.gather(
             retrieve_files(),
-            asyncio.sleep(settings.RETRIEVAL_SERVICE_INTERVAL)
+            asyncio.sleep(settings.retrieval_service_interval)
         )
         
 

@@ -5,7 +5,7 @@ import io
 import logging
 import aioredis
 import hmac
-from dynaconf import settings
+from config import settings
 
 from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 from utils.ipfs_async import client as ipfs_client
@@ -22,7 +22,7 @@ def check_signature(core_payload, signature):
     """
 
     _sign_rebuilt = hmac.new(
-        key=settings.API_KEY.encode('utf-8'),
+        key=settings.api_key.encode('utf-8'),
         msg=json.dumps(core_payload).encode('utf-8'),
         digestmod='sha256'
     ).hexdigest()
@@ -69,7 +69,7 @@ async def save_event_data(event_data: dict, writer_redis_conn):
 async def get_dag_block(dag_cid: str):
     e_obj = None
     try:
-        async with async_timeout.timeout(settings.IPFS_TIMEOUT) as cm:
+        async with async_timeout.timeout(settings.ipfs_timeout) as cm:
             try:
                 dag = await ipfs_client.dag.get(dag_cid)
             except Exception as e:
@@ -103,7 +103,7 @@ async def get_payload(payload_cid: str):
     e_obj = None
     payload = ""
     try:
-        async with async_timeout.timeout(settings.IPFS_TIMEOUT) as cm:
+        async with async_timeout.timeout(settings.ipfs_timeout) as cm:
             try:
                 payload = await ipfs_client.cat(cid=payload_cid)
             except Exception as e:
@@ -140,7 +140,7 @@ async def create_dag_block(
     )
 
     """ Fill up the dag """
-    dag = settings.DAG_STRUCTURE
+    dag = settings.dag_structure
     dag['height'] = tentative_block_height
     dag['prevCid'] = last_dag_cid
     dag['data'] = {

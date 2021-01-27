@@ -5,7 +5,7 @@ import sys
 from gunicorn.app.base import BaseApplication
 from gunicorn.glogging import Logger
 from loguru import logger
-from dynaconf import settings
+from config import settings
 from webhook_listener import app
 
 
@@ -88,7 +88,7 @@ if __name__ == '__main__':
     ])
 
     options = {
-        "bind": f"{settings.WEBHOOK_LISTENER.HOST}:{settings.WEBHOOK_LISTENER.PORT}",
+        "bind": f"{settings.webhook_listener.host}:{settings.webhook_listener.port}",
         "workers": WORKERS,
         "accesslog": "-",
         "errorlog": "-",

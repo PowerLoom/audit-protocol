@@ -1,5 +1,5 @@
 import aioredis
-from dynaconf import settings
+from config import settings
 import logging
 import asyncio
 import sys
@@ -30,7 +30,7 @@ payload_logger.debug("Initialized Payload")
 
 evc = EVCore(verbose=True)
 contract = evc.generate_contract_sdk(
-    contract_address=settings.AUDIT_CONTRACT,
+    contract_address=settings.audit_contract,
     app_name='auditrecords'
 )
 
@@ -107,7 +107,7 @@ async def commit_pending_payloads(
         payload_logger.debug(pending_payloads)
         tasks = []
 
-        semaphore = asyncio.BoundedSemaphore(settings.MAX_PAYLOAD_COMMITS)
+        semaphore = asyncio.BoundedSemaphore(settings.max_payload_commits)
 
         """ Processing each of the pending payloads """
         while True:
@@ -145,7 +145,7 @@ async def periodic_commit_payload():
     while True:
         await asyncio.gather(
             commit_pending_payloads(),
-            asyncio.sleep(settings.PAYLOAD_COMMIT_INTERVAL)
+            asyncio.sleep(settings.payload_commit_interval)
         )
 
 if __name__ == "__main__":

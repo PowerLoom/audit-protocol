@@ -1,28 +1,28 @@
 import aioredis
 from functools import wraps
 import traceback
-from dynaconf import settings as settings_conf
+from config import settings as settings_conf
 import asyncio
 
 REDIS_CONN_CONF = {
-    "host": settings_conf['redis']['host'],
-    "port": settings_conf['redis']['port'],
-    "password": settings_conf['redis']['password'],
-    "db": settings_conf['redis']['db']
+    "host": settings_conf.redis.host,
+    "port": settings_conf.redis.port,
+    "password": settings_conf.redis.password,
+    "db": settings_conf.redis.db
 }
 
 REDIS_WRITER_CONN_CONF = {
-    "host": settings_conf['REDIS']['HOST'],
-    "port": settings_conf['REDIS']['PORT'],
-    "password": settings_conf['REDIS']['PASSWORD'],
-    "db": settings_conf['REDIS']['DB']
+    "host": settings_conf.redis.host,
+    "port": settings_conf.redis.port,
+    "password": settings_conf.redis.password,
+    "db": settings_conf.redis.db
 }
 
 REDIS_READER_CONN_CONF = {
-    "host": settings_conf['REDIS_READER']['HOST'],
-    "port": settings_conf['REDIS_READER']['PORT'],
-    "password": settings_conf['REDIS_READER']['PASSWORD'],
-    "db": settings_conf['REDIS_READER']['DB']
+    "host": settings_conf.redis_reader.host,
+    "port": settings_conf.redis_reader.port,
+    "password": settings_conf.redis_reader.password,
+    "db": settings_conf.redis_reader.db
 }
 
 

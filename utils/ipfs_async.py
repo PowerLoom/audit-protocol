@@ -1,7 +1,7 @@
 import ipfshttpclient
 import asyncio
 from greenletio import async_
-from dynaconf import settings
+from config import settings
 import io
 import json
 
@@ -30,7 +30,7 @@ class AsyncIpfsClient:
         return await async_(self.cat)(*args, **kwargs)
 
 
-client = ipfshttpclient.connect(settings.IPFS_URL)
+client = ipfshttpclient.connect(settings.ipfs_url)
 
 async_ipfs_client = AsyncIpfsClient(
     get=client.dag.get,

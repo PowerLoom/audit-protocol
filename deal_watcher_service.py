@@ -5,7 +5,7 @@ from utils.redis_conn import provide_async_reader_conn_inst, provide_async_write
 from typing import Union
 from pydantic import ValidationError
 import json
-from dynaconf import settings
+from config import settings
 import asyncio
 import aioredis
 from utils.ipfs_async import client as ipfs_client
@@ -208,7 +208,7 @@ async def start(
     all_containers_key = f"containerData:*"
     executing_containers = []
 
-    if settings.UNPIN_MODE == "all":
+    if settings.unpin_mode == "all":
         out = await reader_redis_conn.keys(all_containers_key)
         if out:
             for container_key in out:
@@ -246,7 +246,7 @@ async def start(
 
         if "filecoin" in container_data.backupTargets:
             if powergate_client is None:
-                powergate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR)
+                powergate_client = PowerGateClient(settings.powergate_client_addr)
 
             if container_data.backupMetaData.filecoin.jobStatus == "JOB_STATUS_SUCCESS":
                 deal_logger.debug("This container has already been processed...")
@@ -314,7 +314,7 @@ async def periodic_deal_monitoring():
     while True:
         await asyncio.gather(
             start(),
-            asyncio.sleep(settings.DEAL_WATCHER_SERVICE_INTERVAL)
+            asyncio.sleep(settings.deal_watcher_service_interval)
         )
 
 

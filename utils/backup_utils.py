@@ -10,7 +10,7 @@ from pygate_grpc.client import PowerGateClient
 import siaskynet
 from siaskynet import SkynetClient
 
-from dynaconf import settings
+from config import settings
 from utils.redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
 
 from data_models import ContainerData, FilecoinJobData, SiaRenterData, SiaSkynetData
@@ -116,7 +116,7 @@ async def sia_get(file_hash, force=True):
 
 
 async def get_data_from_filecoin(filecoin_job_data: FilecoinJobData):
-    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+    powgate_client = PowerGateClient(settings.powergate_client_addr, False)
     out = powgate_client.data.get(filecoin_job_data.stagedCid, token=filecoin_job_data.filecoinToken).decode('utf-8')
     container = json.loads(out)['container']
     return container
@@ -223,7 +223,7 @@ async def backup_to_filecoin(
         - Push it to filecoin
         - Save the FilecoinJobData
     """
-    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+    powgate_client = PowerGateClient(settings.powergate_client_addr, False)
 
     """ Get the token """
     filecoin_token_key = f"filecoinToken:{container_data['projectId']}"

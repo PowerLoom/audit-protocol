@@ -11,7 +11,7 @@ import json
 import aioredis
 import redis
 from skydb import SkydbTable
-from dynaconf import settings
+from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
 import requests
@@ -25,6 +25,7 @@ import asyncio
 from functools import partial
 from utils import helper_functions
 from utils import redis_keys
+from utils.redis_conn import REDIS_WRITER_CONN_CONF, REDIS_READER_CONN_CONF
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -56,19 +57,6 @@ app.add_middleware(
 )
 app.mount('/static', StaticFiles(directory='static'), name='static')
 
-REDIS_WRITER_CONN_CONF = {
-    "host": settings['REDIS']['HOST'],
-    "port": settings['REDIS']['PORT'],
-    "password": settings['REDIS']['PASSWORD'],
-    "db": settings['REDIS']['DB']
-}
-
-REDIS_READER_CONN_CONF = {
-    "host": settings['REDIS_READER']['HOST'],
-    "port": settings['REDIS_READER']['PORT'],
-    "password": settings['REDIS_READER']['PASSWORD'],
-    "db": settings['REDIS_READER']['DB']
-}
 
 #
 STORAGE_CONFIG = {
@@ -108,7 +96,7 @@ async def startup_boilerplate():
     )
     app.evc = EVCore(verbose=True)
     app.contract = app.evc.generate_contract_sdk(
-        contract_address=settings.AUDIT_CONTRACT,
+        contract_address=settings.audit_contract,
         app_name='auditrecords'
     )
 
@@ -131,13 +119,13 @@ async def get_project_token(
     """ Save the project Id on set """
     _ = await writer_redis_conn.sadd(redis_keys.get_stored_project_ids_key(), projectId)
 
-    if (settings.PAYLOAD_STORAGE != "FILECOIN") and (settings.BLOCK_STORAGE != "FILECOIN") and (
+    if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (
             override_settings is False):
         return ""
 
-    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+    powgate_client = PowerGateClient(settings.powergate_client_addr, False)
 
-    if settings.METADATA_CACHE == "redis":
+    if settings.metadata_cache == "redis":
         """ Check if there is a filecoin token for the project Id """
         filecoin_token_key = redis_keys.get_filecoin_token_key(project_id=projectId)
         token = await reader_redis_conn.get(filecoin_token_key)
@@ -366,11 +354,11 @@ async def commit_payload(
     last_tentative_block_height = None
     last_tentative_block_height_key = redis_keys.get_tentative_block_height_key(project_id)
     last_snapshot_cid = None
-    if settings.METADATA_CACHE == 'skydb':
+    if settings.metadata_cache == 'skydb':
         ipfs_table = SkydbTable(
-            table_name=f"{settings.DAG_TABLE_NAME}:{project_id}",
+            table_name=f"{settings.dag_table_name}:{project_id}",
             columns=['cid'],
-            seed=settings.SEED,
+            seed=settings.seed,
             verbose=1
         )
         if ipfs_table.index == 0:
@@ -379,7 +367,7 @@ async def commit_payload(
             prev_dag_cid = ipfs_table.fetch_row(row_index=ipfs_table.index - 1)['cid']
         block_height = ipfs_table.index
 
-    elif settings.METADATA_CACHE == 'redis':
+    elif settings.metadata_cache == 'redis':
         """ 
         Retrieve the block height, last dag cid and tentative block height 
         for the project_id
@@ -407,8 +395,8 @@ async def commit_payload(
         payload = json.dumps(payload)
 
     snapshot_cid = ""
-    if settings.PAYLOAD_STORAGE == "FILECOIN":
-        powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
+    if settings.payload_storage == "FILECOIN":
+        powgate_client = PowerGateClient(settings.powergate_client_addr, False)
         stage_res = powgate_client.data.stage_bytes(payload, token=token)
         """ Since the same data may come back for snapshotting, I have added override=True"""
         job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
@@ -419,7 +407,7 @@ async def commit_payload(
         rest_logger.debug("Pushed the payload to filecoin.")
         rest_logger.debug("Job Id: ")
         rest_logger.debug(job.jobId)
-    elif settings.PAYLOAD_STORAGE == "IPFS":
+    elif settings.payload_storage == "IPFS":
         if type(payload) is dict:
             snapshot_cid = await ipfs_client.add_json(payload)
         else:
@@ -592,7 +580,7 @@ async def get_latest_project_updates(
         reader_redis_conn=None
 ):
     project_diffs_snapshots = list()
-    if settings.METADATA_CACHE == 'redis':
+    if settings.metadata_cache == 'redis':
         h = await reader_redis_conn.hgetall(redis_keys.get_last_seen_snapshots_key())
         if len(h) < 1:
             return {}
@@ -629,7 +617,7 @@ async def get_payloads_diff_counts(
         reader_redis_conn=None
 ):
     max_block_height = 0
-    if settings.METADATA_CACHE == 'redis':
+    if settings.metadata_cache == 'redis':
         max_block_height = await helper_functions.get_block_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn
@@ -641,7 +629,7 @@ async def get_payloads_diff_counts(
     if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
 
-    if settings.METADATA_CACHE == 'redis':
+    if settings.metadata_cache == 'redis':
         diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
         r = await reader_redis_conn.zcard(diff_snapshots_cache_zset)
         if not r:
@@ -668,7 +656,7 @@ async def get_payloads_diffs(
         reader_redis_conn=None
 ):
     max_block_height = 0
-    if settings.METADATA_CACHE == 'redis':
+    if settings.metadata_cache == 'redis':
         max_block_height = await helper_functions.get_block_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn
@@ -682,7 +670,7 @@ async def get_payloads_diffs(
         return {'error': 'Invalid Height'}
     extracted_count = 0
     diff_response = list()
-    if settings.METADATA_CACHE == 'redis':
+    if settings.metadata_cache == 'redis':
         diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
         r = await reader_redis_conn.zrevrangebyscore(
             key=diff_snapshots_cache_zset,
@@ -721,13 +709,13 @@ async def get_payloads(
     ipfs_table = None
     max_block_height = None
     redis_conn_raw = None
-    if settings.METADATA_CACHE == 'skydb':
+    if settings.metadata_cache == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
                                 seed=settings.seed,
                                 verbose=1)
         max_block_height = ipfs_table.index - 1
-    elif settings.METADATA_CACHE == 'redis':
+    elif settings.metadata_cache == 'redis':
         max_block_height = await helper_functions.get_block_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn
@@ -777,9 +765,9 @@ async def get_payloads(
         rest_logger.debug("Fetching block at height: ")
         rest_logger.debug(current_height)
         if not prev_dag_cid:
-            if settings.METADATA_CACHE == 'skydb':
+            if settings.metadata_cache == 'skydb':
                 prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
-            elif settings.METADATA_CACHE == 'redis':
+            elif settings.metadata_cache == 'redis':
                 project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
                 r = await reader_redis_conn.zrangebyscore(
                     key=project_cids_key_zset,
@@ -885,12 +873,12 @@ async def payload_height(
         reader_redis_conn=None
 ):
     max_block_height = -1
-    if settings.METADATA_CACHE == 'skydb':
+    if settings.metadata_cache == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
                                 seed=settings.seed)
         max_block_height = ipfs_table.index - 1
-    elif settings.METADATA_CACHE == 'redis':
+    elif settings.metadata_cache == 'redis':
         max_block_height = await helper_functions.get_block_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn
@@ -913,10 +901,10 @@ async def get_block(
 
 ):
     """ This endpoint is responsible for retrieving only the dag block and not the payload """
-    if settings.METADATA_CACHE == 'skydb':
-        ipfs_table = SkydbTable(table_name=f"{settings.DAG_TABLE_NAME}:{projectId}",
+    if settings.metadata_cache == 'skydb':
+        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
-                                seed=settings.SEED,
+                                seed=settings.seed,
                                 verbose=1)
 
         if (block_height > ipfs_table.index - 1) or (block_height <= 0):
@@ -929,7 +917,7 @@ async def get_block(
             block = _block.as_json()
             block = preprocess_dag(block)
             return {row['cid']: block}
-    elif settings.METADATA_CACHE == 'redis':
+    elif settings.metadata_cache == 'redis':
         max_block_height = await helper_functions.get_block_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn
@@ -993,10 +981,10 @@ async def get_block_data(
         writer_redis_conn=None,
         reader_redis_conn=None,
 ):
-    if settings.METADATA_CACHE == 'skydb':
-        ipfs_table = SkydbTable(table_name=f"{settings.DAG_TABLE_NAME}:{projectId}",
+    if settings.metadata_cache == 'skydb':
+        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
-                                seed=settings.SEED,
+                                seed=settings.seed,
                                 verbose=1)
         if (block_height > ipfs_table.index - 1) or (block_height <= 0):
             return {'error': 'Invalid block Height'}
@@ -1008,7 +996,7 @@ async def get_block_data(
         block['data']['payload'] = _temp_data.decode('utf-8')
         return {row['cid']: block['data']}
 
-    elif settings.METADATA_CACHE == "redis":
+    elif settings.metadata_cache == "redis":
         max_block_height = await helper_functions.get_block_height(
             project_id=projectId,
             reader_redis_conn=reader_redis_conn

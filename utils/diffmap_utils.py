@@ -1,7 +1,7 @@
 import json
 from copy import deepcopy
 import logging
-from dynaconf import settings
+from config import settings
 
 from utils import dag_utils
 from utils import redis_keys
@@ -226,7 +226,7 @@ async def calculate_diff(
                     },
                     'diff': diff_map
                 }
-                if settings.METADATA_CACHE == 'redis':
+                if settings.metadata_cache == 'redis':
                     diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
                     await writer_redis_conn.zadd(
                         diff_snapshots_cache_zset,
@@ -248,7 +248,7 @@ async def calculate_diff(
 def preprocess_dag(block):
     if 'Height' in block.keys():
         _block = deepcopy(block)
-        dag_structure = settings.DAG_STRUCTURE
+        dag_structure = settings.dag_structure
 
         dag_structure['height'] = _block.pop('Height')
         dag_structure['prevCid'] = _block.pop('prevCid')

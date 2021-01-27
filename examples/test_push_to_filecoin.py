@@ -2,7 +2,7 @@ from pygate_grpc.client import PowerGateClient
 import logging
 import aioredis
 import sys
-from dynaconf import settings
+from config import settings
 
 from random import choice
 from string import ascii_letters

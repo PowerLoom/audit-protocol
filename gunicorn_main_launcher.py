@@ -5,7 +5,7 @@ import sys
 from gunicorn.app.base import BaseApplication
 from gunicorn.glogging import Logger
 from loguru import logger
-from dynaconf import settings
+from config import settings
 from main import app
 
 
@@ -88,7 +88,7 @@ if __name__ == '__main__':
     ])
 
     options = {
-        "bind": f"{settings.HOST}:{settings.PORT}",
+        "bind": f"{settings.host}:{settings.port}",
         "workers": WORKERS,
         "accesslog": "-",
         "errorlog": "-",

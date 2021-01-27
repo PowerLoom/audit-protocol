@@ -1,7 +1,7 @@
 import logging
 import sys
 import aioredis
-from dynaconf import settings
+from config import settings
 import time
 import asyncio
 from bloom_filter import BloomFilter
@@ -79,7 +79,7 @@ async def choose_targets(
         pruning_logger.debug("Retrieved block height:")
         pruning_logger.debug(max_block_height)
         # Check if the project_id is still a small chaiN
-        if max_block_height < settings.MAX_IPFS_BLOCKS:
+        if max_block_height < settings.max_ipfs_blocks:
             continue
 
         # Get the height of last pruned cid
@@ -91,13 +91,13 @@ async def choose_targets(
         pruning_logger.debug("Last Pruned Height: ")
         pruning_logger.debug(last_pruned_height)
 
-        if settings.CONTAINER_HEIGHT + last_pruned_height > max_block_height - settings.MAX_IPFS_BLOCKS:
+        if settings.container_height + last_pruned_height > max_block_height - settings.max_ipfs_blocks:
             """ Check if are settings.container_height amount of blocks left """
             pruning_logger.debug("Not enough blocks for: ")
             pruning_logger.debug(project_id)
             continue
 
-        to_height, from_height = last_pruned_height + settings.CONTAINER_HEIGHT, last_pruned_height + 1
+        to_height, from_height = last_pruned_height + settings.container_height, last_pruned_height + 1
 
         # Get all the blockCids
         block_cids_key = redis_keys.get_dag_cids_key(project_id=project_id)
@@ -163,7 +163,7 @@ async def build_container(
     container_id = keccak(text=json.dumps(container_id_data)).hex()
 
     """ Create a Bloom filter """
-    bloom_filter_settings = settings.BLOOM_FILTER_SETTINGS
+    bloom_filter_settings = settings.bloom_filter_settings
     bloom_filter_settings['filename'] = f"bloom_filter_objects/{container_id}.bloom"
     bloom_filter = BloomFilter(**bloom_filter_settings)
 
@@ -311,7 +311,7 @@ async def prune_targets(
         backup_targets = list()
         backup_metadata = dict()
         filecoin_fail, sia_skynet_fail, sia_renter_fail = True, True, True
-        if 'filecoin' in settings.BACKUP_TARGETS:
+        if 'filecoin' in settings.backup_targets:
             filecoin_fail = False
             filecoin_job_data: Union[int, FilecoinJobData] = await backup_utils.backup_to_filecoin(container_data=container_data)
             if filecoin_job_data == -1:
@@ -322,7 +322,7 @@ async def prune_targets(
                 backup_targets.append('filecoin')
                 backup_metadata['filecoin'] = filecoin_job_data
 
-        if 'sia:skynet' in settings.BACKUP_TARGETS:
+        if 'sia:skynet' in settings.backup_targets:
             sia_skynet_fail = False
             sia_skynet_data: Union[int, SiaSkynetData] = await backup_utils.backup_to_sia_skynet(container_data=container_data)
             if sia_skynet_data == -1:
@@ -340,7 +340,7 @@ async def prune_targets(
                     project_id=container_data['projectId']
                 )
 
-        if 'sia:renter' in settings.BACKUP_TARGETS:
+        if 'sia:renter' in settings.backup_targets:
             sia_renter_fail = False
             sia_renter_data: Union[int, SiaRenterData] = await backup_utils.backup_to_sia_renter(container_data=container_data)
             if sia_renter_data == -1:
@@ -418,7 +418,7 @@ async def periodic_pruning():
         )
         await asyncio.gather(
             prune_targets(),
-            asyncio.sleep(settings.PRUNING_SERVICE_INTERVAL),
+            asyncio.sleep(settings.pruning_service_interval),
         )
 
 if __name__ == "__main__":
