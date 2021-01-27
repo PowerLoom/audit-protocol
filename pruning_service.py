@@ -1,7 +1,7 @@
 import logging
 import sys
 import aioredis
-from config import settings
+from dynaconf import settings
 import time
 import asyncio
 from bloom_filter import BloomFilter

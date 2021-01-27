@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response, Header
 import aioredis
-from config import settings
+from dynaconf import settings
 import logging
 import sys
 import json

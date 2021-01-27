@@ -2,8 +2,7 @@ from pygate_grpc.client import PowerGateClient
 import logging
 import aioredis
 import sys
-import ipfshttpclient
-from config import settings
+from dynaconf import settings
 
 from random import choice
 from string import ascii_letters
@@ -37,6 +36,7 @@ async def commit_to_audit_protocol():
     data = {'payload':{'random_string':random_string}, 'projectId': projectId}
     response = requests.post('http://localhost:9000/commit_payload',json=data)
     test_logger.debug(response.text)
+
 
 async def push_to_filecoin():
     """

@@ -14,7 +14,7 @@ data = {
 for i in range(30):
 	message = ''.join([choice(ascii_letters) for i in range(10)])
 	data['payload']['message'] = message
-	print('*'*20,f' Try: {i} ', '*'*20)
+	print('*'*20, f' Try: {i} ', '*'*20)
 	try:
 		out = requests.post(url='http://localhost:9000/commit_payload', json=data)
 	except Exception as e:

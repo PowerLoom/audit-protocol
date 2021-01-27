@@ -5,7 +5,7 @@ from utils.redis_conn import provide_async_reader_conn_inst, provide_async_write
 from typing import Union
 from pydantic import ValidationError
 import json
-from config import settings
+from dynaconf import settings
 import asyncio
 import aioredis
 from utils.ipfs_async import client as ipfs_client

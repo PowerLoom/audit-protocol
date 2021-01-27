@@ -1,7 +1,7 @@
 import json
 from copy import deepcopy
 import logging
-from config import settings
+from dynaconf import settings
 
 from utils import dag_utils
 from utils import redis_keys

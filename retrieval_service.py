@@ -1,6 +1,6 @@
 import logging
 import sys
-from config import settings
+from dynaconf import settings
 import asyncio
 import json
 from bloom_filter import BloomFilter

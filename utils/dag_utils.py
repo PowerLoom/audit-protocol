@@ -5,7 +5,7 @@ import io
 import logging
 import aioredis
 import hmac
-from config import settings
+from dynaconf import settings
 
 from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 from utils.ipfs_async import client as ipfs_client

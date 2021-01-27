@@ -10,7 +10,7 @@ from pygate_grpc.client import PowerGateClient
 import siaskynet
 from siaskynet import SkynetClient
 
-from config import settings
+from dynaconf import settings
 from utils.redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
 
 from data_models import ContainerData, FilecoinJobData, SiaRenterData, SiaSkynetData

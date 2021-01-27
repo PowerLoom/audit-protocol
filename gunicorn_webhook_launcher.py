@@ -5,7 +5,7 @@ import sys
 from gunicorn.app.base import BaseApplication
 from gunicorn.glogging import Logger
 from loguru import logger
-from config import settings
+from dynaconf import settings
 from webhook_listener import app
 
 

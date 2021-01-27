@@ -1,7 +1,7 @@
 import ipfshttpclient
 import asyncio
 from greenletio import async_
-from config import settings
+from dynaconf import settings
 import io
 import json
 

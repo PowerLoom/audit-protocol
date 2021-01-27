@@ -1,7 +1,7 @@
 import aioredis
 from functools import wraps
 import traceback
-from config import settings as settings_conf
+from dynaconf import settings as settings_conf
 import asyncio
 
 REDIS_CONN_CONF = {

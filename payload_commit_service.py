@@ -1,5 +1,5 @@
 import aioredis
-from config import settings
+from dynaconf import settings
 import logging
 import asyncio
 import sys
