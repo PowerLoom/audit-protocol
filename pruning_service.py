@@ -9,9 +9,10 @@ from bloom_filter import BloomFilter
 from eth_utils import keccak
 import json
 from pygate_grpc.client import PowerGateClient
-from ipfs_async import client as ipfs_client
+from utils.ipfs_async import client as ipfs_client
 from redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
-from utils import preprocess_dag, sia_upload, FailedRequestToSiaRenter, FailedRequestToSiaSkynet
+from utils.diffmap_utils import preprocess_dag
+from utils.backup_utils import sia_upload, FailedRequestToSiaRenter, FailedRequestToSiaSkynet
 from data_models import ContainerData, FilecoinJobData, SiaSkynetData, BackupMetaData, SiaRenterData
 from pydantic import ValidationError
 from typing import Union, List

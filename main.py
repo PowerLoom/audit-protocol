@@ -17,8 +17,8 @@ from uuid import uuid4
 import requests
 import async_timeout
 from redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
-from ipfs_async import client as ipfs_client
-from utils import process_payloads_for_diff, preprocess_dag
+from utils.ipfs_async import client as ipfs_client
+from utils.diffmap_utils import process_payloads_for_diff, preprocess_dag
 from data_models import ContainerData
 from pydantic import ValidationError
 import asyncio
@@ -208,7 +208,7 @@ async def retrieve_payload_data(payload_cid,  writer_redis_conn):
     """
         - Given a payload_cid, get its data from ipfs, at the same time increase its hit
     """
-    payload_key = f"hitsPayloadData"
+    payload_key = redis_keys.get_hits_payload_data_key()
     r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
     rest_logger.debug("Payload Data hit for: ")
     rest_logger.debug(payload_cid)
@@ -231,7 +231,7 @@ async def get_max_block_height(project_id: str, reader_redis_conn):
         project_id=project_id,
         reader_redis_conn=reader_redis_conn
     )
-    last_payload_cid = await helper_functions.get_last_payload_cid(project_id,reader_redis_conn)
+    last_payload_cid = await helper_functions.get_last_payload_cid(project_id, reader_redis_conn)
     return prev_dag_cid, block_height, last_tentative_block_height, last_payload_cid
 
 
@@ -239,7 +239,7 @@ async def create_retrieval_request(project_id: str, from_height: int, to_height:
     request_id = str(uuid4())
 
     """ Setup the retrievalRequestInfo HashTable """
-    retrieval_request_info_key = f"retrievalRequestInfo:{request_id}"
+    retrieval_request_info_key = redis_keys.get_retrieval_request_info_key(request_id=request_id)
     fields = {
         'projectId': project_id,
         'to_height': to_height,
@@ -314,7 +314,6 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         rest_logger.debug("=" * 80)
         return -1
 
-    pending_block_creation_key = f"projectID:{project_id}:pendingBlockCreation"
     pending_transaction_key = f"projectID:{project_id}:pendingTransactions"
     tx_hash = tx_hash_obj[0]['txHash']
 
@@ -323,7 +322,6 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
             score=int(last_tentative_block_height),
             member=tx_hash
      )
-    _ = await writer_redis_conn.sadd(pending_block_creation_key, payload_commit_id)
     return 1
 
 
@@ -416,7 +414,7 @@ async def commit_payload(
         job = powgate_client.config.apply(stage_res.cid, override=True, token=token)
         snapshot_cid = stage_res.cid
         """ Add the job id to redis. """
-        KEY = f"jobStatus:{snapshot_cid}"
+        KEY = redis_keys.get_job_status_key(snapshot_cid=snapshot_cid)
         _ = await writer_redis_conn.set(key=KEY, value=job.jobId)
         rest_logger.debug("Pushed the payload to filecoin.")
         rest_logger.debug("Job Id: ")
@@ -433,7 +431,7 @@ async def commit_payload(
     if last_snapshot_cid != "":
         if snapshot_cid != last_snapshot_cid:
             payload_changed = True
-    payload_cid_key = f"projectID:{project_id}:payloadCids"
+    payload_cid_key = redis_keys.get_payload_cids_key(project_id)
     _ = await writer_redis_conn.zadd(
         key=payload_cid_key,
         score=last_tentative_block_height,
@@ -504,7 +502,7 @@ async def configure_project(
     }
     """
     rules = req_args['rules']
-    await writer_redis_conn.set(f'projectID:{projectId}:diffRules', json.dumps(rules))
+    await writer_redis_conn.set(redis_keys.get_diff_rules_key(projectId), json.dumps(rules))
     rest_logger.debug('Set diff rules for project ID')
     rest_logger.debug(projectId)
     rest_logger.debug(rules)
@@ -520,7 +518,7 @@ async def get_diff_rules(
 ):
     """ This endpoint returs the diffRules set against a projectId """
 
-    diff_rules_key = f"projectID:{projectId}:diffRules"
+    diff_rules_key = redis_keys.get_diff_rules_key(projectId)
     out = await reader_redis_conn.get(diff_rules_key)
     if out is None:
         """ For projectId's who dont have any diffRules, return empty dict"""
@@ -550,7 +548,7 @@ async def request_status(
         return {'requestId': request_id, 'requestStatus': 'Pending'}
 
     # Get all the retrieved files
-    retrieval_files_key = f"retrievalRequestFiles:{request_id}"
+    retrieval_files_key = redis_keys.get_retrieval_request_files_key(request_id)
     retrieved_files = await reader_redis_conn.zrange(
         key=retrieval_files_key,
         start=0,
@@ -595,7 +593,7 @@ async def get_latest_project_updates(
 ):
     project_diffs_snapshots = list()
     if settings.METADATA_CACHE == 'redis':
-        h = await reader_redis_conn.hgetall('auditprotocol:lastSeenSnapshots')
+        h = await reader_redis_conn.hgetall(redis_keys.get_last_seen_snapshots_key())
         if len(h) < 1:
             return {}
         for i, d in h.items():
@@ -644,7 +642,7 @@ async def get_payloads_diff_counts(
         return {'error': 'Invalid Height'}
 
     if settings.METADATA_CACHE == 'redis':
-        diff_snapshots_cache_zset = f'projectID:{projectId}:diffSnapshots'
+        diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
         r = await reader_redis_conn.zcard(diff_snapshots_cache_zset)
         if not r:
             return {'count': 0}
@@ -685,7 +683,7 @@ async def get_payloads_diffs(
     extracted_count = 0
     diff_response = list()
     if settings.METADATA_CACHE == 'redis':
-        diff_snapshots_cache_zset = f'projectID:{projectId}:diffSnapshots'
+        diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
         r = await reader_redis_conn.zrevrangebyscore(
             key=diff_snapshots_cache_zset,
             min=from_height,
@@ -782,7 +780,7 @@ async def get_payloads(
             if settings.METADATA_CACHE == 'skydb':
                 prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
             elif settings.METADATA_CACHE == 'redis':
-                project_cids_key_zset = f'projectID:{projectId}:Cids'
+                project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
                 r = await reader_redis_conn.zrangebyscore(
                     key=project_cids_key_zset,
                     min=current_height,

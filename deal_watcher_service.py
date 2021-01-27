@@ -8,7 +8,7 @@ import json
 from config import settings
 import asyncio
 import aioredis
-from ipfs_async import client as ipfs_client
+from utils.ipfs_async import client as ipfs_client
 import ipfshttpclient
 from data_models import ContainerData, SiaSkynetData, SiaRenterData
 import coloredlogs

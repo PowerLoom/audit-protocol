@@ -4,19 +4,14 @@ import sys
 from config import settings
 import asyncio
 import json
-import time
 from bloom_filter import BloomFilter
-from ipfs_async import client as ipfs_client
 from redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
-from utils import preprocess_dag, sia_get, FailedRequestToSiaRenter, FailedRequestToSiaSkynet
-from data_models import ContainerData, FilecoinJobData, SiaRenterData, SiaSkynetData
-from pydantic import ValidationError
-from siaskynet import SkynetClient
-import os
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
 import coloredlogs
 import redis_keys
 import helper_functions
+from utils.ipfs_async import client as ipfs_client
+from utils.diffmap_utils import preprocess_dag
+from utils.backup_utils import get_backup_data
 
 
 """ Inititalize the logger """
@@ -48,102 +43,6 @@ REDIS_READER_CONN_CONF = {
 }
 
 
-async def get_data_from_filecoin(filecoin_job_data: FilecoinJobData):
-    powgate_client = PowerGateClient(settings.POWERGATE_CLIENT_ADDR, False)
-    out = powgate_client.data.get(filecoin_job_data.stagedCid, token=filecoin_job_data.filecoinToken).decode('utf-8')
-    container = json.loads(out)['container']
-    return container
-
-
-@retry(
-    wait=wait_exponential(min=2, max=18, multiplier=1),
-    stop=stop_after_attempt(6),
-    retry=retry_if_exception(FailedRequestToSiaSkynet)
-)
-async def get_data_from_sia_skynet(sia_data: SiaSkynetData, container_id: str):
-    retrieval_logger.debug("Getting container from Sia")
-    retrieval_logger.debug(sia_data.skylink)
-    client = SkynetClient()
-    timestamp = int(time.time())
-    temp_path = f"temp_files/{container_id}"
-    if not os.path.exists(temp_path):
-        try:
-            client.download_file(skylink=sia_data.skylink,  path=temp_path)
-        except Exception as e:
-            retrieval_logger.debug("Failed to get data from Sia Skynet")
-            raise FailedRequestToSiaSkynet
-
-    f = open(temp_path, 'r')
-    data = f.read()
-    try:
-        json_data = json.loads(data)
-    except json.JSONDecodeError as jdecerr:
-        retrieval_logger.debug("An error occured while loading data from skynet")
-        retrieval_logger.error(jdecerr, exc_info=True)
-        return -1
-    return json_data['container']
-
-
-@retry(
-    wait=wait_exponential(min=2, max=18, multiplier=1),
-    stop=stop_after_attempt(6),
-    retry=retry_if_exception(FailedRequestToSiaRenter)
-)
-async def get_data_from_sia_renter(sia_renter_data: SiaRenterData, container_id: str):
-    try:
-        out = await sia_get(sia_renter_data.fileHash)
-    except FailedRequestToSiaRenter as ferr:
-        retrieval_logger.debug("Retrying to get the data from sia renter")
-        raise FailedRequestToSiaRenter
-
-    try:
-        container_data = json.loads(out)
-    except json.JSONDecodeError as jdecerr:
-        retrieval_logger.debug("There was an error while loading json data.")
-        retrieval_logger.error(jdecerr, exc_info=True)
-        return -1
-
-    return container_data['container']
-
-
-async def get_backup_data(container_data: dict, container_id: str):
-    data = None
-    backupTargets = []
-    if isinstance(container_data['backupTargets'], str):
-        backupTargets = json.loads(container_data['backupTargets'])
-    if isinstance(container_data['backupMetaData'], str):
-        container_data['backupMetaData'] = json.loads(container_data['backupMetaData'])
-    if "sia" in backupTargets:
-        backupTargets.remove("sia")
-        backupTargets.append("sia:skynet")
-
-        sia_data = container_data['backupMetaData']['sia']
-        if isinstance(sia_data, str):
-            sia_data = json.loads(sia_data)
-        container_data['backupTargets'] = backupTargets
-        container_data['backupMetaData']['sia_skynet'] = SiaSkynetData(skylink=sia_data['skylink'])
-        try:
-            del container_data['backupMetaData']['sia']
-        except Exception as e:
-            pass
-
-    try:
-        container_data = ContainerData(**container_data)
-    except ValidationError as verr:
-        retrieval_logger.debug("There was an error while trying to create ContainerData model")
-        retrieval_logger.error(verr, exc_info=True)
-        return -1
-
-    if "filecoin" in container_data.backupTargets:
-        data = await get_data_from_filecoin(container_data.backupMetaData.filecoin) 
-    elif "sia:skynet" in container_data.backupTargets:
-        data = await get_data_from_sia_skynet(container_data.backupMetaData.sia_skynet, container_id=container_id)
-    elif "sia:renter" in container_data.backupTargets:
-        data = await get_data_from_sia_renter(container_data.backupMetaData.sia_renter, container_id=container_id)
-
-    return data
-
-
 @provide_async_writer_conn_inst
 @provide_async_reader_conn_inst
 async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
@@ -158,7 +57,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
             retrieval_logger.debug(requestId)
 
             """ Get the required information about the requestId """
-            key = f"retrievalRequestInfo:{requestId}"
+            key = redis_keys.get_retrieval_request_info_key(requestId)
             out = await reader_redis_conn.hgetall(key=key)
             request_info = {k.decode('utf-8'): i.decode('utf-8') for k, i in out.items()}
             retrieval_logger.debug(f"Retrieved information for request: {requestId}")
@@ -179,7 +78,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 - For the project_id, using the from_height and to_height from the request_info, 
                 get all the DAG block cids. 
             """
-            block_cids_key = f"projectID:{request_info['projectId']}:Cids"
+            block_cids_key = redis_keys.get_dag_cids_key(project_id=request_info['projectId'])
             all_cids = await reader_redis_conn.zrangebyscore(
                 key=block_cids_key,
                 max=int(request_info['to_height']),
@@ -213,7 +112,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
 
                 else:
                     """ Get the container for that block height """
-                    containers_created_key = f"projectID:{request_info['projectId']}:containers"
+                    containers_created_key = redis_keys.get_containers_created_key(request_info['projectId'])
                     target_containers = await reader_redis_conn.zrangebyscore(
                         key=containers_created_key,
                         max=settings.container_height * 2 + block_height + 1,
@@ -227,7 +126,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     for container_id in target_containers:
                         """ Get the data for the container """
                         container_id = container_id.decode('utf-8')
-                        container_data_key = f"containerData:{container_id}"
+                        container_data_key = redis_keys.get_container_data_key(container_id)
                         out = await reader_redis_conn.hgetall(container_data_key)
                         container_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
                         bloom_filter_settings = json.loads(container_data['bloomFilterSettings'])
@@ -274,7 +173,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 with open(block_file_path, 'w') as f:
                     f.write(json.dumps(retrieval_data))
 
-                retrieval_files_key = f"retrievalRequestFiles:{requestId}"
+                retrieval_files_key = redis_keys.get_retrieval_request_files_key(requestId)
                 _ = await writer_redis_conn.zadd(
                     key=retrieval_files_key,
                     member=block_file_path,

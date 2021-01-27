@@ -3,8 +3,8 @@ import redis_keys
 import json
 from copy import deepcopy
 import logging
-from utils import preprocess_dag
-from dynaconf import settings
+from config import settings
+from utils import dag_utils
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level="DEBUG")
@@ -24,7 +24,7 @@ async def get_diff_rules(
         try:
             diff_rules = json.loads(diff_rules_key)
         except json.JSONDecodeError as jerr:
-            logging.error(jerr, exc_info=True)
+            logger.error(jerr, exc_info=True)
 
     return diff_rules
 
@@ -169,9 +169,7 @@ async def calculate_diff(
     dag_height = dag['height']
     if dag['prevCid']:
         payload_cid = dag['data']['cid']
-        _prev_dag = await ipfs_client.dag.get(dag['prevCid'])
-        prev_dag = _prev_dag.as_json()
-        prev_dag = preprocess_dag(prev_dag)
+        prev_dag = await dag_utils.get_dag_block(dag['prevCid'])
         prev_payload_cid = prev_dag['data']['cid']
         if prev_payload_cid != payload_cid:
             diff_map = dict()
@@ -233,3 +231,21 @@ async def calculate_diff(
                 return diff_data
 
     return {}
+
+
+def preprocess_dag(block):
+    if 'Height' in block.keys():
+        _block = deepcopy(block)
+        dag_structure = settings.dag_structure
+
+        dag_structure['height'] = _block.pop('Height')
+        dag_structure['prevCid'] = _block.pop('prevCid')
+        _block['Data']['cid'] = _block['Data'].pop('Cid')
+        _block['Data']['type'] = _block['Data'].pop('Type')
+        dag_structure['data'] = _block.pop('Data')
+        dag_structure['txHash'] = _block.pop('TxHash')
+        dag_structure['timestamp'] = _block.pop('Timestamp')
+
+        return dag_structure
+    else:
+        return block

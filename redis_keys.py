@@ -158,4 +158,3 @@ def get_pending_transactions_key(project_id: str):
 def get_discarded_transactions_key(project_id: str):
     discarded_transactions_key = "projectID:{}:discardedTransactions".format(project_id)
     return discarded_transactions_key
-
