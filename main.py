@@ -370,7 +370,7 @@ async def commit_payload(
         ipfs_table = SkydbTable(
             table_name=f"{settings.DAG_TABLE_NAME}:{project_id}",
             columns=['cid'],
-            seed=settings.seed,
+            seed=settings.SEED,
             verbose=1
         )
         if ipfs_table.index == 0:
@@ -838,7 +838,6 @@ async def get_payloads(
                             project_id=projectId,
                             prev_data=prev_data,
                             cur_data=cur_data,
-                            reader_redis_conn=reader_redis_conn
                         )
                         rest_logger.debug('After payload clean up and comparison if any')
                         rest_logger.debug(result)
@@ -915,9 +914,9 @@ async def get_block(
 ):
     """ This endpoint is responsible for retrieving only the dag block and not the payload """
     if settings.METADATA_CACHE == 'skydb':
-        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+        ipfs_table = SkydbTable(table_name=f"{settings.DAG_TABLE_NAME}:{projectId}",
                                 columns=['cid'],
-                                seed=settings.seed,
+                                seed=settings.SEED,
                                 verbose=1)
 
         if (block_height > ipfs_table.index - 1) or (block_height <= 0):
@@ -995,9 +994,9 @@ async def get_block_data(
         reader_redis_conn=None,
 ):
     if settings.METADATA_CACHE == 'skydb':
-        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
+        ipfs_table = SkydbTable(table_name=f"{settings.DAG_TABLE_NAME}:{projectId}",
                                 columns=['cid'],
-                                seed=settings.seed,
+                                seed=settings.SEED,
                                 verbose=1)
         if (block_height > ipfs_table.index - 1) or (block_height <= 0):
             return {'error': 'Invalid block Height'}

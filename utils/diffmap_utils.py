@@ -248,7 +248,7 @@ async def calculate_diff(
 def preprocess_dag(block):
     if 'Height' in block.keys():
         _block = deepcopy(block)
-        dag_structure = settings.dag_structure
+        dag_structure = settings.DAG_STRUCTURE
 
         dag_structure['height'] = _block.pop('Height')
         dag_structure['prevCid'] = _block.pop('prevCid')
