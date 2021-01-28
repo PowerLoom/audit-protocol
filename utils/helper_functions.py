@@ -102,3 +102,18 @@ async def get_last_pruned_height(
         _ = await writer_redis_conn.set(last_pruned_key, 0)
         last_pruned_height: int = 0
     return last_pruned_height
+
+
+@provide_async_reader_conn_inst
+async def check_project_exists(
+        project_id: str,
+        reader_redis_conn: aioredis.Redis
+):
+    stored_projects_key = redis_keys.get_stored_project_ids_key()
+    out = await reader_redis_conn.sismember(
+        key=stored_projects_key,
+        member=project_id
+    )
+
+    return out
+

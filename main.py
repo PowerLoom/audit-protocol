@@ -505,6 +505,9 @@ async def get_diff_rules(
         reader_redis_conn=None,
 ):
     """ This endpoint returs the diffRules set against a projectId """
+    out = await helper_functions.check_project_exists(project_id=projectId)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
 
     diff_rules_key = redis_keys.get_diff_rules_key(projectId)
     out = await reader_redis_conn.get(diff_rules_key)
@@ -611,23 +614,13 @@ async def get_payloads_diff_counts(
         request: Request,
         response: Response,
         projectId: str,
-        from_height: int = Query(default=1),
-        to_height: int = Query(default=-1),
         maxCount: int = Query(default=10),
         reader_redis_conn=None
 ):
-    max_block_height = 0
-    if settings.metadata_cache == 'redis':
-        max_block_height = await helper_functions.get_block_height(
-            project_id=projectId,
-            reader_redis_conn=reader_redis_conn
-        )
 
-    if to_height == -1:
-        to_height = max_block_height
-
-    if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
-        return {'error': 'Invalid Height'}
+    out = await helper_functions.check_project_exists(project_id=projectId)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
 
     if settings.metadata_cache == 'redis':
         diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
@@ -655,6 +648,10 @@ async def get_payloads_diffs(
         maxCount: int = Query(default=10),
         reader_redis_conn=None
 ):
+    out = await helper_functions.check_project_exists(project_id=projectId)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
+
     max_block_height = 0
     if settings.metadata_cache == 'redis':
         max_block_height = await helper_functions.get_block_height(
@@ -706,6 +703,10 @@ async def get_payloads(
         writer_redis_conn=None
 
 ):
+    out = await helper_functions.check_project_exists(project_id=projectId)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
+
     ipfs_table = None
     max_block_height = None
     redis_conn_raw = None
@@ -872,6 +873,10 @@ async def payload_height(
         projectId: str,
         reader_redis_conn=None
 ):
+    out = await helper_functions.check_project_exists(project_id=projectId)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
+
     max_block_height = -1
     if settings.metadata_cache == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
@@ -900,6 +905,9 @@ async def get_block(
         writer_redis_conn = None
 
 ):
+    out = await helper_functions.check_project_exists(project_id=projectId)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
     """ This endpoint is responsible for retrieving only the dag block and not the payload """
     if settings.metadata_cache == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
@@ -981,6 +989,10 @@ async def get_block_data(
         writer_redis_conn=None,
         reader_redis_conn=None,
 ):
+    out = await helper_functions.check_project_exists(project_id=projectId)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
+
     if settings.metadata_cache == 'skydb':
         ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
                                 columns=['cid'],
