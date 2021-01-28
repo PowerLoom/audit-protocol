@@ -873,9 +873,6 @@ async def payload_height(
         projectId: str,
         reader_redis_conn=None
 ):
-    out = await helper_functions.check_project_exists(project_id=projectId)
-    if out == 0:
-        return {'error': 'The projectId provided does not exist'}
 
     max_block_height = -1
     if settings.metadata_cache == 'skydb':
