@@ -21,3 +21,49 @@ limit, it needs to be alerted.
 - "container_height": The no.of DAG blocks each container needs to hold.
 - "backup_target": Defaults to FILECOIN for now. This variable represents where we want to backup the containers
 
+
+# Powerloom-protocol
+
+Audit data by snapshotting and generating proof through a smart contract. 
+
+Run the docker:
+```
+cd docker/
+make powerloom
+```
+
+Try to commit some payload:
+```shell
+curl --location --request POST 'http://127.0.0.1:9000/commit_payload' \
+--header 'Content-Type: text/plain' \
+--data-raw '{
+  "payload": {
+      "test_field_a": "put any kind data here",
+      "test_field_b": {
+          "key_a": [1, 2],
+          "key_b": 5000
+      }
+  },
+  "projectId": "test_project_1"
+}
+
+```
+The response you get should be:
+```shell
+{
+    "cid": "QmQa7YZLitKkcMwRmZnx93wSEYjmtUxZgfdMJ1TQwSxgDa",
+    "tentativeHeight": 1,
+    "payloadChanged": true
+}
+```
+
+The are 3 fields in the above body:
+
+- cid: This represents the content-identifier for the payload committed. It is a unique
+hash for the payload field.
+  
+- tentativeHeight: Every new payload committed will have height that represents its position
+in the chain of payloads committed. However tentativeHeight is not a deterministic value. If
+  the proof for this payload is not recieved in the backend, the payload is discarded.
+  
+- payloadChanged: Represents whether the payload has changed from previous commit or not

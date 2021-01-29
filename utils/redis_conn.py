@@ -3,6 +3,9 @@ from functools import wraps
 import traceback
 from config import settings as settings_conf
 import asyncio
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(level="DEBUG")
 
 REDIS_CONN_CONF = {
     "host": settings_conf.redis.host,
@@ -111,7 +114,7 @@ def inject_reader_redis_conn(fn):
         try:
             return await fn(*args, **kwargs)
         except Exception as e:
-            traceback.print_exception(type(e), e, e.__traceback__)
+            logger.error(e, exc_info=True)
             return {'error': 'Internal Server Error'}
         finally:
             kwargs['request'].app.reader_redis_pool.release(reader_redis_conn_raw)
@@ -129,7 +132,7 @@ def inject_writer_redis_conn(fn):
         try:
             return await fn(*args, **kwargs)
         except Exception as e:
-            traceback.print_exception(type(e), e, e.__traceback__)
+            logger.error(e, exc_info=True)
             return {'error': 'Internal Server Error'}
         finally:
             kwargs['request'].app.writer_redis_pool.release(writer_redis_conn_raw)
@@ -145,7 +148,7 @@ def provide_async_reader_conn_inst(fn):
         try:
             return await fn(*args, **kwargs)
         except Exception as e:
-            traceback.print_exception(type(e), e, e.__traceback__)
+            logger.error(e, exc_info=True)
             return {'error': 'Internal Server Error'}
         finally:
             reader_redis_conn.close()
@@ -162,7 +165,7 @@ def provide_async_writer_conn_inst(fn):
         try:
             return await fn(*args, **kwargs)
         except Exception as e:
-            traceback.print_exception(type(e), e, e.__traceback__)
+            logger.error(e, exc_info=True)
             return {'error': 'Internal Server Error'}
         finally:
             writer_redis_conn.close()

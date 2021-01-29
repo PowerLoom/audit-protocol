@@ -113,7 +113,11 @@ async def get_project_token(
 ):
     """ From the request body, extract the projectId and return back the powergate token."""
     if projectId is None:
-        req_args = await request.json()
+        try:
+            req_args = await request.json()
+        except json.JSONDecodeError as jerr:
+            rest_logger.error(jerr, exc_info=True)
+            return {'error': "The payload has to be a json structured payload."}
         projectId = req_args['projectId']
 
     """ Save the project Id on set """
