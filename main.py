@@ -10,7 +10,7 @@ import sys
 import json
 import aioredis
 import redis
-from skydb import SkydbTable
+#from skydb import SkydbTable
 from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4

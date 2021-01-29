@@ -1,0 +1,43 @@
+version: '3.9'
+
+services:
+  powerloom:
+    build:
+      context:
+        ../
+    ports:
+      - 9090:9090
+      - 9000:9000
+      - 9002:9002
+
+    depends_on:
+      - "redis"
+      - "ipfs"
+
+    links:
+      - "ipfs"
+      - "redis"
+
+    command:
+      bash -c "./run_services.sh &&
+      supervisord -c supervisord.conf &&
+      supervisorctl status &&
+      sleep infinity"
+
+  redis:
+    command: ["redis-server"]
+    image: "redis"
+    expose:
+      - 6379
+    ports:
+      - 6379:6379
+
+  ipfs:
+    image: ipfs/go-ipfs:v0.7.0
+    command: ["daemon", "--migrate=true", "--enable-pubsub-experiment"]
+    ports:
+      - 5001:5001
+
+
+
+    

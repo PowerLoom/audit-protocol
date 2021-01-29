@@ -20,3 +20,6 @@ backup_height.json
 Pipfile
 Pipfile.lock
 temp_files/
+
+docker/account_info.json
+docker/settings.json

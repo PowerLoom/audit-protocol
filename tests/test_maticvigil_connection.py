@@ -1,9 +1,14 @@
 from maticvigil.EVCore import EVCore
 from config import settings
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils.redis_conn import get_reader_redis_conn, get_writer_redis_conn
 import ipfshttpclient
 import asyncio
-import time
+import logging
+import pwd
+import os
+
+logger = logging.getLogger(__name__)
+logger.setLevel(level="DEBUG")
 
 
 async def test_ipfs_connection():
@@ -11,18 +16,20 @@ async def test_ipfs_connection():
         client = ipfshttpclient.connect(settings.ipfs_url)
     except Exception as e:
         print("Failed ipfs connection ")
-        print(e)
+        logger.error(e,exc_info=True)
+        raise e
     else:
         print("Test for ipfs connection success")
 
 
 async def test_redis_connection():
     try:
-        reader_redis_conn = await provide_async_reader_conn_inst()
-        writer_redis_conn = await provide_async_writer_conn_inst()
+        reader_redis_conn = await get_reader_redis_conn()
+        writer_redis_conn = await get_writer_redis_conn()
     except Exception as e:
         print("Failed redis connection")
-        print(e)
+        logger.error(e,exc_info=True)
+        raise e
     else:
         print("Test for redis connection success")
 
@@ -36,7 +43,8 @@ async def test_maticvigil_connection():
         )
     except Exception as e:
         print("Failed maticvigil connection")
-        print(e)
+        logger.error(e, exc_info=True)
+        raise e
     else:
         print("Test for maticvigil connection success")
 
@@ -47,7 +55,8 @@ async def test_all():
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    time.sleep(7)  # Wait for ipfs daemon to run
+    print("Teh output for pwd command: ")
+    print(pwd.getpwuid(os.getuid()).pw_dir)
     try:
         loop.run_until_complete(test_all())
     except Exception as e:

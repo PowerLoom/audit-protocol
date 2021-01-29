@@ -1,0 +1,65 @@
+{
+	"host": "0.0.0.0",
+	"port": 9000,
+	"webhook_listener": {
+		"host": "0.0.0.0",
+		"port": 9002
+	},
+	"ipfs_url": "/dns4/ipfs/tcp/5001",
+	"snapshot_interval": 4,
+	"metadata_cache": "redis",
+	"dag_table_name": "DAG_CID",
+	"seed": "THISISRANDOMSEED",
+	"dag_structure" : {
+		"height":-1,
+		"prevCid":"",
+		"data": {
+				"cid":"",
+				"type":""
+			},
+		"txHash":"",
+		"timestamp":""
+	},
+	"redis": {
+		"host": "redis",
+		"port": 6379,
+		"db": 0,
+		"password": null
+	},
+	"redis_reader": {
+	  "host": "redis",
+	  "port": 6379,
+	  "db": 0,
+	  "password": null
+	},
+	"table_names": {
+		"api_keys": "api_keys",
+		"accounting_records": "accounting_records",
+		"retreivals_single":"retreivals_single",
+		"retreivals_bulk":"retreivals_bulk"
+	},
+	"audit_contract" : "0x196ac9eb71760255702e367979b2e0f4562e18b5",
+	"app_name" : "auditrecords",
+	"powergate_client_addr"	: "powergate:5002",
+	"max_ipfs_blocks" : 10,
+	"max_pending_payload_commits": 5,
+	"block_storage": "IPFS",
+	"payload_storage": "IPFS",
+	"container_height": 5,
+	"bloom_filter_settings": {
+		"max_elements": 500,
+		"error_rate": 0.0001,
+		"filename": null
+	},
+	
+	"payload_commit_interval": 2,
+	"pruning_service_interval": 10,
+	"retrieval_service_interval": 10,
+	"deal_watcher_service_interval": 20,
+	"api_key": "06d958c2-8f51-44a6-840b-18c6004f2da9",
+	"backup_targets": ["sia:skynet"],
+	"unpin_mode": "all",
+	"max_pending_events": 2,
+	"max_payload_commits": 4,
+	"ipfs_timeout": 20
+}
