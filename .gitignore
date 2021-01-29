@@ -1,5 +1,6 @@
 .DS_Store
 fast_settings.py
+docker_settings.json
 settings.json
 .idea/
 .python-version

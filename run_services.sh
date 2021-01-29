@@ -3,7 +3,7 @@
 mkdir -p /root/.maticvigil
 cp docker/settings.json /root/.maticvigil/
 cp docker/account_info.json /root/.maticvigil/
-cp docker_settings.example.json settings.json
+cp docker_settings.json settings.json
 export PYTHONPATH=$(pwd)
 echo sleeping for 7 secs
 sleep 7

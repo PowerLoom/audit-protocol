@@ -20,9 +20,7 @@ services:
 
     command:
       bash -c "./run_services.sh &&
-      supervisord -c supervisord.conf &&
-      supervisorctl status &&
-      sleep infinity"
+      supervisord -n -c supervisord.conf"
 
   redis:
     command: ["redis-server"]
