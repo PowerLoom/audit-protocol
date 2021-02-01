@@ -61,5 +61,6 @@
 	"unpin_mode": "all",
 	"max_pending_events": 2,
 	"max_payload_commits": 4,
-	"ipfs_timeout": 20
+	"ipfs_timeout": 20,
+	"span_expire_timeout": 600
 }

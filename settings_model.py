@@ -50,6 +50,7 @@ class Settings(BaseModel):
     max_pending_events: int
     max_payload_commits: int
     ipfs_timeout: int
+    span_expire_timeout: int
 
     bloom_filter_settings: Union[BloomFilterSettings, dict]
     webhook_listener: Union[WebhookListener, dict]

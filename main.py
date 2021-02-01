@@ -10,7 +10,7 @@ import sys
 import json
 import aioredis
 import redis
-#from skydb import SkydbTable
+from skydb import SkydbTable
 from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
@@ -26,6 +26,7 @@ from functools import partial
 from utils import helper_functions
 from utils import redis_keys
 from utils.redis_conn import REDIS_WRITER_CONN_CONF, REDIS_READER_CONN_CONF
+from utils import retrieval_utils
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -217,13 +218,12 @@ async def get_max_block_height(project_id: str, reader_redis_conn):
         - Given the projectId and redis_conn, get the prev_dag_cid, block height and
         tetative block height of that projectId from redis
     """
-    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id, reader_redis_conn)
-    block_height = await helper_functions.get_block_height(project_id, reader_redis_conn)
+    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id)
+    block_height = await helper_functions.get_block_height(project_id)
     last_tentative_block_height = await helper_functions.get_tentative_block_height(
         project_id=project_id,
-        reader_redis_conn=reader_redis_conn
     )
-    last_payload_cid = await helper_functions.get_last_payload_cid(project_id, reader_redis_conn)
+    last_payload_cid = await helper_functions.get_last_payload_cid(project_id)
     return prev_dag_cid, block_height, last_tentative_block_height, last_payload_cid
 
 
@@ -690,8 +690,6 @@ async def get_payloads_diffs(
     }
 
 
-
-
 @app.get('/{projectId:str}/payloads')
 @inject_reader_redis_conn
 @inject_writer_redis_conn
@@ -705,26 +703,39 @@ async def get_payloads(
         data: Optional[str] = Query(None),
         reader_redis_conn=None,
         writer_redis_conn=None
-
 ):
+    """
+        - Given the from and to_height do the following steps:
+            - Check if there is any intersection between any of the previously
+            cached spans.
+
+            - If there is no overlap, then generate the requestID and return it
+
+            - If there is an overlap, then do:
+                - If there is any data point that needs to be fetched from a container that
+                is not cached on local system
+                    -  generate a requestID and return it
+
+                - Split the data into two separate spans: container_fetch_data and ipfs_fetch_data
+
+                    - Now fetch the data present in IPFS and cached containers and put them together
+                    to hold data for entire span
+
+                    - return the data
+
+                    - save the span and add a timeout to it.
+
+    """
     out = await helper_functions.check_project_exists(project_id=projectId)
+
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
 
-    ipfs_table = None
-    max_block_height = None
-    redis_conn_raw = None
-    if settings.metadata_cache == 'skydb':
-        ipfs_table = SkydbTable(table_name=f"{settings.dag_table_name}:{projectId}",
-                                columns=['cid'],
-                                seed=settings.seed,
-                                verbose=1)
-        max_block_height = ipfs_table.index - 1
-    elif settings.metadata_cache == 'redis':
-        max_block_height = await helper_functions.get_block_height(
-            project_id=projectId,
-            reader_redis_conn=reader_redis_conn
-        )
+    max_block_height = await helper_functions.get_block_height(
+        project_id=projectId,
+        reader_redis_conn=reader_redis_conn
+    )
+
     if data:
         if data.lower() == 'true':
             data = True
@@ -744,13 +755,21 @@ async def get_payloads(
         response.status_code = 400
         return {'error': 'Invalid Height'}
 
-    last_pruned_height = await helper_functions.get_last_pruned_height(
-        project_id=projectId,
-        reader_redis_conn=reader_redis_conn,
-        writer_redis_conn=writer_redis_conn
+    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=projectId)
+
+    rest_logger.debug("Checking max overlap...")
+    max_overlap, max_span_id, each_height_spans = await retrieval_utils.check_overlap(
+        from_height=from_height,
+        to_height=to_height,
+        project_id=projectId
     )
-    if to_height < last_pruned_height:
-        """ Create a request Id and start a retrieval request """
+    rest_logger.debug("Max overlap, Max Span ID, Each height spans:")
+    rest_logger.debug(max_overlap)
+    rest_logger.debug(max_span_id)
+    rest_logger.debug(each_height_spans)
+
+    if (max_overlap == 0.0) and (from_height <= last_pruned_height):
+        rest_logger.debug("Creating a retrieval request")
         _data = 1 if data else 0
         request_id = await create_retrieval_request(
             project_id=projectId,
@@ -761,33 +780,65 @@ async def get_payloads(
 
         return {'requestId': request_id}
 
-    blocks = list()  # Will hold the list of blocks in range from_height, to_height
+    # Get the containers required and the cached values
+    containers, cached = await retrieval_utils.check_containers(
+        from_height=from_height,
+        to_height=to_height,
+        each_height_spans=each_height_spans,
+        project_id=projectId
+    )
+
+    rest_logger.debug("Containers Required: ")
+    rest_logger.debug(containers)
+
+    if len(containers) > 0:
+        rest_logger.debug("Creating a retrieval request")
+        _data = 1 if data else 0
+        request_id = await create_retrieval_request(
+            project_id=projectId,
+            from_height=from_height,
+            to_height=to_height,
+            data=_data,
+            writer_redis_conn=writer_redis_conn)
+
+        return {'requestId': request_id}
+
+    dag_blocks = await retrieval_utils.fetch_blocks(
+        from_height=from_height,
+        to_height=to_height,
+        project_id=projectId,
+
+    )
+
     current_height = to_height
     prev_dag_cid = ""
     prev_payload_cid = None
     idx = 0
+    blocks = list()
     while current_height >= from_height:
         rest_logger.debug("Fetching block at height: ")
         rest_logger.debug(current_height)
         if not prev_dag_cid:
-            if settings.metadata_cache == 'skydb':
-                prev_dag_cid = ipfs_table.fetch_row(row_index=current_height)['cid']
-            elif settings.metadata_cache == 'redis':
-                project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
-                r = await reader_redis_conn.zrangebyscore(
-                    key=project_cids_key_zset,
-                    min=current_height,
-                    max=current_height,
-                    withscores=False
-                )
-                if r:
-                    prev_dag_cid = r[0].decode('utf-8')
-                else:
-                    return {'error': 'NoRecordsFound'}
-        block = None
-        # block = ipfs_client.dag.get(prev_dag_cid).as_json()
+            project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
+            r = await reader_redis_conn.zrangebyscore(
+                key=project_cids_key_zset,
+                min=current_height,
+                max=current_height,
+                withscores=False
+            )
+            if r:
+                prev_dag_cid = r[0].decode('utf-8')
+            else:
+                return {'error': 'NoRecordsFound'}
         data_flag = 1 if data else 0
-        block = await retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
+        rest_logger.debug("Fetching block: ")
+        rest_logger.debug(prev_dag_cid)
+        if dag_blocks.get(prev_dag_cid) is None:
+            rest_logger.debug("Fetching block from IPFS")
+            block = await retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
+        else:
+            rest_logger.debug("Block already fetched")
+            block = dag_blocks.get(prev_dag_cid)
         rest_logger.debug("Block Retrieved: ")
         rest_logger.debug(block)
         formatted_block = dict()
@@ -903,7 +954,7 @@ async def get_block(
         projectId: str,
         block_height: int,
         reader_redis_conn=None,
-        writer_redis_conn = None
+        writer_redis_conn=None
 
 ):
     out = await helper_functions.check_project_exists(project_id=projectId)
@@ -1028,8 +1079,6 @@ async def get_block_data(
             writer_redis_conn=writer_redis_conn
         )
         if block_height < last_pruned_height:
-            rest_logger.debug("Block is being fetched at height: ")
-            rest_logger.debug(block_height)
             from_height = block_height
             to_height = block_height
             _data = 2  # Get data only and not the block itself

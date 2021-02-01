@@ -1,5 +1,3 @@
-
-
 def get_payload_commit_key(payload_commit_id: str):
     payload_commit_key = "payloadCommit:{}".format(payload_commit_id)
     return payload_commit_key
@@ -158,3 +156,13 @@ def get_pending_transactions_key(project_id: str):
 def get_discarded_transactions_key(project_id: str):
     discarded_transactions_key = "projectID:{}:discardedTransactions".format(project_id)
     return discarded_transactions_key
+
+
+def get_live_spans_key(project_id: str, span_id: str):
+    live_spans_key = "projectID:{}:liveSpans:{}".format(project_id, span_id)
+    return live_spans_key
+
+
+def get_cached_containers_key(container_id: str):
+    cached_containers_key = "cachedContainers:{}".format(container_id)
+    return cached_containers_key

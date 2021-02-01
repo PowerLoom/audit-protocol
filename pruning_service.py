@@ -164,7 +164,8 @@ async def build_container(
 
     """ Create a Bloom filter """
     bloom_filter_settings = settings.bloom_filter_settings
-    bloom_filter_settings['filename'] = f"bloom_filter_objects/{container_id}.bloom"
+    bloom_filter_settings.filename = f"bloom_filter_objects/{container_id}.bloom"
+    bloom_filter_settings = bloom_filter_settings.dict()
     bloom_filter = BloomFilter(**bloom_filter_settings)
 
     """ Get all the targets """

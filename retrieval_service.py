@@ -12,6 +12,7 @@ from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
 from utils.diffmap_utils import preprocess_dag
 from utils.backup_utils import get_backup_data
+from utils import retrieval_utils
 
 
 """ Inititalize the logger """
@@ -73,12 +74,16 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 reader_redis_conn=reader_redis_conn
             )
 
+            # Create a dictionary to save data into a
+            span_dags = {}
+
             # Iterate through each dag block
             for block_cid, block_height in all_cids:
                 block_cid = block_cid.decode('utf-8')
                 block_height = int(block_height)
-                block_dag = None
-                payload_data = None
+                retrieval_logger.debug("Fetching block at height:")
+                retrieval_logger.debug(block_cid)
+                retrieval_logger.debug(block_height)
 
                 """ Check if the DAG block is pinned """
                 if (block_height > (max_block_height - settings.max_ipfs_blocks)) or (
@@ -121,8 +126,15 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                     retrieval_logger.debug(container_data)
 
                     container = await get_backup_data(container_data=container_data, container_id=container_id)
-                    _block_index = block_height % settings.container_height
-                    block_cid, block_dag = next(iter(container['dagChain'][_block_index].items()))
+                    _target_blocks = container['dagChain']
+                    for _tt_dag_block in _target_blocks:
+                        _block_dag = list(_tt_dag_block.values()).pop()
+                        retrieval_logger.debug(_block_dag)
+                        if _block_dag['height'] == block_height:
+                            block_dag = _block_dag
+                            break
+                    # _block_index = settings.container_height - (block_height-1) % settings.container_height
+                    # current_block_cid, block_dag = next(iter(container['dagChain'][_block_index].items()))
                     payload_data = container['payloads'][block_dag['data']['cid']]
 
                 retrieval_logger.debug("Retrieved the DAG Block...")
@@ -155,6 +167,8 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 with open(block_file_path, 'w') as f:
                     f.write(json.dumps(retrieval_data))
 
+                span_dags[block_height] = retrieval_data
+
                 retrieval_files_key = redis_keys.get_retrieval_request_files_key(requestId)
                 _ = await writer_redis_conn.zadd(
                     key=retrieval_files_key,
@@ -168,6 +182,17 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
             retrieval_logger.debug(f"Request: {requestId} has been removed from pending retrieveal requests")
             _ = await writer_redis_conn.delete(key)
             retrieval_logger.debug("Request Data has been deleted from redis")
+
+            # Create a span and cache it
+            retrieval_logger.debug("Saving span data")
+            out = await retrieval_utils.save_span(
+                from_height=int(request_info['from_height']),
+                to_height=int(request_info['to_height']),
+                project_id=request_info['projectId'],
+                dag_blocks=span_dags,
+                writer_redis_conn=writer_redis_conn
+            )
+
     else:
         retrieval_logger.debug(f"No pending requests found....")
 

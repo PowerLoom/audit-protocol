@@ -47,3 +47,17 @@ in the chain of payloads committed. However tentativeHeight is not a determinist
   the proof for this payload is not recieved in the backend, the payload is discarded.
   
 - payloadChanged: Represents whether the payload has changed from previous commit or not
+
+
+There are endpoints which you can access to get dag blocks and retrieve the complete payload data:
+- POST /commit_payload
+- POST /{projectID}/diffRules
+- GET /{prjectID}/getDiffRules
+- GET /{projectID}/payloads/height
+- GET /{projectID}/payload/{blockHeight}
+- GET /{projectID}/payload/{blockHeight}/data
+- GET /{projectID}/payloads
+- GET /requests/{requestID}
+- GET /projects/updates
+- GET /{projectID}/payloads/cachedDiffs/count
+- GET /{projectID}/payloads/cachedDiffs
