@@ -6,7 +6,6 @@ services:
       context:
         ../
     ports:
-      - 9090:9090
       - 9000:9000
       - 9002:9002
 
@@ -19,8 +18,8 @@ services:
       - "redis"
 
     command:
-      bash -c "./run_services.sh &&
-      supervisord -n -c /etc/supervisord.conf"
+      bash -c "docker/run_services.sh &&
+      supervisord -n -c /etc/supervisord.conf -l log_test"
 
   redis:
     command: ["redis-server"]

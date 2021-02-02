@@ -6,5 +6,5 @@ COPY . .
 RUN pip3 install -r requirements.txt
 RUN pip3 install supervisor
 COPY docker/ma.conf /etc/supervisord.conf
-CMD chmod +x run_services.sh
+CMD chmod +x docker/run_services.sh
 CMD ./run_services.sh
