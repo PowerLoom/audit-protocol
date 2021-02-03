@@ -2,7 +2,9 @@ import requests
 import time
 from test_logger import test_logger
 import random
+import os
 
+EXTERNAL_IP = os.getenv("EXTERNAL_IP", "localhost")
 
 def test_commit_payloads():
     project_id = "PROJECT_COMMIT_PAYLOAD"
@@ -15,7 +17,7 @@ def test_commit_payloads():
             payload = {'payload': data, 'projectId': project_id}
             test_logger.debug("Committing payload: ")
             test_logger.debug(payload)
-            out = requests.post('http://localhost:9000/commit_payload', json=payload)
+            out = requests.post(f'http://{EXTERNAL_IP}:9000/commit_payload', json=payload)
             assert out.status_code == 200, f"Received {out.status_code} from /commit_payload endpoint"
             data = out.json()
             test_logger.debug("Got Response: ")
@@ -41,20 +43,20 @@ def test_diff_maps():
     test_logger.debug(project_id)
     for i in range(5):
         for j in range(2):
-            old_height = requests.get(f'http://localhost:9000/{project_id}/payloads/height')
+            old_height = requests.get(f'http://{EXTERNAL_IP}:9000/{project_id}/payloads/height')
             old_height = old_height.json()['height']
             test_logger.debug("Using i and j: {}, {}, old_height: {}".format(i, j, old_height))
             data = {'data': 'data_' + str(i + 1), 'constant_string': "CONSTANT_STRING_HOLDER"}
             payload = {'payload': data, 'projectId': project_id}
             test_logger.debug("Committing payload: ")
             test_logger.debug(payload)
-            out = requests.post('http://localhost:9000/commit_payload', json=payload)
+            out = requests.post(f'http://{EXTERNAL_IP}:9000/commit_payload', json=payload)
             assert out.status_code == 200, f"Received {out.status_code} from /commit_payload endpoint"
             data = out.json()
             test_logger.debug("Got Response: ")
             test_logger.debug(data)
             while True:
-                new_height = requests.get(f'http://localhost:9000/{project_id}/payloads/height')
+                new_height = requests.get(f'http://{EXTERNAL_IP}:9000/{project_id}/payloads/height')
                 new_height = new_height.json()['height']
                 if new_height == old_height:
                     test_logger.debug("Chain has not been updated: {}, {}".format(old_height, new_height))
@@ -64,7 +66,7 @@ def test_diff_maps():
                     break
             if (j == 0) and (i != 0):
                 test_logger.debug("Getting the cachedDiff count from the audit-protocol")
-                out = requests.get(f"http://localhost:9000/{project_id}/payloads/cachedDiffs/count")
+                out = requests.get(f"http://{EXTERNAL_IP}:9000/{project_id}/payloads/cachedDiffs/count")
                 out = out.json()
                 test_logger.debug("Got response:")
                 test_logger.debug(out)
@@ -104,7 +106,7 @@ def get_diff_rules():
 def set_diff_rules(project_id: str, diff_rules: list):
     test_logger.debug(f"Setting diff rules for {project_id}")
     test_logger.debug(diff_rules)
-    url_endpoint = f"http://localhost:9000/{project_id}/diffRules"
+    url_endpoint = f"http://{EXTERNAL_IP}:9000/{project_id}/diffRules"
     diff_rules = {'rules': diff_rules}
     out = requests.post(url_endpoint, json=diff_rules)
     test_logger.debug("Got response: ")
@@ -130,7 +132,7 @@ def test_diff_rules():
             test_logger.debug("\n")
             test_logger.debug("="*80)
             """ Get the height of the projectId"""
-            old_height = requests.get(f'http://localhost:9000/{project_id}/payloads/height')
+            old_height = requests.get(f'http://{EXTERNAL_IP}:9000/{project_id}/payloads/height')
             old_height = old_height.json()['height']
             test_logger.debug("Using i and j: {}, {}, old_height: {}".format(i, j, old_height))
 
@@ -164,7 +166,7 @@ def test_diff_rules():
             test_logger.debug(payload)
 
             """ Commit the payload """
-            out = requests.post('http://localhost:9000/commit_payload', json=payload)
+            out = requests.post(f'http://{EXTERNAL_IP}:9000/commit_payload', json=payload)
             assert out.status_code == 200, f"Received {out.status_code} from /commit_payload endpoint"
             data = out.json()
             test_logger.debug("Got Response: ")
@@ -172,7 +174,7 @@ def test_diff_rules():
 
             """ Wait till the transaction goes through and a new DAG block is created """
             while True:
-                new_height = requests.get(f'http://localhost:9000/{project_id}/payloads/height')
+                new_height = requests.get(f'http://{EXTERNAL_IP}:9000/{project_id}/payloads/height')
                 new_height = new_height.json()['height']
                 if new_height == old_height:
                     test_logger.debug("Chain has not been updated: {}, {}".format(old_height, new_height))
@@ -183,7 +185,7 @@ def test_diff_rules():
 
             if (j == 0) and (i != 0):  # This condition is to check if this is not the first payload
                 test_logger.debug("Getting the cachedDiff count from the audit-protocol")
-                out = requests.get(f"http://localhost:9000/{project_id}/payloads/cachedDiffs/count")
+                out = requests.get(f"http://{EXTERNAL_IP}:9000/{project_id}/payloads/cachedDiffs/count")
                 out = out.json()
                 test_logger.debug("Got response:")
                 test_logger.debug(out)

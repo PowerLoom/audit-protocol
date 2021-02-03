@@ -3,7 +3,6 @@ from string import ascii_letters
 import hashlib
 import asyncio
 import requests
-import numpy as np
 import sys
 
 def load_file(filename):

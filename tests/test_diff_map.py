@@ -2,6 +2,7 @@ import json
 import requests
 from urllib.parse import urljoin
 import time
+import os
 
 rules = {
     'rules': [
@@ -16,7 +17,8 @@ rules = {
 }
 
 
-host_url = "http://localhost:9000/"
+external_ip = os.getenv("EXTERNAL_IP", "localhost")
+host_url = f"http://{external_ip}:9000/"
 diff_rules_url = '/{}/diffRules'
 commit_payload_url = '/commit_payload'
 
