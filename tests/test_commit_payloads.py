@@ -2,6 +2,7 @@ import requests
 from random import choice
 from string import ascii_letters
 import time
+import os
 
 data = {
 	"payload": {
@@ -11,12 +12,14 @@ data = {
 	"projectId": "dummy_init",
 }
 
-for i in range(30):
+EXTERNAL_URL = os.getenv("EXTERNAL_IP", "localhost")
+
+for i in range(5):
 	message = ''.join([choice(ascii_letters) for i in range(10)])
 	data['payload']['message'] = message
 	print('*'*20, f' Try: {i} ', '*'*20)
 	try:
-		out = requests.post(url='http://localhost:9000/commit_payload', json=data)
+		out = requests.post(url=f'http://{EXTERNAL_URL}:9000/commit_payload', json=data)
 	except Exception as e:
 		print(f"Failed {i}: {e}")
 	else:

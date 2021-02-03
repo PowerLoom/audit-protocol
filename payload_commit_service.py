@@ -78,8 +78,6 @@ async def commit_single_payload(
 
     if result == -1:
         payload_logger.warning("The payload commit was unsuccessful..")
-        pending_payload_commits_key = redis_keys.get_pending_payload_commits_key()
-        _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
         return -1
     else:
         payload_logger.debug("Successfully committed payload")
