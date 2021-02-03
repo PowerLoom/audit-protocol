@@ -12,7 +12,7 @@ cp settings.example.json settings.json
 cp docker_settings.example.json docker_settings.json
 ```
 
-Replace the following fields in settings.json docker_settings.json with your specific values
+Replace the following fields in settings.json and docker_settings.json with your specific values
 - audit_contract: Address of the AuditRecordStore contract that you have deployed
 - api_key: The api key present in your maticvigil settings file
 
