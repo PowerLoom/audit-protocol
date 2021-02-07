@@ -52,7 +52,7 @@ cp settings.example.json settings.json
   - api_key: This field is present in /home/\<user\>/.maticvigil/settings.json file. Copy paste it here
   
 * Other fields are ports for main webhook listener services. By default, they are set 
-to 9000 and 90002, but if you already have some services running at that ports, you can 
+to 9000 and 9002, but if you already have some services running at that ports, you can 
   change them to any others that are free in your system.
   
 ## Running the services
