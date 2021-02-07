@@ -40,7 +40,7 @@ can be found inside the project folder. You can deploy the contract through WebU
   [Deploy Contract through WebUI](https://maticvigil.com/docs/web_onboarding#deploy-a-solidity-smart-contract) 
   
 ## Configuring settings
-* There is a **settings.example.jso** folder in the project folder. Navigate to the project and the type the following
+* There is a **settings.example.json** file in the project folder. Navigate to the project and the type the following
 command: 
   
 ```shell
