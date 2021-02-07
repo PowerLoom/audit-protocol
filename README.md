@@ -20,6 +20,7 @@ transaction hash for the payload and timestamp at which that payload was committ
 * Install mv-cli using this [guide](https://maticvigil.com/docs/cli_onboarding). Once installation is done, 
 run the following commands:
   
+  
 ```shell
 mv-cli importsettings /home/<user>/.maticvigil/settings.json
 mv-cli accountinfo
@@ -68,6 +69,11 @@ python payload_commit_service.py &
 python pruning_service.py &
 python retrieval_service.py &
 ```
+* If you are using **filecoin** as a backup option (backup_targets field in settings.json), then you need to bring up 
+[powergate](https://github.com/textileio/powergate). Make sure to turn off the local ipfs daemon since the powergate docker
+  runs its own ipfs daemon which might cause port conflicts if that particular port is already occupied on your local system.
+  Also you need to change the powergate_client_address in your **settings.json** to a different host if you are running 
+  powergate on docker-machine on your mac
   
 ## Run through docker
 * Alternatively, you can run the entire project through docker.

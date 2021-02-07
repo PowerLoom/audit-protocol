@@ -1,0 +1,45 @@
+version: '3.9'
+
+services:
+  powerloom:
+    build:
+      context:
+        ../
+    ports:
+      - 9000:9000
+      - 9002:9002
+
+    depends_on:
+      - "redis"
+      - "powergate"
+
+    links:
+      - "ipfs"
+      - "powergate"
+
+    command:
+      bash -c "docker/run_services.sh &&
+      supervisord -n -c /etc/supervisord.conf -l log_test"
+
+  redis:
+    command: ["redis-server"]
+    image: "redis"
+    expose:
+      - 6379
+    ports:
+      - 6379:6379
+
+  powergate:
+    image: textile/powergate:latest
+    ports:
+      - 5001:5001
+      - 8889:8889
+      - 8888:8888
+      - 6060:6060
+      - 5002:5002
+      - 6002:6002
+      - 7000:7000
+
+
+
+
