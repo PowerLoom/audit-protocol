@@ -36,8 +36,7 @@ pip install -r requirements.txt
 ## Deploy contract and add a Webhook
 
 * Once you've successfully created your maticvigil account, then you need to deploy the contract **AuditRecordStore.sol** which
-can be found inside the project folder. You can deploy the contract through WebUI and a Webhook there itself. Deploy the 
-  contract with 
+can be found inside the project folder. You can deploy the contract through WebUI and a Webhook there itself. 
   [Deploy Contract through WebUI](https://maticvigil.com/docs/web_onboarding#deploy-a-solidity-smart-contract) 
   
 ## Configuring settings
