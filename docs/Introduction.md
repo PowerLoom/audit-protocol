@@ -81,3 +81,51 @@ The request and responses for each of these endpoints can be found in [main_endp
   Once the transaction of the smart contract goes through, you get a transaction hash which acts as proof for the state of the payload at that point in time.
 
 - In the above diagram, snapshotCid and cid are the same thing and can be used interchangeably. They represent the CID of the payload
+
+
+# webhook_listener
+- For each payload that is committed in ***payload_commit_service***, an event is generated once the transaction goes through. 
+  It's called **RecordAppended** event and carries the following information: **snapshotCid**, **projectId**, 
+  **tentativeBlockHeight**, **payloadCommitId**, **apiKeyHash**, and **timestamp**.
+  
+- The webhook_listener is another server that is listening for these events to come through and then creates a **DAG block** using the data from the event.
+  
+- Using the data in RecordAppended event, the webhook_listener creates a [DAG block that contains the information required to 
+  verify the payload along with some metadata.
+  
+- The structure of the DAG block looks like this:
+
+```json
+    {
+    		"height":25,
+    		"prevCid":"bafyreibnzumzfc4gdqya7gf6riw5eu2agywgxl2zdvjooyv3g57n4yprea",
+    		"data": {
+    				"cid":"QmeXAxrFAV2TZV8uDWRLWukGHwXgh7i5sCZGUEr1dqjd2X",
+    				"type":"HOT_IPFS"
+    			},
+    		"txHash":"0x58f240f9953962473fb6d7d8bfbc4453927f8d9bf5db6e5f36ffca57e5efa5ed",
+    		"timestamp":"1610106076"
+    	}
+```
+
+- However not all events will be made into a DAG block immediately upon arrival at the webhook_listener. 
+  Only events that come in order(events with tentativeBlockHeight = 1 + blockHeight of the projectId) will be made into a DAG block.
+  
+- For example say you have a project with projectId "project_1" with 4 blocks i.e, the block height  is 4. 
+  Now when an event arrives at the webhook_listener for project_1, it will turned into a DAG block only if it has a tentativeBlockHeight of 5. 
+  If an event with tentativeBlockHeight of 6 arrives before the event with the tentativeBlockHeight of 5, then the event will be cached. 
+  Once the event with tentativeBlockHeight = 5 arrives, then its DAG block will be created along with the event with tentativeBlockHeight = 6. 
+  This way, the linear structure of the DAG chain is ensured.
+  
+- However these events are not cached forever. There will be some event E1 which had failed to each the webhook_listener 
+  and hence that event along with all other cached events, will be dropped and the tenatative_block_height will be reset 
+  to E1.height - 1. The max pending events in settings.example.json defines the limit of when to drop all the pending 
+  events and reset the tentative_block_height.
+  
+- At the moment diff_map is calculated between blocks which are coming in order. If a dag block comes out of order, 
+  then its diff_map will not be calculated
+
+![PowerLoom%20Protocol%20architecture%20overview%20687e8a1068554ad68460b26d33c763ee/WebhookListener.jpeg](PowerLoom%20Protocol%20architecture%20overview%20687e8a1068554ad68460b26d33c763ee/WebhookListener.jpeg)
+
+
+
