@@ -97,8 +97,14 @@ cp docker_settings.example.json docker_settings.json
 * Bring up the docker:
 
 ```
-./run_docker.sh
+./run_docker.sh 
 ```
+
+* If you have chosen the backup option as filecoin, then run:
+```shell
+./run_docker.sh pg
+```
+
 
 ## Usage
 Try to commit some payload:

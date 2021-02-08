@@ -17,4 +17,10 @@ cp "$maticvigil_settings_json" docker/
 cp "$maticvigil_account_info_json" docker/
 
 cd docker/
-make powerloom-build
+
+if [ "$1" == "pg" ]
+then
+  make powerloom-pg-build
+else
+  make powerloom-build
+fi
