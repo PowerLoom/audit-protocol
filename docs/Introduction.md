@@ -125,7 +125,7 @@ The request and responses for each of these endpoints can be found in [main_endp
 - At the moment diff_map is calculated between blocks which are coming in order. If a dag block comes out of order, 
   then its diff_map will not be calculated
 
-![PowerLoom%20Protocol%20architecture%20overview%20687e8a1068554ad68460b26d33c763ee/WebhookListener.jpeg](PowerLoom%20Protocol%20architecture%20overview%20687e8a1068554ad68460b26d33c763ee/WebhookListener.jpeg)
+
 
 
 
