@@ -37,8 +37,18 @@ pip install -r requirements.txt
 ## Deploy contract and add a Webhook
 
 * Once you've successfully created your maticvigil account, then you need to deploy the contract **AuditRecordStore.sol** which
-can be found inside the project folder. You can deploy the contract through WebUI and a Webhook there itself. 
+  can be found inside the project folder. You can deploy the contract through WebUI and a Webhook there itself.
   [Deploy Contract through WebUI](https://maticvigil.com/docs/web_onboarding#deploy-a-solidity-smart-contract) 
+
+
+* Every time a payload is up for snapshotting, the protocol will commit the Cid and other data of the payload to a smart contract.
+An event is generated for this transaction which needs to be caught to confirm that the data has been committed successfully.
+  The webhook_listener service is a server whose job is to listen to such events, and proceed with new block creation. You need
+  a tunnel, or a server which can forward such events to your local system, so that they can reach the webhook listener.
+  
+
+![webhook](Webhook.jpg)
+
   
 ## Configuring settings
 * There is a **settings.example.json** file in the project folder. Navigate to the project and the type the following
@@ -54,7 +64,7 @@ cp settings.example.json settings.json
   
 * Other fields are ports for main webhook listener services. By default, they are set 
 to 9000 and 9002, but if you already have some services running at that ports, you can 
-  change them to any others that are free in your system.
+  change them to any other ports that are free in your system.
   
 ## Running the services
 * start the redis-server
