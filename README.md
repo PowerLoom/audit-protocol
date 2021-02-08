@@ -32,13 +32,14 @@ mv-cli accountinfo
 pip install -r requirements.txt
 ```
   
-* Install IPFS. This [link](https://docs.ipfs.io/install/) will help you do that
+* Install IPFS Desktop. This [link](https://docs.ipfs.io/install/ipfs-desktop/) will help you do that
 
 ## Deploy contract and add a Webhook
 
 * Once you've successfully created your maticvigil account, then you need to deploy the contract **AuditRecordStore.sol** which
   can be found inside the project folder. You can deploy the contract through WebUI and a Webhook there itself.
-  [Deploy Contract through WebUI](https://maticvigil.com/docs/web_onboarding#deploy-a-solidity-smart-contract) 
+  [Deploy Contract through WebUI](https://maticvigil.com/docs/web_onboarding#deploy-a-solidity-smart-contract).
+  [Add Webhook integration to your contract](https://maticvigil.com/docs/web_onboarding/#webhooks)
 
 
 * Every time a payload is up for snapshotting, the protocol will commit the Cid and other data of the payload to a smart contract.
