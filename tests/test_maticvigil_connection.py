@@ -60,6 +60,6 @@ if __name__ == "__main__":
     try:
         loop.run_until_complete(test_all())
     except Exception as e:
-        pass
+        raise e
     finally:
         loop.stop()
