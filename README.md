@@ -157,3 +157,5 @@ There are endpoints which you can access to get dag blocks and retrieve the comp
 - GET /projects/updates
 - GET /{projectID}/payloads/cachedDiffs/count
 - GET /{projectID}/payloads/cachedDiffs
+
+You can more about these endpoints in [main_endpoints.md](docs/main_endpoints.md).
