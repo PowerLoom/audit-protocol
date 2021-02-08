@@ -32,7 +32,7 @@ mv-cli accountinfo
 pip install -r requirements.txt
 ```
   
-* Install IPFS Desktop. This [link](https://docs.ipfs.io/install/ipfs-desktop/) will help you do that
+* Install IPFS Desktop. This [link](https://docs.ipfs.io/install/command-line/) will help you do that
 
 ## Deploy contract and add a Webhook
 
