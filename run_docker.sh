@@ -1,10 +1,10 @@
 #!/bin/bash
 
-maticvigil_settings_json=$HOME/.maticvigil/settings.json
-maticvigil_account_info_json=$HOME/.maticvigil/account_info.json
+MATICVIGIL_SETTINGS_JSON="${HOME}/.maticvigil/settings.json"
+MATICVIGIL_ACCOUNT_INFO_JSON="${HOME}/.maticvigil/account_info.json"
 
 
-if [ -f "$maticvigil_settings_json" ] && [ -f "$maticvigil_account_info_json" ]
+if [ -f $MATICVIGIL_SETTINGS_JSON ] && [ -f $MATICVIGIL_ACCOUNT_INFO_JSON ]
 then
 	echo "Found maticvigil files"
 else
@@ -13,8 +13,8 @@ else
 fi
 
 
-cp "$maticvigil_settings_json" docker/
-cp "$maticvigil_account_info_json" docker/
+cp "$MATICVIGIL_SETTINGS_JSON" docker/
+cp "$MATICVIGIL_ACCOUNT_INFO_JSON" docker/
 
 cd docker/
 
