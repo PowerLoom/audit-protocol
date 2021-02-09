@@ -226,19 +226,18 @@ async def calculate_diff(
                     },
                     'diff': diff_map
                 }
-                if settings.metadata_cache == 'redis':
-                    diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
-                    await writer_redis_conn.zadd(
-                        diff_snapshots_cache_zset,
-                        score=int(dag['height']),
-                        member=json.dumps(diff_data)
-                    )
-                    latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
-                    await writer_redis_conn.hset(
-                        latest_seen_snapshots_htable,
-                        project_id,
-                        json.dumps(diff_data)
-                    )
+                diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
+                await writer_redis_conn.zadd(
+                    diff_snapshots_cache_zset,
+                    score=int(dag['height']),
+                    member=json.dumps(diff_data)
+                )
+                latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
+                await writer_redis_conn.hset(
+                    latest_seen_snapshots_htable,
+                    project_id,
+                    json.dumps(diff_data)
+                )
 
                 return diff_data
 
