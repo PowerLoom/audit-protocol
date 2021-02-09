@@ -28,7 +28,6 @@ class Settings(BaseModel):
     port: str
     ipfs_url: str
     snapshot_interval: int
-    metadata_cache: str
     dag_table_name: str
     seed: str
     dag_structure: dict
