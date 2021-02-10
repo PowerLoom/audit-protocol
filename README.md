@@ -94,7 +94,7 @@ python retrieval_service.py &
 cp docker_settings.example.json docker_settings.json
 ```
 
-* Make the necessary changes with **contract_address** and **api_key fields**.
+* Make the necessary changes with **contract_address** and **api_key fields** in docker_settings.json.
 * Bring up the docker:
 
 ```
