@@ -18,15 +18,15 @@ async def get_diff_rules(
 ) -> list:
     diff_rules_key = redis_keys.get_diff_rules_key(project_id=project_id)
     out: bytes = await reader_redis_conn.get(diff_rules_key)
-    diff_rules = []
+    diff_rules = list()
 
     if out:
         diff_rules = out.decode('utf-8')
         try:
-            diff_rules = json.loads(diff_rules_key)
+            diff_rules = json.loads(diff_rules)
         except json.JSONDecodeError as jerr:
             utils_logger.error(jerr, exc_info=True)
-
+            diff_rules = list()
     return diff_rules
 
 
@@ -62,7 +62,7 @@ def clean_map_members(data, key_rules):
             if key_rules[k]['ruleType'] == 'ignore':
                 to_be_ignored_fields = key_rules[k]['ignoreMemberFields']
                 if key_rules[k]['fieldType'] == 'list':
-                    if key_rules[k]['listMemberType'] == 'map':
+                    if key_rules[k]['listMemberType'] == 'map' and k in data_copy.keys():
                         for each_member in data_copy[k]:
                             for del_k in to_be_ignored_fields:
                                 if '.' in del_k:
@@ -77,7 +77,10 @@ def clean_map_members(data, key_rules):
                                             p = m
                                             m = m.get(sub_k)
                                     if p:
-                                        p.pop(path_trail[-1])
+                                        try:
+                                            p.pop(path_trail[-1])
+                                        except:
+                                            pass
                                 else:
                                     each_member.pop(del_k)
                 elif key_rules[k]['fieldType'] == 'map':
@@ -97,7 +100,10 @@ def clean_map_members(data, key_rules):
                             if p:
                                 p.pop(path_trail[-1])
                         else:
-                            data_copy[k].pop(del_k)
+                            try:
+                                data_copy[k].pop(del_k)
+                            except :
+                                pass
     return data_copy
 
 
