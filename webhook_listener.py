@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Request, Response, Header
+from fastapi import FastAPI, Request, Response, Header, BackgroundTasks
+import aiohttp
+import time
 import aioredis
 from config import settings
 import logging
@@ -68,6 +70,13 @@ async def startup_boilerplate():
         password=REDIS_READER_CONN_CONF['password'],
         maxsize=50
     )
+    app.aiohttp_client_session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(
+            sock_connect=settings.aiohtttp_timeouts.sock_connect,
+            sock_read=settings.aiohtttp_timeouts.sock_read,
+            connect=settings.aiohtttp_timeouts.connect
+        )
+    )
 
 
 @app.post('/')
@@ -78,7 +87,7 @@ async def create_dag(
         response: Response,
         x_hook_signature: str = Header(None),
         reader_redis_conn=None,
-        writer_redis_conn=None,
+        writer_redis_conn=None
 ):
     event_data = await request.json()
     # Verify the payload that has arrived.
@@ -112,7 +121,8 @@ async def create_dag(
                 project_id=project_id,
                 reader_redis_conn=reader_redis_conn
             )
-
+            # retrieve callback URL for project ID
+            cb_url = await reader_redis_conn.get(f'powerloom:project{project_id}:callbackURL')
             if (actual_tt_block_height == max_block_height) or (tentative_block_height <= max_block_height):
                 rest_logger.debug("Discarding event at height:")
                 rest_logger.debug(tentative_block_height)
@@ -216,7 +226,17 @@ async def create_dag(
                             payload_commit_id=_payload_commit_id,
                             tx_hash="",
                         )
-
+                    # send commit ID confirmation callback
+                    if cb_url:
+                        await send_commit_callback(
+                            aiohttp_session=request.app.aiohttp_client_session,
+                            url=cb_url,
+                            payload={
+                                'commitID': event_data['event_data']['payloadCommitId'],
+                                'projectID': project_id,
+                                'status': True
+                            }
+                        )
                 else:
                     rest_logger.debug("Saving Event data for height: ")
                     rest_logger.debug(tentative_block_height)
@@ -280,7 +300,17 @@ async def create_dag(
                                 payload_commit_id=_payload_commit_id,
                                 tx_hash=_tx_hash,
                             )
-
+                            # send commit ID confirmation callback
+                            if cb_url:
+                                await send_commit_callback(
+                                    aiohttp_session=request.app.aiohttp_client_session,
+                                    url=cb_url,
+                                    payload={
+                                        'commitID': _payload_commit_id,
+                                        'projectID': project_id,
+                                        'status': True
+                                    }
+                                )
                         else:
                             """ Since there is a pending block creation, stop the loop """
                             rest_logger.debug("There is pending block creation left. Breaking out of the loop..")
@@ -292,7 +322,7 @@ async def create_dag(
                             dag_cid=_dag_cid,
                             dag=dag_block,
                             project_id=project_id,
-                            ipfs_client=ipfs_client,
+                            ipfs_client=ipfs_client
                             # writer_redis_conn=writer_redis_conn
                         )
                     except json.decoder.JSONDecodeError as jerr:
@@ -302,5 +332,28 @@ async def create_dag(
                         rest_logger.debug("The diff map retrieved")
                         rest_logger.debug(diff_map)
                         pass
+                        # send commit ID confirmation callback
+                        if cb_url:
+                            await send_commit_callback(
+                                aiohttp_session=request.app.aiohttp_client_session,
+                                url=cb_url,
+                                payload={
+                                    'commitID': event_data['event_data']['payloadCommitId'],
+                                    'projectID': project_id,
+                                    'status': True
+                                }
+                            )
     response.status_code = 200
     return dict()
+
+
+async def send_commit_callback(aiohttp_session: aiohttp.ClientSession, url, payload):
+    if type(url) is bytes:
+        url = url.decode('utf-8')
+    try:
+        async with aiohttp_session.post(url=url, json=payload) as resp:
+            json_response = await resp.json()
+    except Exception as e:
+        rest_logger.error('Failed to push callback for commit ID')
+        rest_logger.error({'url': url, 'payload': payload})
+        rest_logger.error(e, exc_info=True)

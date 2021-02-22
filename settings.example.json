@@ -50,6 +50,11 @@
 		"error_rate": 0.0001,
 		"filename": null
 	},
+	"aiohtttp_timeouts": {
+		"sock_read": 5,
+		"sock_connect": 5,
+		"connect": 5
+	},
 	"payload_commit_interval": 2,
 	"pruning_service_interval": 10,
 	"retrieval_service_interval": 3,

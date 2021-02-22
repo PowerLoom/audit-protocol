@@ -98,7 +98,10 @@ def clean_map_members(data, key_rules):
                                     p = m
                                     m = m.get(sub_k)
                             if p:
-                                p.pop(path_trail[-1])
+                                try:
+                                    p.pop(path_trail[-1])
+                                except:
+                                    pass
                         else:
                             try:
                                 data_copy[k].pop(del_k)

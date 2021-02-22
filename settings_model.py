@@ -9,6 +9,12 @@ class WebhookListener(BaseModel):
     port: int
 
 
+class HTTPClientConnection(BaseModel):
+    sock_read: int
+    sock_connect: int
+    connect: int
+
+
 class RedisConfig(BaseModel):
     host: str
     port: int
@@ -50,7 +56,7 @@ class Settings(BaseModel):
     max_payload_commits: int
     ipfs_timeout: int
     span_expire_timeout: int
-
+    aiohtttp_timeouts: Union[HTTPClientConnection, dict]
     bloom_filter_settings: Union[BloomFilterSettings, dict]
     webhook_listener: Union[WebhookListener, dict]
     redis: Union[RedisConfig, dict]

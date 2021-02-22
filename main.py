@@ -10,6 +10,7 @@ import sys
 import json
 import aioredis
 import redis
+import time
 from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
@@ -402,7 +403,8 @@ async def commit_payload(
         'payloadCid': snapshot_cid,
         'projectId': project_id
     }
-    payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)).hex()
+    # salt with commit time
+    payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
     rest_logger.debug("Created the unique payload commit id: ")
     rest_logger.debug(payload_commit_id)
 
@@ -411,6 +413,7 @@ async def commit_payload(
     fields = {
         'snapshotCid': snapshot_cid,
         'projectId': project_id,
+        'commitId': payload_commit_id,
         'tentativeBlockHeight': last_tentative_block_height,
     }
 
@@ -432,6 +435,7 @@ async def commit_payload(
     return {
         'cid': snapshot_cid,
         'tentativeHeight': last_tentative_block_height,
+        'commitId': payload_commit_id,
         'payloadChanged': payload_changed,
     }
 
@@ -464,6 +468,20 @@ async def configure_project(
     rest_logger.debug('Set diff rules for project ID')
     rest_logger.debug(projectId)
     rest_logger.debug(rules)
+
+
+@app.post('/{projectId:str}/confirmations/callback')
+@inject_writer_redis_conn
+async def configure_project(
+        request: Request,
+        response: Response,
+        projectId: str,
+        writer_redis_conn=None
+):
+    req_json = await request.json()
+    await writer_redis_conn.set(f'powerloom:project{projectId}:callbackURL', req_json['callbackURL'])
+    response.status_code = 200
+    return {'success': True}
 
 
 @app.get('/{projectId:str}/getDiffRules')
