@@ -479,7 +479,7 @@ async def configure_project(
         writer_redis_conn=None
 ):
     req_json = await request.json()
-    await writer_redis_conn.set(f'powerloom:project{projectId}:callbackURL', req_json['callbackURL'])
+    await writer_redis_conn.set(f'powerloom:project:{projectId}:callbackURL', req_json['callbackURL'])
     response.status_code = 200
     return {'success': True}
 

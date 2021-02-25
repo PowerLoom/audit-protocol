@@ -122,7 +122,7 @@ async def create_dag(
                 reader_redis_conn=reader_redis_conn
             )
             # retrieve callback URL for project ID
-            cb_url = await reader_redis_conn.get(f'powerloom:project{project_id}:callbackURL')
+            cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
             if (actual_tt_block_height == max_block_height) or (tentative_block_height <= max_block_height):
                 rest_logger.debug("Discarding event at height:")
                 rest_logger.debug(tentative_block_height)
