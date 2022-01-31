@@ -95,11 +95,11 @@ async def startup_boilerplate():
         password=REDIS_READER_CONN_CONF['password'],
         maxsize=50
     )
-    app.evc = EVCore(verbose=True)
-    app.contract = app.evc.generate_contract_sdk(
-        contract_address=settings.audit_contract,
-        app_name='auditrecords'
-    )
+    # app.evc = EVCore(verbose=True)
+    # app.contract = app.evc.generate_contract_sdk(
+    #     contract_address=settings.audit_contract,
+    #     app_name='auditrecords'
+    # )
 
 
 @inject_reader_redis_conn

@@ -57,9 +57,15 @@ async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: 
 
 def clean_map_members(data, key_rules):
     data_copy = deepcopy(data)
+    top_level_keys_to_be_deleted = set()
     for k in data_copy.keys():
         if k and k in key_rules.keys():
             if key_rules[k]['ruleType'] == 'ignore':
+                # TODO: add support for elementary data types. Support typing module for standardized config?
+                if key_rules[k]['fieldType'] in ['str', 'int']:
+                    # collect to be deleted later, we can not delete keys while iterating over the dict
+                    top_level_keys_to_be_deleted.add(k)
+                    continue
                 to_be_ignored_fields = key_rules[k]['ignoreMemberFields']
                 if key_rules[k]['fieldType'] == 'list':
                     if key_rules[k]['listMemberType'] == 'map' and k in data_copy.keys():
@@ -107,6 +113,8 @@ def clean_map_members(data, key_rules):
                                 data_copy[k].pop(del_k)
                             except :
                                 pass
+    for tbd_k in top_level_keys_to_be_deleted:
+        del data_copy[tbd_k]
     return data_copy
 
 
@@ -125,41 +133,54 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
         # collect data fields
         prev_data_comparable_values = list()
         cur_data_comparable_values = list()
+        collect_comparable_values = True
         # TODO: expand on checks for field type: map, list etc
         if compare_rules[field_name]['fieldType'] == 'map':
             pass
         else:
             continue
-        for each_comparable_member in compare_rules[field_name]['memberFields']:
-            print('=' * 40 + '\nCollecting value for field')
-            print(each_comparable_member)
-            if '.' in each_comparable_member:
-                path_trail = each_comparable_member.split('.')
-                prev_data_member_field = prev_data_field.get(path_trail[0], 0)
-                cur_data_member_field = cur_data_field.get(path_trail[0], 0)
-                print('Before iterating over path')
-                print('prev data member field value')
-                print(prev_data_member_field)
-                print('cur data member field value')
-                print(cur_data_member_field)
-                for idx, sub_k in enumerate(path_trail):
-                    if idx > 0:
-                        prev_data_member_field = prev_data_member_field.get(path_trail[idx], 0)
-                        cur_data_member_field = cur_data_member_field.get(path_trail[idx], 0)
-                        if idx == len(path_trail) - 1:
-                            prev_data_comparable_values.append(prev_data_member_field)
-                            cur_data_comparable_values.append(cur_data_member_field)
-            else:
-                prev_data_comparable_values.append(prev_data_field.get(each_comparable_member, 0))
-                cur_data_comparable_values.append(cur_data_field.get(each_comparable_member, 0))
-        if compare_rules[field_name]['operation'] == 'add':
+        if compare_rules[field_name]['operation'] == 'listSlice':
+            collect_comparable_values = False
+        if collect_comparable_values:
+            for each_comparable_member in compare_rules[field_name]['memberFields']:
+                print('=' * 40 + '\nCollecting value for field')
+                print(each_comparable_member)
+                if '.' in each_comparable_member:
+                    path_trail = each_comparable_member.split('.')
+                    prev_data_member_field = prev_data_field.get(path_trail[0], 0)
+                    cur_data_member_field = cur_data_field.get(path_trail[0], 0)
+                    print('Before iterating over path')
+                    print('prev data member field value')
+                    print(prev_data_member_field)
+                    print('cur data member field value')
+                    print(cur_data_member_field)
+                    for idx, sub_k in enumerate(path_trail):
+                        if idx > 0:
+                            prev_data_member_field = prev_data_member_field.get(path_trail[idx], 0)
+                            cur_data_member_field = cur_data_member_field.get(path_trail[idx], 0)
+                            if idx == len(path_trail) - 1:
+                                prev_data_comparable_values.append(prev_data_member_field)
+                                cur_data_comparable_values.append(cur_data_member_field)
+                else:
+                    prev_data_comparable_values.append(prev_data_field.get(each_comparable_member, 0))
+                    cur_data_comparable_values.append(cur_data_field.get(each_comparable_member, 0))
+            if compare_rules[field_name]['operation'] == 'add':
+                print('Prev data')
+                print(prev_data_comparable_values)
+                print('Cur data')
+                print(cur_data_comparable_values)
+                collated_prev_comparable = sum(prev_data_comparable_values)
+                collated_cur_comparable = sum(cur_data_comparable_values)
+                comparison_results[field_name] = collated_prev_comparable != collated_cur_comparable
+        else:
+            map_keys_arr_index = compare_rules[field_name]['memberFields']
+            prev_data_comparable_value = prev_data_field.get(prev_data_field.keys()[map_keys_arr_index])
+            cur_data_comparable_value = cur_data_field.get(cur_data_field.keys()[map_keys_arr_index])
             print('Prev data')
-            print(prev_data_comparable_values)
+            print(prev_data_comparable_value)
             print('Cur data')
-            print(cur_data_comparable_values)
-            collated_prev_comparable = sum(prev_data_comparable_values)
-            collated_cur_comparable = sum(cur_data_comparable_values)
-            comparison_results[field_name] = collated_prev_comparable != collated_cur_comparable
+            print(cur_data_comparable_value)
+            comparison_results[field_name] = prev_data_comparable_value != cur_data_comparable_value
         keys_compared_for_rules.add(field_name)
         print('*' * 40)
     if type(prev_data) is dict and type(cur_data) is dict:
