@@ -62,7 +62,7 @@ def clean_map_members(data, key_rules):
         if k and k in key_rules.keys():
             if key_rules[k]['ruleType'] == 'ignore':
                 # TODO: add support for elementary data types. Support typing module for standardized config?
-                if key_rules[k]['fieldType'] in ['str', 'int']:
+                if key_rules[k]['fieldType'] in ['str', 'int', 'float']:
                     # collect to be deleted later, we can not delete keys while iterating over the dict
                     top_level_keys_to_be_deleted.add(k)
                     continue
