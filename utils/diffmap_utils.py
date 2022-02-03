@@ -174,8 +174,8 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
                 comparison_results[field_name] = collated_prev_comparable != collated_cur_comparable
         else:
             map_keys_arr_index = compare_rules[field_name]['memberFields']
-            prev_data_comparable_value = prev_data_field.get(prev_data_field.keys()[map_keys_arr_index])
-            cur_data_comparable_value = cur_data_field.get(cur_data_field.keys()[map_keys_arr_index])
+            prev_data_comparable_value = prev_data_field.get(list(prev_data_field.keys())[map_keys_arr_index])
+            cur_data_comparable_value = cur_data_field.get(list(cur_data_field.keys())[map_keys_arr_index])
             print('Prev data')
             print(prev_data_comparable_value)
             print('Cur data')
