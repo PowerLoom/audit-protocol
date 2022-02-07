@@ -150,68 +150,6 @@ async def get_project_token(
     return token
 
 
-async def retrieve_block_data(block_dag, writer_redis_conn, data_flag=0):
-    """
-        A function which will get dag block from ipfs and also increment its hits
-        Args:
-            block_dag:str - The cid of the dag block that needs to be retrieved
-            writer_redis_conn: redis.Redis - To increase the hits to the dag cid
-            data_flag:int - This is a flag which can take three values:
-                0 - Return only the dag block and not its payload data
-                1 - Return the dag block along with its payload data
-                2 - Return only the payload data 
-    """
-
-    assert data_flag in range(0, 3), \
-        f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
-
-    """ Increment the hits of that block """
-    block_dag_hits_key = redis_keys.get_hits_dag_block_key()
-    r = await writer_redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag)
-    rest_logger.debug("Block hit for: ")
-    rest_logger.debug(block_dag)
-    rest_logger.debug(r)
-
-    """ Retrieve the DAG block from ipfs """
-    _block = await ipfs_client.dag.get(block_dag)
-    block = _block.as_json()
-    block = preprocess_dag(block)
-    if data_flag == 0:
-        return block
-
-    payload = block['data']
-
-    """ Get the payload Data """
-    payload_data = await retrieve_payload_data(
-        payload_cid=block['data']['cid'],
-        writer_redis_conn=writer_redis_conn
-    )
-    payload['payload'] = payload_data
-
-    if data_flag == 1:
-        block['data'] = payload
-        return block
-
-    if data_flag == 2:
-        return payload
-
-
-async def retrieve_payload_data(payload_cid,  writer_redis_conn):
-    """
-        - Given a payload_cid, get its data from ipfs, at the same time increase its hit
-    """
-    payload_key = redis_keys.get_hits_payload_data_key()
-    r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
-    rest_logger.debug("Payload Data hit for: ")
-    rest_logger.debug(payload_cid)
-    rest_logger.debug(r)
-
-    """ Get the payload Data from ipfs """
-    _payload_data = await ipfs_client.cat(payload_cid)
-    payload_data = _payload_data.decode('utf-8')
-    return payload_data
-
-
 async def get_max_block_height(project_id: str, reader_redis_conn):
     """
         - Given the projectId and redis_conn, get the prev_dag_cid, block height and
@@ -678,7 +616,7 @@ async def get_payloads(
         response: Response,
         projectId: str,
         from_height: int = Query(default=1),
-        diffs: str = Query('true'),
+        diffs: Optional[str] = Query(default='true'),  # FIXME: default flag behavior unexpected
         to_height: int = Query(default=-1),
         data: Optional[str] = Query(None),
         reader_redis_conn=None,
@@ -723,10 +661,13 @@ async def get_payloads(
             data = False
 
     if diffs:
+        rest_logger.debug('Diffs flag value: %s', diffs)
         if diffs.lower() == 'true':
             diffs = True
+            rest_logger.debug('Converting diff map flag to: %s', diffs)
         else:
             diffs = False
+            rest_logger.debug('Converting diff map flag to: %s', diffs)
 
     if to_height == -1:
         to_height = max_block_height
@@ -736,8 +677,12 @@ async def get_payloads(
         return {'error': 'Invalid Height'}
 
     last_pruned_height = await helper_functions.get_last_pruned_height(project_id=projectId)
-
+    rest_logger.debug('Last pruned height: %s', last_pruned_height)
     rest_logger.debug("Checking max overlap...")
+
+    # TODO: review logic around span, overlap, cached blocks etc. It's a complete shitpile at the moment.
+    # for eg: check_overlap() is called once more from fetch_blocks(). Why?
+    # ( a span is supposed to be a LRU cache of sorts adjusted within a moving window as DAG blocks keep piling up)
     max_overlap, max_span_id, each_height_spans = await retrieval_utils.check_overlap(
         from_height=from_height,
         to_height=to_height,
@@ -787,7 +732,7 @@ async def get_payloads(
         from_height=from_height,
         to_height=to_height,
         project_id=projectId,
-
+        data_flag=data
     )
 
     current_height = to_height
@@ -796,8 +741,7 @@ async def get_payloads(
     idx = 0
     blocks = list()
     while current_height >= from_height:
-        rest_logger.debug("Fetching block at height: ")
-        rest_logger.debug(current_height)
+        rest_logger.debug("Fetching block at height: %s", current_height)
         if not prev_dag_cid:
             project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
             r = await reader_redis_conn.zrangebyscore(
@@ -811,11 +755,10 @@ async def get_payloads(
             else:
                 return {'error': 'NoRecordsFound'}
         data_flag = 1 if data else 0
-        rest_logger.debug("Fetching block: ")
-        rest_logger.debug(prev_dag_cid)
+        # NOTE: not yet clear why the earlier call to retrieval_utils.fetch_blocks() would not populate `dag_blocks` map
         if dag_blocks.get(prev_dag_cid) is None:
             rest_logger.debug("Fetching block from IPFS")
-            block = await retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
+            block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
         else:
             rest_logger.debug("Block already fetched")
             block = dag_blocks.get(prev_dag_cid)
@@ -827,6 +770,7 @@ async def get_payloads(
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
 
         # Get the diff_map between the current and previous snapshot
+        rest_logger.debug('Diff flag set as: %s', diffs)
         if diffs:
             if prev_payload_cid:
                 if prev_payload_cid != block['data']['cid']:
@@ -844,7 +788,7 @@ async def get_payloads(
                         if 'payload' in formatted_block['data'].keys():
                             prev_data = formatted_block['data']['payload']
                         else:
-                            prev_data = await retrieve_payload_data(block['data']['cid'], writer_redis_conn=writer_redis_conn)
+                            prev_data = await retrieval_utils.retrieve_payload_data(block['data']['cid'], writer_redis_conn=writer_redis_conn)
                         rest_logger.debug("Got the payload data: ")
                         rest_logger.debug(prev_data)
                         prev_data = json.loads(prev_data)
@@ -852,7 +796,7 @@ async def get_payloads(
                         if 'payload' in blocks[idx - 1]['data'].keys():
                             cur_data = blocks[idx - 1]['data']['payload']
                         else:
-                            cur_data = await retrieve_payload_data(
+                            cur_data = await retrieval_utils.retrieve_payload_data(
                                 blocks[idx-1]['data']['cid'],
                                 writer_redis_conn=writer_redis_conn
                             )
@@ -983,7 +927,7 @@ async def get_block(
 
     prev_dag_cid = r[0].decode('utf-8')
 
-    block = await retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+    block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
 
     return {prev_dag_cid: block}
 
@@ -1044,7 +988,7 @@ async def get_block_data(
     )
     prev_dag_cid = r[0].decode('utf-8')
 
-    payload = await retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=2)
+    payload = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=2)
 
     """ Return the payload data """
     return {prev_dag_cid: payload}

@@ -275,6 +275,7 @@ async def calculate_diff(
 
 
 def preprocess_dag(block):
+    # legacy clean up for DAG blocks with an older data structure, most likely not necessary
     if 'Height' in block.keys():
         _block = deepcopy(block)
         dag_structure = settings.dag_structure

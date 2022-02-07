@@ -1,15 +1,15 @@
+from eth_utils import keccak
+from utils.ipfs_async import client as ipfs_client
+from utils import redis_keys
+from utils import helper_functions
+from utils import dag_utils
+from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 import aioredis
 import json
 import logging
 import sys
 from config import settings
 from bloom_filter import BloomFilter
-from eth_utils import keccak
-
-from utils import redis_keys
-from utils import helper_functions
-from utils import dag_utils
-from utils.redis_conn import provide_async_reader_conn_inst
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
@@ -260,6 +260,7 @@ async def fetch_blocks(
         from_height: int,
         to_height: int,
         project_id: str,
+        data_flag: bool,
         reader_redis_conn: aioredis.Redis
 ):
     """
@@ -278,9 +279,11 @@ async def fetch_blocks(
     while current_height >= from_height:
         dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
         if each_height_spans.get(current_height) is None:
+            # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
             dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
             dag_block = await dag_utils.get_dag_block(dag_cid)
-
+            if data_flag:
+                dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
         else:
             dag_block: list = await fetch_from_span(
                 from_height=current_height,
@@ -296,6 +299,71 @@ async def fetch_blocks(
         retrieval_utils_logger.debug(dag_blocks)
 
     return dag_blocks
+
+
+# TODO: refactor function or introduce an enum/pydantic model against data_flag param for readability/maintainability
+# passing ints against a flag is terrible coding practice
+async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0):
+    """
+        A function which will get dag block from ipfs and also increment its hits
+        Args:
+            block_dag_cid:str - The cid of the dag block that needs to be retrieved
+            writer_redis_conn: redis.Redis - To increase hitcount to dag cid, do not pass args if caching is not desired
+            data_flag:int - This is a flag which can take three values:
+                0 - Return only the dag block and not its payload data
+                1 - Return the dag block along with its payload data
+                2 - Return only the payload data
+    """
+
+    assert data_flag in range(0, 3), \
+        f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
+
+    """ Increment the hits of that block """
+    block_dag_hits_key = redis_keys.get_hits_dag_block_key()
+    if writer_redis_conn:
+        r = await writer_redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag_cid)
+        retrieval_utils_logger.debug("Block hit for: ")
+        retrieval_utils_logger.debug(block_dag_cid)
+        retrieval_utils_logger.debug(r)
+
+    """ Retrieve the DAG block from ipfs """
+    _block = await ipfs_client.dag.get(block_dag_cid)
+    block = _block.as_json()
+    # block = preprocess_dag(block)
+    if data_flag == 0:
+        return block
+
+    payload = block['data']
+
+    """ Get the payload Data """
+    payload_data = await retrieve_payload_data(
+        payload_cid=block['data']['cid'],
+        writer_redis_conn=writer_redis_conn
+    )
+    payload['payload'] = json.loads(payload_data)
+
+    if data_flag == 1:
+        block['data'] = payload
+        return block
+
+    if data_flag == 2:
+        return payload
+
+
+async def retrieve_payload_data(payload_cid,  writer_redis_conn=None):
+    """
+        - Given a payload_cid, get its data from ipfs, at the same time increase its hit
+    """
+    payload_key = redis_keys.get_hits_payload_data_key()
+    if writer_redis_conn:
+        r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
+        retrieval_utils_logger.debug("Payload Data hit for: ")
+        retrieval_utils_logger.debug(payload_cid)
+
+    """ Get the payload Data from ipfs """
+    _payload_data = await ipfs_client.cat(payload_cid)
+    payload_data = _payload_data.decode('utf-8')
+    return payload_data
 
 
 async def get_blocks_from_container(container_id, dag_cids: list):
