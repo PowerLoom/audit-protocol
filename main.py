@@ -802,7 +802,7 @@ async def get_payloads(
                             )
                         cur_data = json.loads(cur_data)
 
-                        result = process_payloads_for_diff(
+                        result = await process_payloads_for_diff(
                             project_id=projectId,
                             prev_data=prev_data,
                             cur_data=cur_data,
