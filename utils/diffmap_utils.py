@@ -1,6 +1,8 @@
 import json
 from copy import deepcopy
 import logging
+import logging.handlers
+import sys
 from config import settings
 
 from utils import dag_utils
@@ -9,6 +11,18 @@ from utils.redis_conn import provide_async_reader_conn_inst, provide_async_write
 
 utils_logger = logging.getLogger(__name__)
 utils_logger.setLevel(level="DEBUG")
+formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.setFormatter(formatter)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.ERROR)
+stderr_handler.setFormatter(formatter)
+
+utils_logger.addHandler(stdout_handler)
+utils_logger.addHandler(stderr_handler)
 
 
 @provide_async_reader_conn_inst
@@ -35,6 +49,7 @@ async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: 
     diff_rules = await get_diff_rules(project_id)
     key_rules = dict()
     compare_rules = dict()
+    # TODO: refactor logic into another helper that solely preprocesses key rules into an accepted structure
     for rule in diff_rules:
         if rule['ruleType'] == 'ignore':
             if rule['fieldType'] == 'list':
@@ -42,9 +57,14 @@ async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: 
                                             ['ignoreMemberFields', 'fieldType', 'ruleType', 'listMemberType']}
             elif rule['fieldType'] == 'map':
                 key_rules[rule['field']] = {k: rule[k] for k in ['ignoreMemberFields', 'fieldType', 'ruleType']}
+            else:
+                key_rules[rule['field']] = {k: rule[k] for k in ['fieldType', 'ruleType']}
+
         elif rule['ruleType'] == 'compare':
             if rule['fieldType'] == 'map':
                 compare_rules[rule['field']] = {k: rule[k] for k in ['fieldType', 'operation', 'memberFields']}
+        else:
+            key_rules[rule['field']] = {'fieldType': rule['fieldType']}
     prev_copy = clean_map_members(prev_data, key_rules)
     cur_copy = clean_map_members(cur_data, key_rules)
     payload_changed = compare_members(prev_copy, cur_copy, compare_rules)
@@ -60,11 +80,13 @@ def clean_map_members(data, key_rules):
     top_level_keys_to_be_deleted = set()
     for k in data_copy.keys():
         if k and k in key_rules.keys():
+            # print(f'Processing key rule for {k}')
             if key_rules[k]['ruleType'] == 'ignore':
                 # TODO: add support for elementary data types. Support typing module for standardized config?
                 if key_rules[k]['fieldType'] in ['str', 'int', 'float']:
                     # collect to be deleted later, we can not delete keys while iterating over the dict
                     top_level_keys_to_be_deleted.add(k)
+                    # print(f'Adding key {k} in set of top level keys to be deleted from data_copy')
                     continue
                 to_be_ignored_fields = key_rules[k]['ignoreMemberFields']
                 if key_rules[k]['fieldType'] == 'list':
@@ -114,7 +136,9 @@ def clean_map_members(data, key_rules):
                             except :
                                 pass
     for tbd_k in top_level_keys_to_be_deleted:
+        # print(f'Deleting key {tbd_k} from data_copy')
         del data_copy[tbd_k]
+        # print(f'Cur data copy: {data_copy}')
     return data_copy
 
 
