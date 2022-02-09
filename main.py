@@ -791,7 +791,6 @@ async def get_payloads(
                             prev_data = await retrieval_utils.retrieve_payload_data(block['data']['cid'], writer_redis_conn=writer_redis_conn)
                         rest_logger.debug("Got the payload data: ")
                         rest_logger.debug(prev_data)
-                        prev_data = json.loads(prev_data)
 
                         if 'payload' in blocks[idx - 1]['data'].keys():
                             cur_data = blocks[idx - 1]['data']['payload']
@@ -800,7 +799,6 @@ async def get_payloads(
                                 blocks[idx-1]['data']['cid'],
                                 writer_redis_conn=writer_redis_conn
                             )
-                        cur_data = json.loads(cur_data)
 
                         result = await process_payloads_for_diff(
                             project_id=projectId,
