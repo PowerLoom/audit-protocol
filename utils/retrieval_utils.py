@@ -281,10 +281,9 @@ async def fetch_blocks(
         if each_height_spans.get(current_height) is None:
             # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
             dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
+            dag_block = await dag_utils.get_dag_block(dag_cid)
             if data_flag:
                 dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-            else:
-                dag_block = await dag_utils.get_dag_block(dag_cid)
         else:
             dag_block: list = await fetch_from_span(
                 from_height=current_height,
