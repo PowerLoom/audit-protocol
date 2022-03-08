@@ -32,6 +32,7 @@ class TableNames(BaseModel):
 class Settings(BaseModel):
     host: str
     port: str
+    rlimit: dict
     ipfs_url: str
     snapshot_interval: int
     dag_table_name: str

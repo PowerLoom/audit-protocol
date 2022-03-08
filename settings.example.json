@@ -31,6 +31,9 @@
       "db": 0,
       "password": null
     },
+	"rlimit": {
+		"file_descriptors": 2048
+	},
 	"table_names": {
 		"api_keys": "api_keys",
 		"accounting_records": "accounting_records",

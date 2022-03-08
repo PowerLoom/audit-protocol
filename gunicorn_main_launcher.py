@@ -1,7 +1,7 @@
 import os
 import logging
 import sys
-
+import resource
 from gunicorn.app.base import BaseApplication
 from gunicorn.glogging import Logger
 from loguru import logger
@@ -12,6 +12,11 @@ from main import app
 LOG_LEVEL = logging.getLevelName(os.environ.get("LOG_LEVEL", "DEBUG"))
 JSON_LOGS = True if os.environ.get("JSON_LOGS", "0") == "1" else False
 WORKERS = int(os.environ.get("GUNICORN_WORKERS", "10"))
+
+
+def post_worker_init():
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (settings['rlimit']['file_descriptors'], hard))
 
 
 class InterceptHandler(logging.Handler):
@@ -93,7 +98,8 @@ if __name__ == '__main__':
         "accesslog": "-",
         "errorlog": "-",
         "worker_class": "uvicorn.workers.UvicornWorker",
-        "logger_class": StubbedGunicornLogger
+        "logger_class": StubbedGunicornLogger,
+        "post_worker_init": post_worker_init
     }
 
     StandaloneApplication(app, options).run()
