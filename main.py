@@ -661,13 +661,13 @@ async def get_payloads(
             data = False
 
     if diffs:
-        rest_logger.debug('Diffs flag value: %s', diffs)
+        # rest_logger.debug('Diffs flag value: %s', diffs)
         if diffs.lower() == 'true':
             diffs = True
-            rest_logger.debug('Converting diff map flag to: %s', diffs)
+            # rest_logger.debug('Converting diff map flag to: %s', diffs)
         else:
             diffs = False
-            rest_logger.debug('Converting diff map flag to: %s', diffs)
+            # rest_logger.debug('Converting diff map flag to: %s', diffs)
 
     if to_height == -1:
         to_height = max_block_height

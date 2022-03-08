@@ -296,7 +296,7 @@ async def fetch_blocks(
         dag_blocks[dag_cid] = dag_block
         current_height = current_height - 1
 
-        retrieval_utils_logger.debug(dag_blocks)
+        # retrieval_utils_logger.debug(dag_blocks)
 
     return dag_blocks
 
