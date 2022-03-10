@@ -1,15 +1,16 @@
-import aioredis
 from config import settings
-import logging
-import asyncio
-import sys
-import json
+from utils.ipfs_async import client as ipfs_client
 from eth_utils import keccak
 from main import make_transaction
 from maticvigil.EVCore import EVCore
 from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
-import coloredlogs
 from utils import redis_keys
+import aioredis
+import coloredlogs
+import logging
+import asyncio
+import sys
+import json
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -52,19 +53,32 @@ async def commit_single_payload(
         payload_logger.warning("No payload data found in redis..")
         return -1
 
-    payload_logger.debug(payload_data)
+    # payload_logger.debug(payload_data)
     snapshot = dict()
-    snapshot['cid'] = payload_data['snapshotCid']
+    core_payload = payload_data['payload']
+    project_id = payload_data['projectId']
+    if type(core_payload) is dict:
+        core_payload = json.dumps(core_payload)
+
+    snapshot_cid = await ipfs_client.add_str(core_payload)
+
+    payload_cid_key = redis_keys.get_payload_cids_key(project_id)
+    _ = await writer_redis_conn.zadd(
+        key=payload_cid_key,
+        score=int(payload_data['tentativeBlockHeight']),
+        member=snapshot_cid
+    )
+    snapshot['cid'] = snapshot_cid
     snapshot['type'] = "HOT_IPFS"
 
     token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
     _ = await semaphore.acquire()
     try:
         result = await make_transaction(
-            snapshot_cid=payload_data['snapshotCid'],
+            snapshot_cid=snapshot_cid,
             token_hash=token_hash,
             payload_commit_id=payload_commit_id,
-            last_tentative_block_height=payload_data['tentativeBlockHeight'],
+            last_tentative_block_height=int(payload_data['tentativeBlockHeight']),
             project_id=payload_data['projectId'],
             writer_redis_conn=writer_redis_conn,
             contract=contract
@@ -73,6 +87,11 @@ async def commit_single_payload(
         payload_logger.debug("There was an error while committing record: ")
         payload_logger.error(e, exc_info=True)
         result = -1
+    else:
+        last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
+        payload_logger.debug("Setting the last snapshot_cid as: ")
+        payload_logger.debug(snapshot_cid)
+        _ = await writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
     finally:
         semaphore.release()
 
@@ -81,7 +100,7 @@ async def commit_single_payload(
         return -1
     else:
         payload_logger.debug("Successfully committed payload")
-
+    # TODO: remove all abominations like this that return arbitrary integers that have to be made sense of later on
     return 1
 
 

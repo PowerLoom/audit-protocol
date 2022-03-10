@@ -302,43 +302,14 @@ async def commit_payload(
     rest_logger.debug("Got last tentative block height: ")
     rest_logger.debug(last_tentative_block_height)
 
-    """ 
-        - If the prev_dag_cid is empty, then it means that this is the first block that
-        will be added to the DAG of the projectId.
-    """
-    payload_changed = False
-
     rest_logger.debug('Previous IPLD CID in the DAG: ')
     rest_logger.debug(prev_dag_cid)
     last_tentative_block_height = last_tentative_block_height + 1
 
-    """ Instead of adding payload to directly IPFS, stage it to Filecoin and get back the Cid"""
-    if type(payload) is dict:
-        payload = json.dumps(payload)
-
-    if type(payload) is dict:
-        snapshot_cid = await ipfs_client.add_json(payload)
-    else:
-        try:
-            snapshot_cid = await ipfs_client.add_str(str(payload))
-        except:
-            response.status_code = 400
-            return {'success': False, 'error': 'PayloadNotSuppported'}
-
-    if last_snapshot_cid != "":
-        if snapshot_cid != last_snapshot_cid:
-            payload_changed = True
-    payload_cid_key = redis_keys.get_payload_cids_key(project_id)
-    _ = await writer_redis_conn.zadd(
-        key=payload_cid_key,
-        score=last_tentative_block_height,
-        member=snapshot_cid
-    )
-
     """ Create a unique identifier for this payload """
     payload_data = {
         'tentativeBlockHeight': last_tentative_block_height,
-        'payloadCid': snapshot_cid,
+        'payload': payload,
         'projectId': project_id
     }
     # salt with commit time
@@ -347,11 +318,11 @@ async def commit_payload(
     rest_logger.debug(payload_commit_id)
 
     """ Create the Hash table for Payload """
-    payload_commit_key = f"payloadCommit:{payload_commit_id}"
+    payload_commit_key = redis_keys.get_payload_commit_key(payload_commit_id)
     fields = {
-        'snapshotCid': snapshot_cid,
         'projectId': project_id,
         'commitId': payload_commit_id,
+        'payload': json.dumps(payload),
         'tentativeBlockHeight': last_tentative_block_height,
     }
 
@@ -365,16 +336,10 @@ async def commit_payload(
     _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
 
     _ = await writer_redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
-    last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
-    rest_logger.debug("Setting the last snapshot_cid as: ")
-    rest_logger.debug(snapshot_cid)
-    _ = await writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
 
     return {
-        'cid': snapshot_cid,
         'tentativeHeight': last_tentative_block_height,
-        'commitId': payload_commit_id,
-        'payloadChanged': payload_changed,
+        'commitId': payload_commit_id
     }
 
 
