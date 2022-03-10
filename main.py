@@ -688,10 +688,10 @@ async def get_payloads(
         to_height=to_height,
         project_id=projectId
     )
-    rest_logger.debug("Max overlap, Max Span ID, Each height spans:")
-    rest_logger.debug(max_overlap)
-    rest_logger.debug(max_span_id)
-    rest_logger.debug(each_height_spans)
+    # rest_logger.debug("Max overlap, Max Span ID, Each height spans:")
+    # rest_logger.debug(max_overlap)
+    # rest_logger.debug(max_span_id)
+    # rest_logger.debug(each_height_spans)
 
     if (max_overlap == 0.0) and (from_height <= last_pruned_height):
         rest_logger.debug("Creating a retrieval request")
@@ -741,7 +741,7 @@ async def get_payloads(
     idx = 0
     blocks = list()
     while current_height >= from_height:
-        rest_logger.debug("Fetching block at height: %s", current_height)
+        # rest_logger.debug("Fetching block at height: %s", current_height)
         if not prev_dag_cid:
             project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
             r = await reader_redis_conn.zrangebyscore(
@@ -757,20 +757,20 @@ async def get_payloads(
         data_flag = 1 if data else 0
         # NOTE: not yet clear why the earlier call to retrieval_utils.fetch_blocks() would not populate `dag_blocks` map
         if dag_blocks.get(prev_dag_cid) is None:
-            rest_logger.debug("Fetching block from IPFS")
+            # rest_logger.debug("Fetching block from IPFS")
             block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
         else:
-            rest_logger.debug("Block already fetched")
+            # rest_logger.debug("Block already fetched")
             block = dag_blocks.get(prev_dag_cid)
-        rest_logger.debug("Block Retrieved: ")
-        rest_logger.debug(block)
+        # rest_logger.debug("Block Retrieved: ")
+        # rest_logger.debug(block)
         formatted_block = dict()
         formatted_block['dagCid'] = prev_dag_cid
         formatted_block.update({k: v for k, v in block.items()})
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
 
         # Get the diff_map between the current and previous snapshot
-        rest_logger.debug('Diff flag set as: %s', diffs)
+        # rest_logger.debug('Diff flag set as: %s', diffs)
         if diffs:
             if prev_payload_cid:
                 if prev_payload_cid != block['data']['cid']:
@@ -780,17 +780,17 @@ async def get_payloads(
                     diff_map = dict()
                     if not diff_b:
                         # diff not cached already
-                        rest_logger.debug('Diff not cached | New CID | Old CID')
-                        rest_logger.debug(blocks[idx - 1]['data']['cid'])
-                        rest_logger.debug(block['data']['cid'])
+                        # rest_logger.debug('Diff not cached | New CID | Old CID')
+                        # rest_logger.debug(blocks[idx - 1]['data']['cid'])
+                        # rest_logger.debug(block['data']['cid'])
 
                         """ If the payload is not yet retrieved, then get if from ipfs """
                         if 'payload' in formatted_block['data'].keys():
                             prev_data = formatted_block['data']['payload']
                         else:
                             prev_data = await retrieval_utils.retrieve_payload_data(block['data']['cid'], writer_redis_conn=writer_redis_conn)
-                        rest_logger.debug("Got the payload data: ")
-                        rest_logger.debug(prev_data)
+                        # rest_logger.debug("Got the payload data: ")
+                        # rest_logger.debug(prev_data)
 
                         if 'payload' in blocks[idx - 1]['data'].keys():
                             cur_data = blocks[idx - 1]['data']['payload']
@@ -805,8 +805,8 @@ async def get_payloads(
                             prev_data=prev_data,
                             cur_data=cur_data,
                         )
-                        rest_logger.debug('After payload clean up and comparison if any')
-                        rest_logger.debug(result)
+                        # rest_logger.debug('After payload clean up and comparison if any')
+                        # rest_logger.debug(result)
                         cur_data_copy = result['cur_copy']
                         prev_data_copy = result['prev_copy']
 
