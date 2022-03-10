@@ -825,10 +825,10 @@ async def get_payloads(
                         await writer_redis_conn.set(diff_key, json.dumps(diff_map))
                     else:
                         diff_map = json.loads(diff_b)
-                        rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
-                        rest_logger.debug(blocks[idx - 1]['data']['cid'])
-                        rest_logger.debug(block['data']['cid'])
-                        rest_logger.debug(diff_map)
+                        # rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
+                        # rest_logger.debug(blocks[idx - 1]['data']['cid'])
+                        # rest_logger.debug(block['data']['cid'])
+                        # rest_logger.debug(diff_map)
                     blocks[idx - 1]['diff'] = diff_map
                     if len(diff_map.keys()):
                         blocks[idx - 1]['payloadChanged'] = True

@@ -81,9 +81,9 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
             for block_cid, block_height in all_cids:
                 block_cid = block_cid.decode('utf-8')
                 block_height = int(block_height)
-                retrieval_logger.debug("Fetching block at height:")
-                retrieval_logger.debug(block_cid)
-                retrieval_logger.debug(block_height)
+                # retrieval_logger.debug("Fetching block at height:")
+                # retrieval_logger.debug(block_cid)
+                # retrieval_logger.debug(block_height)
 
                 """ Check if the DAG block is pinned """
                 if (block_height > (max_block_height - settings.max_ipfs_blocks)) or (
