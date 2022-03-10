@@ -16,7 +16,7 @@ WORKERS = int(os.environ.get("GUNICORN_WORKERS", "10"))
 
 def post_worker_init(worker):
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (settings['rlimit']['file_descriptors'], hard))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (settings.rlimit['file_descriptors'], hard))
 
 
 class InterceptHandler(logging.Handler):
