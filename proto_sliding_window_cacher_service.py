@@ -100,7 +100,6 @@ async def build_primary_index(
         :param time_period: supported time_period strings as of now:  ['24h', '7d']
     """
     # project_cids_key = redis_keys.get_dag_cids_key(project_id)
-    await semaphore.acquire()
     project_height_key = redis_keys.get_block_height_key(project_id)
     max_height = await writer_redis_conn.get(project_height_key)
     # find markers
