@@ -33,6 +33,14 @@ def get_block_height_key(project_id: str):
     return block_height_key
 
 
+def get_sliding_window_cache_head_marker(project_id: str, time_period: str):
+    return f'projectID:{project_id}:slidingCache:{time_period}:head'
+
+
+def get_sliding_window_cache_tail_marker(project_id: str, time_period: str):
+    return f'projectID:{project_id}:slidingCache:{time_period}:tail'
+
+
 def get_containers_created_key(project_id: str):
     containers_created_key = "projectID:{}:containers".format(project_id)
     return containers_created_key
@@ -166,3 +174,7 @@ def get_live_spans_key(project_id: str, span_id: str):
 def get_cached_containers_key(container_id: str):
     cached_containers_key = "cachedContainers:{}".format(container_id)
     return cached_containers_key
+
+
+def get_projects_registered_for_cache_indexing_key():
+    return 'cache:indexesRequested'
