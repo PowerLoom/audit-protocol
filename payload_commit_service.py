@@ -55,12 +55,15 @@ async def commit_single_payload(
 
     # payload_logger.debug(payload_data)
     snapshot = dict()
-    core_payload = payload_data['payload']
+    core_payload = json.loads(payload_data['payload'])
     project_id = payload_data['projectId']
     if type(core_payload) is dict:
-        core_payload = json.dumps(core_payload)
         snapshot_cid = await ipfs_client.add_json(core_payload)
     else:
+        try:
+            core_payload = json.dumps(core_payload)
+        except:
+            pass
         snapshot_cid = await ipfs_client.add_str(str(core_payload))
 
     payload_cid_key = redis_keys.get_payload_cids_key(project_id)
