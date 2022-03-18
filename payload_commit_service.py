@@ -59,8 +59,9 @@ async def commit_single_payload(
     project_id = payload_data['projectId']
     if type(core_payload) is dict:
         core_payload = json.dumps(core_payload)
-
-    snapshot_cid = await ipfs_client.add_str(core_payload)
+        snapshot_cid = await ipfs_client.add_json(core_payload)
+    else:
+        snapshot_cid = await ipfs_client.add_str(str(core_payload))
 
     payload_cid_key = redis_keys.get_payload_cids_key(project_id)
     _ = await writer_redis_conn.zadd(
