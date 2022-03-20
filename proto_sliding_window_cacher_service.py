@@ -5,6 +5,7 @@ from utils.redis_conn import provide_async_reader_conn_inst, provide_async_write
 from utils import helper_functions, dag_utils
 from utils.retrieval_utils import retrieve_block_data
 from functools import wraps, partial
+from pair_data_aggregation_service import v2_pairs_data
 import aioredis
 import asyncio
 import json
@@ -181,6 +182,7 @@ async def periodic_retrieval():
     while True:
         await asyncio.gather(
             build_primary_indexes(),
+            v2_pairs_data(),
             asyncio.sleep(120)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')

@@ -30,3 +30,4 @@ requests
 tenacity
 greenletio
 siaskynet
+web3==5.23.1
