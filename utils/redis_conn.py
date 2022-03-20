@@ -30,21 +30,21 @@ REDIS_READER_CONN_CONF = {
 
 
 async def get_writer_redis_pool():
-    out = await aioredis.create_pool(
+    out = await aioredis.create_redis_pool(
         address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
         db=REDIS_WRITER_CONN_CONF['db'],
         password=REDIS_WRITER_CONN_CONF['password'],
-        maxsize=50
+        maxsize=200
     )
     return out
 
 
 async def get_reader_redis_pool():
-    out = await aioredis.create_pool(
+    out = await aioredis.create_redis_pool(
         address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
         db=REDIS_READER_CONN_CONF['db'],
         password=REDIS_READER_CONN_CONF['password'],
-        maxsize=50
+        maxsize=200
     )
     return out
 
@@ -68,10 +68,13 @@ async def get_reader_redis_conn():
 
 
 class RedisPool:
-
     def __init__(self):
-        self.reader_redis_pool = asyncio.run(get_reader_redis_pool())
-        self.writer_redis_pool = asyncio.run(get_writer_redis_pool())
+        self.reader_redis_pool = None
+        self.writer_redis_pool = None
+
+    async def populate(self):
+        self.reader_redis_pool: aioredis.Redis = await get_reader_redis_pool()
+        self.writer_redis_pool: aioredis.Redis = await get_writer_redis_pool()
 
 
 def setup_teardown_boilerplate(fn):

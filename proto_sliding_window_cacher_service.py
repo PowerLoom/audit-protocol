@@ -1,7 +1,7 @@
 from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
 from config import settings
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils.redis_conn import RedisPool
 from utils import helper_functions, dag_utils
 from utils.retrieval_utils import retrieve_block_data
 from functools import wraps, partial
@@ -156,8 +156,10 @@ async def build_primary_index(
             )
 
 
-@provide_async_writer_conn_inst
-async def build_primary_indexes(writer_redis_conn: aioredis.Redis = None):
+async def build_primary_indexes():
+    aioredis_pool = RedisPool()
+    await aioredis_pool.populate()
+    writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     # project ID -> {"series": ['24h', '7d']}
     registered_projects = await writer_redis_conn.hgetall('cache:indexesRequested')
     sliding_cacher_logger.debug('Got registered projects for indexing: ', registered_projects)

@@ -13,7 +13,7 @@ from utils import helper_functions
 from utils import diffmap_utils
 from utils import dag_utils
 from utils.ipfs_async import client as ipfs_client
-from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
+from utils.redis_conn import RedisPool
 
 
 app = FastAPI()
@@ -58,18 +58,10 @@ async def startup_boilerplate():
         os.stat(os.getcwd() + '/containers')
     except:
         os.mkdir(os.getcwd() + '/containers')
-    app.writer_redis_pool = await aioredis.create_pool(
-        address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
-        db=REDIS_WRITER_CONN_CONF['db'],
-        password=REDIS_WRITER_CONN_CONF['password'],
-        maxsize=50
-    )
-    app.reader_redis_pool = await aioredis.create_pool(
-        address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
-        db=REDIS_READER_CONN_CONF['db'],
-        password=REDIS_READER_CONN_CONF['password'],
-        maxsize=50
-    )
+    app.aioredis_pool = RedisPool()
+    await app.aioredis_pool.populate()
+    app.writer_redis_pool = app.aioredis_pool.writer_redis_pool
+    app.reader_redis_pool = app.aioredis_pool.reader_redis_pool
     app.aiohttp_client_session = aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(
             sock_connect=settings.aiohtttp_timeouts.sock_connect,
@@ -80,15 +72,13 @@ async def startup_boilerplate():
 
 
 @app.post('/')
-@inject_writer_redis_conn
-@inject_reader_redis_conn
 async def create_dag(
         request: Request,
         response: Response,
         x_hook_signature: str = Header(None),
-        reader_redis_conn=None,
-        writer_redis_conn=None
 ):
+    reader_redis_conn = request.app.reader_redis_pool
+    writer_redis_conn = request.app.writer_redis_pool
     event_data = await request.json()
     # Verify the payload that has arrived.
     if x_hook_signature:

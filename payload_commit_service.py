@@ -3,7 +3,7 @@ from utils.ipfs_async import client as ipfs_client
 from eth_utils import keccak
 from main import make_transaction
 from maticvigil.EVCore import EVCore
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils.redis_conn import RedisPool
 from utils import redis_keys
 import aioredis
 import coloredlogs
@@ -108,21 +108,17 @@ async def commit_single_payload(
     return 1
 
 
-@provide_async_reader_conn_inst
-@provide_async_writer_conn_inst
-async def commit_pending_payloads(
-        reader_redis_conn=None,
-        writer_redis_conn=None
-):
+async def commit_pending_payloads():
     """
         - The goal of this function will be to check if there are any pending
         payloads left to commit, and take action on them
     """
     global contract
-
+    aioredis_pool = RedisPool()
+    await aioredis_pool.populate()
     payload_logger.debug("Checking for pending payloads to commit...")
     pending_payload_commits_key = redis_keys.get_pending_payload_commits_key()
-    pending_payloads = await reader_redis_conn.lrange(pending_payload_commits_key, 0, -1)
+    pending_payloads = await aioredis_pool.reader_redis_pool.lrange(pending_payload_commits_key, 0, -1)
     if len(pending_payloads) > 0:
         payload_logger.debug("Pending payloads found: ")
         payload_logger.debug(pending_payloads)
@@ -132,16 +128,15 @@ async def commit_pending_payloads(
 
         """ Processing each of the pending payloads """
         while True:
-
-            payload_commit_id = await writer_redis_conn.rpop(pending_payload_commits_key)
+            payload_commit_id = await aioredis_pool.writer_redis_pool.rpop(pending_payload_commits_key)
             if not payload_commit_id:
                 break
 
             payload_commit_id = payload_commit_id.decode('utf-8')
             tasks.append(commit_single_payload(
                 payload_commit_id=payload_commit_id,
-                reader_redis_conn=reader_redis_conn,
-                writer_redis_conn=writer_redis_conn,
+                reader_redis_conn=aioredis_pool.reader_redis_pool,
+                writer_redis_conn=aioredis_pool.writer_redis_pool,
                 semaphore=semaphore
             ))
 
