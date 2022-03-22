@@ -75,7 +75,7 @@ def read_json_file(file_path: str):
 pair_contract_abi = read_json_file(f"abis/UniswapV2Pair.json")
 erc20_abi = read_json_file('abis/IERC20.json')
 
-def get_maker_pair_data(prop):
+async def get_maker_pair_data(prop):
     prop = prop.lower()
     if prop.lower() == "name":
         return "Maker"
