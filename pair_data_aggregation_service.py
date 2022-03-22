@@ -4,14 +4,15 @@ from utils import redis_keys
 import asyncio
 import aiohttp
 import math
+from functools import wraps, partial
 import json
 import os
 import sys
 import logging.config
-from dynaconf import settings
+from config import settings
 from utils.ipfs_async import client as ipfs_client
 from utils.retrieval_utils import retrieve_block_data
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst, RedisPool
 import aioredis
 from utils import helper_functions, dag_utils
 from data_models import liquidityProcessedData
@@ -42,7 +43,7 @@ async def get_dag_block_by_height(project_id, block_height):
         dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
         dag_block["dagCid"] = dag_cid
     except Exception as e:
-        logger.error(f"Error: can't get dag block with msg: {str(e)}", exc_info=True)
+        logger.error(f"Error: can't get dag block with msg: {str(e)} | projectId:{project_id}, block_height:{block_height}", exc_info=True)
         dag_block = {}
 
     return dag_block
@@ -121,8 +122,7 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
         token1_name = pair_tokens_data[b"token1_name"].decode('utf-8')
     else:
         executor_gather = list()
-        
-        if(Web3.toChecksumAddress(settings.CONTRACT_ADDRESSES.MAKER) == Web3.toChecksumAddress(token0Addr)):
+        if(Web3.toChecksumAddress(settings.contract_addresses.MAKER) == Web3.toChecksumAddress(token0Addr)):
             executor_gather.append(get_maker_pair_data('name'))
             executor_gather.append(get_maker_pair_data('symbol'))
         else:
@@ -131,7 +131,7 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
         executor_gather.append(loop.run_in_executor(func=token0.functions.decimals().call, executor=None))
 
 
-        if(Web3.toChecksumAddress(settings.CONTRACT_ADDRESSES.MAKER) == Web3.toChecksumAddress(token1Addr)):
+        if(Web3.toChecksumAddress(settings.contract_addresses.MAKER) == Web3.toChecksumAddress(token1Addr)):
             executor_gather.append(get_maker_pair_data('name'))
             executor_gather.append(get_maker_pair_data('symbol'))
         else:
@@ -195,11 +195,12 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
         # trade volume dag chain
         tail_marker_24h = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '24h'))
         head_marker_24h = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '24h'))
-
+        tail_marker_24h = int(tail_marker_24h.decode('utf-8')) if tail_marker_24h else 0
+        head_marker_24h = int(head_marker_24h.decode('utf-8')) if head_marker_24h else 0
         # tail_marker_7d = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '7d'))
         # head_marker_7d = await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '7d'))
         
-        dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, int(tail_marker_24h.decode('utf-8')), int(head_marker_24h.decode('utf-8')))
+        dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h)
 
         # get tokens prices:
         token0Price = await writer_redis_conn.get(
@@ -222,8 +223,13 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
         
         # liquidty data
         liquidity_head_marker = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '24h'))
-        liquidity_data = await get_dag_block_by_height(project_id_token_reserve, int(liquidity_head_marker.decode('utf-8')))
-        #TODO: 2.multiply by price
+        liquidity_head_marker = int(liquidity_head_marker.decode('utf-8')) if liquidity_head_marker else 0
+        liquidity_data = await get_dag_block_by_height(project_id_token_reserve, liquidity_head_marker)
+        
+        if not liquidity_data:
+            logger.error(f"No liquidity data avaiable for - projectId:{project_id_token_reserve} and liquidity head marker:{liquidity_head_marker}")
+            return
+        
         token0_liquidity = float(list(liquidity_data['data']['payload']['token0Reserves'].values())[-1])
         token1_liquidity = float(list(liquidity_data['data']['payload']['token1Reserves'].values())[-1])
         total_liquidity = token0_liquidity * token0Price + token1_liquidity * token1Price
@@ -288,8 +294,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
     return json.loads(prepared_snapshot.json())
 
 
-@provide_async_writer_conn_inst
-async def v2_pairs_data(writer_redis_conn: aioredis.Redis = None):
+
+async def v2_pairs_data():
     f = None
     try:
         if not os.path.exists('static/cached_pair_addresses.json'):
@@ -300,10 +306,13 @@ async def v2_pairs_data(writer_redis_conn: aioredis.Redis = None):
         if len(pairs) <= 0:
             return []
 
+        aioredis_pool = RedisPool()
+        await aioredis_pool.populate()
+
         logger.debug("Create threads to process trade volume data")
         process_data_list = []
         for pair_contract_address in pairs:
-            t = process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contract_address)
+            t = process_pairs_trade_volume_and_reserves(aioredis_pool.writer_redis_pool, pair_contract_address)
             process_data_list.append(t)
 
         final_results = await asyncio.gather(*process_data_list, return_exceptions=True)
@@ -314,11 +323,6 @@ async def v2_pairs_data(writer_redis_conn: aioredis.Redis = None):
     finally:
         if f is not None:
             f.close()
-
-async def get_aiohttp_cache() -> aiohttp.ClientSession:
-    basic_rpc_connector = aiohttp.TCPConnector(limit=2048)
-    aiohttp_client_basic_rpc_session = aiohttp.ClientSession(connector=basic_rpc_connector)
-    return aiohttp_client_basic_rpc_session
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
