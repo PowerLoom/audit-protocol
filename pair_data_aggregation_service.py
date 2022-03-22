@@ -75,6 +75,15 @@ def read_json_file(file_path: str):
 pair_contract_abi = read_json_file(f"abis/UniswapV2Pair.json")
 erc20_abi = read_json_file('abis/IERC20.json')
 
+def get_maker_pair_data(prop):
+    prop = prop.lower()
+    if prop.lower() == "name":
+        return "Maker"
+    elif prop.lower() == "symbol":
+        return "MKR"
+    else:
+        return "Maker"
+
 async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer_redis_conn):
     """
         returns information on the tokens contained within a pair contract - name, symbol, decimals of token0 and token1
@@ -323,6 +332,7 @@ async def v2_pairs_data():
     finally:
         if f is not None:
             f.close()
+
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
