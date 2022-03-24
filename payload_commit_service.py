@@ -137,7 +137,7 @@ async def periodic_commit_payload():
         routing_key = 'commit-payloads'
         receiving_queue = await channel.declare_queue(name=commit_payload_queue, durable=True, auto_delete=False)
         await receiving_queue.bind(audit_protocol_backend_exchange, routing_key=routing_key)
-        payload_logger.debug(f'Consuming payload commit queue %s with routing key %s...')
+        payload_logger.debug(f'Consuming payload commit queue %s with routing key %s...', commit_payload_queue, routing_key)
         await receiving_queue.consume(commit_single_payload, arguments={'aioredis_pool': aioredis_pool})
 
 
