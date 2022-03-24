@@ -242,8 +242,8 @@ func (verifier *DagVerifier) InitRedisClient(settingsObj SettingsObj) {
 	redisURL := settingsObj.Redis.Host + ":" + strconv.Itoa(settingsObj.Redis.Port)
 	redisDb := settingsObj.Redis.Db
 	//TODO: Change post testing to fetch from settings.
-	redisURL = "localhost:6379"
-	redisDb = 0
+	//redisURL = "localhost:6379"
+	//redisDb = 0
 	log.Info("Connecting to redis at:", redisURL)
 	verifier.redisClient = redis.NewClient(&redis.Options{
 		Addr:     redisURL,
