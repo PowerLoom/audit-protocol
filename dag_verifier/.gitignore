@@ -1,0 +1,4 @@
+verifyDagChain
+dagChainVerifier
+out
+*.log
