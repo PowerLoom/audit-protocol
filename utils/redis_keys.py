@@ -178,3 +178,19 @@ def get_cached_containers_key(container_id: str):
 
 def get_projects_registered_for_cache_indexing_key():
     return 'cache:indexesRequested'
+
+
+#TODO: THIS IS REALLY BAD MAKE A REDIS KEY FILE like FpmmPooler and shift atleat below keys to it
+NAMESPACE = 'UNISWAPV2'
+
+def get_uniswap_pair_contract_tokens_addresses(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensAddresses'.format(pair_address)
+
+def get_uniswap_pair_contract_tokens_data(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensData'.format(pair_address)
+
+def get_uniswap_pair_contract_V2_pair_data(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:contractV2PairCachedData'.format(pair_address)
+    
+def get_uniswap_pair_cached_token_price(pair_symbol):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:cachedPairPrice'.format(pair_symbol)

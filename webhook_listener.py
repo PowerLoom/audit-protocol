@@ -13,7 +13,7 @@ from utils import helper_functions
 from utils import diffmap_utils
 from utils import dag_utils
 from utils.ipfs_async import client as ipfs_client
-from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
+from utils.redis_conn import RedisPool
 
 
 app = FastAPI()
@@ -58,18 +58,10 @@ async def startup_boilerplate():
         os.stat(os.getcwd() + '/containers')
     except:
         os.mkdir(os.getcwd() + '/containers')
-    app.writer_redis_pool = await aioredis.create_pool(
-        address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
-        db=REDIS_WRITER_CONN_CONF['db'],
-        password=REDIS_WRITER_CONN_CONF['password'],
-        maxsize=50
-    )
-    app.reader_redis_pool = await aioredis.create_pool(
-        address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
-        db=REDIS_READER_CONN_CONF['db'],
-        password=REDIS_READER_CONN_CONF['password'],
-        maxsize=50
-    )
+    app.aioredis_pool = RedisPool()
+    await app.aioredis_pool.populate()
+    app.writer_redis_pool = app.aioredis_pool.writer_redis_pool
+    app.reader_redis_pool = app.aioredis_pool.reader_redis_pool
     app.aiohttp_client_session = aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(
             sock_connect=settings.aiohtttp_timeouts.sock_connect,
@@ -80,15 +72,13 @@ async def startup_boilerplate():
 
 
 @app.post('/')
-@inject_writer_redis_conn
-@inject_reader_redis_conn
 async def create_dag(
         request: Request,
         response: Response,
         x_hook_signature: str = Header(None),
-        reader_redis_conn=None,
-        writer_redis_conn=None
 ):
+    reader_redis_conn = request.app.reader_redis_pool
+    writer_redis_conn = request.app.writer_redis_pool
     event_data = await request.json()
     # Verify the payload that has arrived.
     if x_hook_signature:
@@ -105,39 +95,39 @@ async def create_dag(
 
             """ Get data from the event """
             project_id = event_data['event_data']['projectId']
-            tentative_block_height = int(event_data['event_data']['tentativeBlockHeight'])
+            tentative_block_height_event_data = int(event_data['event_data']['tentativeBlockHeight'])
 
             # Get the max block height for the project_id
-            max_block_height = await helper_functions.get_block_height(
+            max_block_height_project = await helper_functions.get_block_height(
                 project_id=project_id,
                 reader_redis_conn=reader_redis_conn
             )
 
             rest_logger.debug("Tentative Block Height and Block Height")
-            rest_logger.debug(tentative_block_height)
-            rest_logger.debug(max_block_height)
+            rest_logger.debug(tentative_block_height_event_data)
+            rest_logger.debug(max_block_height_project)
 
-            actual_tt_block_height = await helper_functions.get_tentative_block_height(
+            tentative_block_height_cached = await helper_functions.get_tentative_block_height(
                 project_id=project_id,
                 reader_redis_conn=reader_redis_conn
             )
             # retrieve callback URL for project ID
             cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
-            if (actual_tt_block_height == max_block_height) or (tentative_block_height <= max_block_height):
+            if (tentative_block_height_cached == max_block_height_project) or (tentative_block_height_event_data <= max_block_height_project):
                 rest_logger.debug("Discarding event at height:")
-                rest_logger.debug(tentative_block_height)
+                rest_logger.debug(tentative_block_height_event_data)
                 redis_output = await dag_utils.discard_event(
                     project_id=project_id,
                     payload_commit_id=event_data['event_data']['payloadCommitId'],
                     tx_hash=event_data['txHash'],
                     payload_cid=event_data['event_data']['snapshotCid'],
-                    tentative_block_height=tentative_block_height,
+                    tentative_block_height=tentative_block_height_event_data,
                 )
                 rest_logger.debug("Redis operations output: ")
                 rest_logger.debug(redis_output)
                 return dict()
 
-            elif tentative_block_height > max_block_height + 1:
+            elif tentative_block_height_event_data > max_block_height_project + 1:
                 rest_logger.debug("An out of order event arrived...")
                 rest_logger.debug("Checking if that txHash is in the list of pending Transactions")
 
@@ -155,16 +145,19 @@ async def create_dag(
 
                     _ = await writer_redis_conn.zadd(
                         key=discarded_transactions_key,
-                        score=tentative_block_height,
+                        score=tentative_block_height_event_data,
                         member=event_data['txHash']
                     )
 
                     return dict()
 
-                if (actual_tt_block_height - max_block_height) >= settings.max_pending_events:
+                if (tentative_block_height_cached - max_block_height_project) >= settings.max_pending_events:
 
-                    target_tt_block_height = max_block_height + 1
+                    target_tt_block_height = max_block_height_project + 1
 
+                    # FIXME: we take the zscore of the tx hash in `out` yet it is not used
+                    #   instead, this is terrible practice to be shoving the arrived event data at the height
+                    #   (last known block height+1)
                     rest_logger.debug("Creating DAG for the arrived event at height: ")
                     rest_logger.debug(target_tt_block_height)
 
@@ -192,8 +185,8 @@ async def create_dag(
                     """ Move the payload_commit_id's from pendingTransactions into discardedTransactions """
                     pending_transactions = await reader_redis_conn.zrangebyscore(
                         key=pending_transactions_key,
-                        max=actual_tt_block_height,
-                        min=max_block_height + 1,
+                        max=tentative_block_height_cached,
+                        min=max_block_height_project + 1,
                         withscores=True
                     )
 
@@ -213,8 +206,8 @@ async def create_dag(
                     pending_blocks_key = redis_keys.get_pending_blocks_key(project_id)
                     all_pending_blocks = await reader_redis_conn.zrangebyscore(
                         key=pending_blocks_key,
-                        max=tentative_block_height,
-                        min=max_block_height + 1,
+                        max=tentative_block_height_event_data,
+                        min=max_block_height_project + 1,
                     )
 
                     for pending_block in all_pending_blocks:
@@ -239,13 +232,13 @@ async def create_dag(
                         )
                 else:
                     rest_logger.debug("Saving Event data for height: ")
-                    rest_logger.debug(tentative_block_height)
+                    rest_logger.debug(tentative_block_height_event_data)
                     _ = await dag_utils.save_event_data(
                         event_data=event_data,
                         writer_redis_conn=writer_redis_conn,
                     )
 
-            elif tentative_block_height == max_block_height + 1:
+            elif tentative_block_height_event_data == max_block_height_project + 1:
                 """
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
@@ -254,7 +247,7 @@ async def create_dag(
                 _dag_cid, dag_block = await dag_utils.create_dag_block(
                     tx_hash=event_data['txHash'],
                     project_id=project_id,
-                    tentative_block_height=tentative_block_height,
+                    tentative_block_height=tentative_block_height_event_data,
                     payload_cid=event_data['event_data']['snapshotCid'],
                     timestamp=event_data['event_data']['timestamp']
                 )
@@ -278,9 +271,9 @@ async def create_dag(
                         _payload_commit_id = _payload_commit_id.decode('utf-8')
                         _tt_block_height = int(_tt_block_height)
 
-                        if _tt_block_height == max_block_height + 1:
+                        if _tt_block_height == max_block_height_project + 1:
                             rest_logger.debug("Processing tentative_block_height: ")
-                            rest_logger.debug(tentative_block_height)
+                            rest_logger.debug(tentative_block_height_event_data)
 
                             """ Retrieve the event data for the payload_commit_id """
                             event_data_key = f"eventData:{_payload_commit_id}"
@@ -293,8 +286,14 @@ async def create_dag(
                             # _tx_hash = _event_data['event_data'].pop('txHash')
 
                             """ Create the dag block for this event """
-                            _dag_cid, dag_block = await dag_utils.create_dag_block(**_event_data)
-                            max_block_height = dag_block['height']
+                            _dag_cid, dag_block = await dag_utils.create_dag_block(
+                                tx_hash=_event_data['txHash'],
+                                project_id=project_id,
+                                tentative_block_height=_tt_block_height,
+                                payload_cid=_event_data['event_data']['snapshotCid'],
+                                timestamp=_event_data['event_data']['timestamp'],
+                            )
+                            max_block_height_project = dag_block['height']
                             await dag_utils.clear_payload_commit_data(
                                 project_id=project_id,
                                 payload_commit_id=_payload_commit_id,

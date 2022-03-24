@@ -86,3 +86,24 @@ class ContainerData(BaseModel):
         self.backupTargets = json.dumps(self.backupTargets)
         self.backupMetaData = json.dumps(self.backupMetaData.dict())
         self.bloomFilterSettings = json.dumps(self.bloomFilterSettings.dict())
+
+
+class liquidityProcessedData(BaseModel):
+    contractAddress: str
+    name: str
+    liquidity: str
+    volume_24h: str
+    volume_7d: str
+    cid_volume_24h: str
+    cid_volume_7d: str
+    fees_24h: str
+    block_height_total_reserve: int
+    block_heigh_trade_volume: int
+    token0Liquidity: float
+    token1Liquidity: float
+    token0TradeVolume_24h: float
+    token1TradeVolume_24h: float
+    token0TradeVolume_7d: float
+    token1TradeVolume_7d: float
+
+

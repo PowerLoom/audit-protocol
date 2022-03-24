@@ -3,6 +3,15 @@ from data_models import BloomFilterSettings
 from typing import Union, List, Optional
 import json
 
+class ContractAddresses(BaseModel):
+    iuniswap_v2_factory: str
+    iuniswap_v2_router: str
+    iuniswap_v2_pair: str
+    USDT: str
+    DAI: str
+    USDC: str
+    WETH: str
+    MAKER: str
 
 class WebhookListener(BaseModel):
     host: str
@@ -62,6 +71,7 @@ class Settings(BaseModel):
     webhook_listener: Union[WebhookListener, dict]
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
+    contract_addresses: Union[ContractAddresses, dict]
 
     @validator("bloom_filter_settings", "webhook_listener", "redis", "redis_reader")
     def convert_to_models(cls, data, values, **kwargs):
