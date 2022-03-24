@@ -3,6 +3,7 @@ from data_models import BloomFilterSettings
 from typing import Union, List, Optional
 import json
 
+
 class ContractAddresses(BaseModel):
     iuniswap_v2_factory: str
     iuniswap_v2_router: str
@@ -12,6 +13,7 @@ class ContractAddresses(BaseModel):
     USDC: str
     WETH: str
     MAKER: str
+
 
 class WebhookListener(BaseModel):
     host: str
@@ -31,6 +33,14 @@ class RedisConfig(BaseModel):
     password: Optional[str]
 
 
+class RabbitMQConfig(BaseModel):
+    user: str
+    password: str
+    host: str
+    port: int
+    setup: dict
+
+
 class TableNames(BaseModel):
     api_keys: str
     accounting_records: str
@@ -43,6 +53,7 @@ class Settings(BaseModel):
     port: str
     rlimit: dict
     ipfs_url: str
+    rabbitmq: RabbitMQConfig
     snapshot_interval: int
     dag_table_name: str
     seed: str

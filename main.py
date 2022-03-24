@@ -4,29 +4,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
 from maticvigil.EVCore import EVCore
+from tenacity import AsyncRetrying, stop_after_attempt, wait_random
 from maticvigil.exceptions import EVBaseException
+from config import settings
+from pygate_grpc.client import PowerGateClient
+from uuid import uuid4
+from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
+from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
+from utils import helper_functions
+from utils import redis_keys
+from utils.redis_conn import REDIS_WRITER_CONN_CONF, REDIS_READER_CONN_CONF
+from functools import partial
+from utils import retrieval_utils
+from utils.diffmap_utils import process_payloads_for_diff, preprocess_dag
+from data_models import ContainerData, PayloadCommit
+from pydantic import ValidationError
+from aio_pika import ExchangeType, DeliveryMode, Message
+from aio_pika.pool import Pool
 import logging
 import sys
 import json
 import aioredis
 import redis
 import time
-from config import settings
-from pygate_grpc.client import PowerGateClient
-from uuid import uuid4
 import requests
 import async_timeout
-from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
-from utils.ipfs_async import client as ipfs_client
-from utils.diffmap_utils import process_payloads_for_diff, preprocess_dag
-from data_models import ContainerData
-from pydantic import ValidationError
 import asyncio
-from functools import partial
-from utils import helper_functions
-from utils import redis_keys
-from utils.redis_conn import REDIS_WRITER_CONN_CONF, REDIS_READER_CONN_CONF
-from utils import retrieval_utils
 
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
@@ -83,6 +86,11 @@ STORAGE_CONFIG = {
 
 @app.on_event('startup')
 async def startup_boilerplate():
+    app.rmq_connection_pool = Pool(get_rabbitmq_connection, max_size=5, loop=asyncio.get_running_loop())
+    app.rmq_channel_pool = Pool(
+        partial(get_rabbitmq_channel, app.rmq_connection_pool), max_size=20, loop=asyncio.get_running_loop()
+    )
+
     app.writer_redis_pool = await aioredis.create_pool(
         address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
         db=REDIS_WRITER_CONN_CONF['db'],
@@ -208,11 +216,13 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
     )
     partial_func = partial(contract.commitRecord, **kwargs)
     try:
-        async with async_timeout.timeout(5) as cm:
+        # 10 seconds is a generous time out
+        async with async_timeout.timeout(10) as cm:
             try:
-
-                tx_hash_obj = await loop.run_in_executor(None, partial_func)
-
+                # try 3 times, wait 1-2 seconds between retries
+                async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+                    with attempt:
+                        tx_hash_obj = await loop.run_in_executor(None, partial_func)
             except EVBaseException as evbase:
                 e_obj = evbase
             except requests.exceptions.HTTPError as errh:
@@ -229,7 +239,7 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
                 rest_logger.debug("The transaction went through successfully")
                 rest_logger.debug(tx_hash_obj)
     except asyncio.exceptions.CancelledError as cerr:
-        rest_logger.debug("Transcation task cancelled")
+        rest_logger.debug("Transaction task cancelled")
         return -1
     except asyncio.exceptions.TimeoutError as terr:
         rest_logger.debug("The transaction timed-out")
@@ -237,7 +247,7 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
 
     if e_obj or cm.expired:
         rest_logger.debug("=" * 80)
-        rest_logger.debug("The transaction was not succesfull")
+        rest_logger.debug("The transaction was not succesful")
         rest_logger.debug("Commit Payload failed to MaticVigil API")
         rest_logger.debug(e_obj)
         rest_logger.debug("=" * 80)
@@ -317,23 +327,32 @@ async def commit_payload(
     rest_logger.debug("Created the unique payload commit id: ")
     rest_logger.debug(payload_commit_id)
 
-    """ Create the Hash table for Payload """
-    payload_commit_key = redis_keys.get_payload_commit_key(payload_commit_id)
-    fields = {
+    payload_for_commit = PayloadCommit(**{
         'projectId': project_id,
         'commitId': payload_commit_id,
-        'payload': json.dumps(payload),
+        'payload': payload,
         'tentativeBlockHeight': last_tentative_block_height,
-    }
+    })
 
-    _ = await writer_redis_conn.hmset_dict(
-        key=payload_commit_key,
-        **fields
-    )
+    # push payload for commit to rabbitmq queue
+    async with request.app.rmq_channel_pool.acquire() as channel:
+        exchange = await channel.declare_exchange(
+            settings.rabbitmq.setup['core']['exchange'],
+            ExchangeType.DIRECT
+        )
+        message = Message(
+            payload_for_commit.json().encode('utf-8'),
+            delivery_mode=DeliveryMode.PERSISTENT,
+        )
 
-    """ Add this payload commit for pending payload commits list """
-    pending_payload_commits_key = redis_keys.get_pending_payload_commits_key()
-    _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
+        await exchange.publish(
+            message=message,
+            routing_key='commit-payloads'
+        )
+        rest_logger.debug(
+            'Published payload against commit ID %s to RabbitMQ payload commit service queue', payload_commit_id
+        )
+    # _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
 
     _ = await writer_redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
 
