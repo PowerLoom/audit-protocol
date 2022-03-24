@@ -1,10 +1,16 @@
 from config import settings
+from data_models import PayloadCommit
 from utils.ipfs_async import client as ipfs_client
 from eth_utils import keccak
 from main import make_transaction
 from maticvigil.EVCore import EVCore
+from aio_pika.pool import Pool
+from aio_pika import IncomingMessage
 from utils.redis_conn import RedisPool
 from utils import redis_keys
+from utils.rabbitmq_utils import get_rabbitmq_channel, get_rabbitmq_connection
+from functools import partial
+import aio_pika
 import aioredis
 import coloredlogs
 import logging
@@ -37,26 +43,20 @@ contract = evc.generate_contract_sdk(
 
 
 async def commit_single_payload(
-        payload_commit_id: str,
-        reader_redis_conn,
-        writer_redis_conn,
-        semaphore: asyncio.BoundedSemaphore,
+    message: IncomingMessage,
+    aioredis_pool: RedisPool
 ):
+    # semaphore: asyncio.BoundedSemaphore
     """
         - This function will take a pending payload and commit it to a smart contract
     """
-    payload_commit_key = redis_keys.get_payload_commit_key(payload_commit_id=payload_commit_id)
-    out = await reader_redis_conn.hgetall(payload_commit_key)
-    if out:
-        payload_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-    else:
-        payload_logger.warning("No payload data found in redis..")
-        return -1
-
+    writer_redis_conn = aioredis_pool.writer_redis_pool
+    payload_commit_obj: PayloadCommit = PayloadCommit.parse_raw(message.body)
+    payload_commit_id = payload_commit_obj.commitId
     # payload_logger.debug(payload_data)
     snapshot = dict()
-    core_payload = json.loads(payload_data['payload'])
-    project_id = payload_data['projectId']
+    core_payload = payload_commit_obj.payload
+    project_id = payload_commit_obj.projectId
     if type(core_payload) is dict:
         snapshot_cid = await ipfs_client.add_json(core_payload)
     else:
@@ -69,7 +69,7 @@ async def commit_single_payload(
     payload_cid_key = redis_keys.get_payload_cids_key(project_id)
     _ = await writer_redis_conn.zadd(
         key=payload_cid_key,
-        score=int(payload_data['tentativeBlockHeight']),
+        score=int(payload_commit_obj.tentativeBlockHeight),
         member=snapshot_cid
     )
     snapshot['cid'] = snapshot_cid
@@ -82,8 +82,8 @@ async def commit_single_payload(
             snapshot_cid=snapshot_cid,
             token_hash=token_hash,
             payload_commit_id=payload_commit_id,
-            last_tentative_block_height=int(payload_data['tentativeBlockHeight']),
-            project_id=payload_data['projectId'],
+            last_tentative_block_height=payload_commit_obj.tentativeBlockHeight,
+            project_id=payload_commit_obj.projectId,
             writer_redis_conn=writer_redis_conn,
             contract=contract
         )
@@ -108,43 +108,6 @@ async def commit_single_payload(
     return 1
 
 
-async def commit_pending_payloads():
-    """
-        - The goal of this function will be to check if there are any pending
-        payloads left to commit, and take action on them
-    """
-    global contract
-    aioredis_pool = RedisPool()
-    await aioredis_pool.populate()
-    payload_logger.debug("Checking for pending payloads to commit...")
-    pending_payload_commits_key = redis_keys.get_pending_payload_commits_key()
-    pending_payloads = await aioredis_pool.reader_redis_pool.lrange(pending_payload_commits_key, 0, -1)
-    if len(pending_payloads) > 0:
-        payload_logger.debug("Pending payloads found: ")
-        payload_logger.debug(pending_payloads)
-        tasks = []
-
-        semaphore = asyncio.BoundedSemaphore(settings.max_payload_commits)
-
-        """ Processing each of the pending payloads """
-        while True:
-            payload_commit_id = await aioredis_pool.writer_redis_pool.rpop(pending_payload_commits_key)
-            if not payload_commit_id:
-                break
-
-            payload_commit_id = payload_commit_id.decode('utf-8')
-            tasks.append(commit_single_payload(
-                payload_commit_id=payload_commit_id,
-                reader_redis_conn=aioredis_pool.reader_redis_pool,
-                writer_redis_conn=aioredis_pool.writer_redis_pool,
-                semaphore=semaphore
-            ))
-
-        await asyncio.gather(*tasks)
-    else:
-        payload_logger.debug("No pending payload's found...")
-
-
 def verifier_crash_cb(fut: asyncio.Future):
     try:
         exc = fut.exception()
@@ -158,13 +121,28 @@ def verifier_crash_cb(fut: asyncio.Future):
 
 
 async def periodic_commit_payload():
-    while True:
-        await asyncio.gather(
-            commit_pending_payloads(),
-            asyncio.sleep(settings.payload_commit_interval)
+    aioredis_pool = RedisPool()
+    await aioredis_pool.populate()
+    rmq_connection_pool = Pool(get_rabbitmq_connection, max_size=5, loop=asyncio.get_running_loop())
+    rmq_channel_pool = Pool(
+        partial(get_rabbitmq_channel, rmq_connection_pool), max_size=20, loop=asyncio.get_running_loop()
+    )
+    async with rmq_channel_pool.acquire() as channel:
+        await channel.set_qos(20)
+        audit_protocol_backend_exchange = await channel.declare_exchange(
+            settings.rabbitmq.setup['core']['exchange'], aio_pika.ExchangeType.DIRECT
         )
+        # Declaring log request receiver queue and bind to exchange
+        commit_payload_queue = 'audit-protocol-commit-payloads'
+        routing_key = 'commit-payloads'
+        receiving_queue = await channel.declare_queue(name=commit_payload_queue, durable=True, auto_delete=False)
+        await receiving_queue.bind(audit_protocol_backend_exchange, routing_key=routing_key)
+        payload_logger.debug(f'Consuming payload commit queue %s with routing key %s...', commit_payload_queue, routing_key)
+        await receiving_queue.consume(commit_single_payload, arguments={'aioredis_pool': aioredis_pool})
+
 
 if __name__ == "__main__":
+    semaphore = asyncio.BoundedSemaphore(settings.max_payload_commits)
     payload_logger.debug("Starting the loop")
     f = asyncio.ensure_future(periodic_commit_payload())
     f.add_done_callback(verifier_crash_cb)

@@ -5,6 +5,17 @@
 		"host": "127.0.0.1",
 		"port": 9002
 	},
+	"rabbitmq": {
+		"user": "guest",
+		"password": "guest",
+		"host": "localhost",
+		"port": 5672,
+		"setup": {
+			"core": {
+				"exchange": "audit-protocol-backend"
+			}
+		}
+	},
 	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
 	"snapshot_interval": 4,
 	"dag_table_name": "DAG_CID",

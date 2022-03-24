@@ -290,8 +290,8 @@ async def create_dag(
                                 tx_hash=_event_data['txHash'],
                                 project_id=project_id,
                                 tentative_block_height=_tt_block_height,
-                                payload_cid=_event_data['event_data']['snapshotCid'],
-                                timestamp=_event_data['event_data']['timestamp'],
+                                payload_cid=_event_data['snapshotCid'],
+                                timestamp=_event_data['timestamp'],
                             )
                             max_block_height_project = dag_block['height']
                             await dag_utils.clear_payload_commit_data(

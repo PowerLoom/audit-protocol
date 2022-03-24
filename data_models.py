@@ -3,6 +3,13 @@ from typing import Union, List, Optional
 import json
 
 
+class PayloadCommit(BaseModel):
+    projectId: str
+    commitId: str
+    payload: str
+    tentativeBlockHeight: int
+
+
 class FilecoinJobData(BaseModel):
     stagedCid: str = ""
     jobId: str = ""
