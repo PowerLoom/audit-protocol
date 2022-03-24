@@ -39,18 +39,28 @@ func (client *IpfsClient) DagGet(dagCid string) (DagChainBlock, error) {
 
 func (client *IpfsClient) GetPayload(payloadCid string, retryCount int) (DagPayloadData, error) {
 	var payload DagPayloadData
-	data, err := client.ipfsClient.Cat(payloadCid)
-	if err != nil {
-		log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
-		return payload, err
+	var err error
+	var i int
+	for i = 0; i < retryCount; i++ {
+		data, err := client.ipfsClient.Cat(payloadCid)
+		if err != nil {
+			log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
+			//TODO": fin-grain handling needed that in case of network error, retry with exponential backoff
+			continue
+		}
+
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(data)
+
+		err = json.Unmarshal(buf.Bytes(), &payload)
+		if err != nil {
+			log.Error("Failed to Unmarshal Json Payload from IPFS, CID:", payloadCid, ", bytes:", buf, ", error:", err)
+			return payload, err
+		}
+		break
 	}
-
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(data)
-
-	err = json.Unmarshal(buf.Bytes(), &payload)
-	if err != nil {
-		log.Error("Failed to Unmarshal Json Payload from IPFS, CID:", payloadCid, ", bytes:", buf, ", error:", err)
+	if i >= retryCount {
+		log.Error("Failed to fetch even after retrying.")
 		return payload, err
 	}
 	log.Tracef("Fetched Payload with CID %s from IPFS: %+v", payloadCid, payload)

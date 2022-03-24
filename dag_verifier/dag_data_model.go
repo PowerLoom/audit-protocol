@@ -1,9 +1,9 @@
 package main
 
 type DagPayload struct {
-	PayloadCid string `json:payloadCid`
-	Height     int64  `json:height`
-	Data       DagPayloadData
+	PayloadCid     string `json:payloadCid`
+	DagChainHeight int64  `json:dagChainHeight`
+	Data           DagPayloadData
 }
 
 type DagPayloadData struct {
