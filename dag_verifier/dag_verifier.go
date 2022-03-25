@@ -23,6 +23,11 @@ type DagVerifier struct {
 
 //TODO: Migrate to env or settings.
 const NAMESPACE string = "UNISWAPV2"
+const PAIR_TRADEVOLUME_PROJECTID string = "projectID:uniswap_pairContract_trade_volume_%s_%s"
+const PAIR_TOTALRESERVE_PROJECTID string = "projectID:uniswap_pairContract_pair_total_reserves_%s_%s"
+
+const DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT string = "DUPLICATE_HEIGHT_IN_CHAIN"
+const DAG_CHAIN_ISSUE_GAP_IN_CHAIN string = "GAP_IN_CHAIN"
 
 func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddresses *[]string) {
 	verifier.InitIPFSClient(settings)
@@ -39,15 +44,15 @@ func (verifier *DagVerifier) PopulateProjects(pairContractAddresses *[]string) {
 	pairAddresses := *pairContractAddresses
 	//For now as we are aware there are 2 types of projects for uniswap, we can hardcode the same.
 	for i := range *pairContractAddresses {
-		pairTradeVolumeProjectId := "projectID:uniswap_pairContract_trade_volume_" + pairAddresses[i] + "_" + NAMESPACE
-		pairTotalReserveProjectId := "projectID:uniswap_pairContract_pair_total_reserves_" + pairAddresses[i] + "_" + NAMESPACE
+		pairTradeVolumeProjectId := fmt.Sprintf(PAIR_TRADEVOLUME_PROJECTID, pairAddresses[i], NAMESPACE)
+		pairTotalReserveProjectId := fmt.Sprintf(PAIR_TOTALRESERVE_PROJECTID, pairAddresses[i], NAMESPACE)
 		verifier.projects = append(verifier.projects, pairTotalReserveProjectId)
 		verifier.projects = append(verifier.projects, pairTradeVolumeProjectId)
 	}
 }
 
 func (verifier *DagVerifier) FetchLastVerificationStatusFromRedis() {
-	key := "projects:" + NAMESPACE + ":dagVerificationStatus"
+	key := fmt.Sprintf(REDIS_KEY_DAG_VERIFICATION_STATUS, NAMESPACE)
 	log.Debug("Fetching LastVerificationStatusFromRedis at key:", key)
 
 	res := verifier.redisClient.HGetAll(ctx, key)
@@ -73,7 +78,7 @@ func (verifier *DagVerifier) FetchLastVerificationStatusFromRedis() {
 }
 
 func (verifier *DagVerifier) UpdateLastStatusToRedis() {
-	key := "projects:" + NAMESPACE + ":dagVerificationStatus"
+	key := fmt.Sprintf(REDIS_KEY_DAG_VERIFICATION_STATUS, NAMESPACE)
 	log.Info("Updating LastVerificationStatusFromRedis at key:", key)
 	res := verifier.redisClient.HMSet(ctx, key, verifier.lastVerifiedDagBlockHeights)
 	if res.Err() != nil {
@@ -170,7 +175,7 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 }
 
 func (verifier *DagVerifier) updateDagGapsinRedis(projectId string, chainGaps []DagChainGap) {
-	key := projectId + ":dagChainGaps"
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_DAG_CHAIN_GAPS, projectId)
 	var gaps []*redis.Z
 	for i := range chainGaps {
 		gapStr, err := json.Marshal(chainGaps[i])
@@ -200,7 +205,9 @@ func (verifier *DagVerifier) updateDagGapsinRedis(projectId string, chainGaps []
 func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScore string) ([]DagPayload, error) {
 	var dagPayloadsInfo []DagPayload
 
-	key := projectId + ":payloadCids"
+	//key := projectId + ":payloadCids"
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+
 	log.Debug("Fetching PayloadCids from redis at key:", key, ",with startScore: ", startScore)
 	zRangeByScore := verifier.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 		Min: startScore,
@@ -240,7 +247,7 @@ func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) (bool, []DagC
 		//log.Debug("Processing dag block :", i, "nextDagBlockStart:", nextDagBlockStart)
 		if prevDagBlockEnd != 0 {
 			if dagPayloads[i].DagChainHeight == dagPayloads[i-1].DagChainHeight {
-				dagGaps = append(dagGaps, DagChainGap{IssueType: "DUPLICATE_HEIGHT_IN_CHAIN",
+				dagGaps = append(dagGaps, DagChainGap{IssueType: DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT,
 					TimestampIdentified: time.Now().Unix(),
 					DAGBlockHeight:      dagPayloads[i].DagChainHeight})
 				//TODO:If there are multiple snapshots observed at same blockHeight, need to take action to cleanup snapshots
@@ -252,7 +259,7 @@ func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) (bool, []DagC
 			if curBlockStart != prevDagBlockEnd+1 {
 				log.Debug("Gap identified at ChainHeight:", dagPayloads[i].DagChainHeight, ",PayloadCID:", dagPayloads[i].PayloadCid, ", between height:", dagPayloads[i-1].DagChainHeight, " and ", dagPayloads[i].DagChainHeight)
 				log.Debug("Missing blocks from(not including): ", prevDagBlockEnd, " to(not including): ", curBlockStart)
-				dagGaps = append(dagGaps, DagChainGap{IssueType: "GAP_IN_CHAIN", MissingBlockHeightStart: prevDagBlockEnd + 1,
+				dagGaps = append(dagGaps, DagChainGap{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, MissingBlockHeightStart: prevDagBlockEnd + 1,
 					MissingBlockHeightEnd: curBlockStart - 1,
 					TimestampIdentified:   time.Now().Unix(),
 					DAGBlockHeight:        dagPayloads[i].DagChainHeight})
