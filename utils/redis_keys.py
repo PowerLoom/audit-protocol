@@ -126,6 +126,10 @@ def get_executing_containers_key():
     return executing_containers_key
 
 
+def get_payload_commit_id_process_logs_zset_key(project_id, payload_commit_id):
+    return f'projectID:{project_id}:payloadCommitID:{payload_commit_id}:processingLogs'
+
+
 def get_hits_dag_block_key():
     hits_dag_block_key = "hitsDagBlock"
     return hits_dag_block_key

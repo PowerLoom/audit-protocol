@@ -9,7 +9,7 @@ from maticvigil.exceptions import EVBaseException
 from config import settings
 from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
-from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn
+from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn, RedisPool
 from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
 from utils import helper_functions
 from utils import redis_keys
@@ -90,72 +90,17 @@ async def startup_boilerplate():
     app.rmq_channel_pool = Pool(
         partial(get_rabbitmq_channel, app.rmq_connection_pool), max_size=20, loop=asyncio.get_running_loop()
     )
+    app.aioredis_pool = RedisPool()
+    await app.aioredis_pool.populate()
 
-    app.writer_redis_pool = await aioredis.create_pool(
-        address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
-        db=REDIS_WRITER_CONN_CONF['db'],
-        password=REDIS_WRITER_CONN_CONF['password'],
-        maxsize=50
-    )
-    app.reader_redis_pool = await aioredis.create_pool(
-        address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
-        db=REDIS_READER_CONN_CONF['db'],
-        password=REDIS_READER_CONN_CONF['password'],
-        maxsize=50
-    )
+    app.reader_redis_pool = app.aioredis_pool.reader_redis_pool
+    app.writer_redis_pool = app.aioredis_pool.writer_redis_pool
+
     # app.evc = EVCore(verbose=True)
     # app.contract = app.evc.generate_contract_sdk(
     #     contract_address=settings.audit_contract,
     #     app_name='auditrecords'
     # )
-
-
-@inject_reader_redis_conn
-@inject_writer_redis_conn
-async def get_project_token(
-        request: Request = None,
-        projectId: str = None,
-        override_settings=False,
-        reader_redis_conn=None,
-        writer_redis_conn=None
-
-):
-    """ From the request body, extract the projectId and return back the powergate token."""
-    if projectId is None:
-        try:
-            req_args = await request.json()
-        except json.JSONDecodeError as jerr:
-            rest_logger.error(jerr, exc_info=True)
-            return {'error': "The payload has to be a json structured payload."}
-        projectId = req_args['projectId']
-
-    """ Save the project Id on set """
-    _ = await writer_redis_conn.sadd(redis_keys.get_stored_project_ids_key(), projectId)
-
-    if (settings.payload_storage != "FILECOIN") and (settings.block_storage != "FILECOIN") and (
-            override_settings is False):
-        return ""
-
-    powgate_client = PowerGateClient(settings.powergate_client_addr, False)
-
-    """ Check if there is a filecoin token for the project Id """
-    filecoin_token_key = redis_keys.get_filecoin_token_key(project_id=projectId)
-    token = await reader_redis_conn.get(filecoin_token_key)
-    if not token:
-        user = powgate_client.admin.users.create()
-        token = user.token
-        _ = await writer_redis_conn.set(filecoin_token_key, token)
-        rest_logger.debug("Created a token for projectId: ")
-        rest_logger.debug(token)
-
-    else:
-        token = token.decode('utf-8')
-        rest_logger.debug("Retrieved token: ")
-        rest_logger.debug(token)
-        rest_logger.debug("projectID: ")
-        rest_logger.debug(projectId)
-
-    return token
 
 
 async def get_max_block_height(project_id: str, reader_redis_conn):
@@ -206,7 +151,7 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
     except Exception as e:
         rest_logger.warning("There was an error while trying to get event loop")
         rest_logger.error(e, exc_info=True)
-        return -1
+        return None
     kwargs = dict(
         payloadCommitId=payload_commit_id,
         snapshotCid=snapshot_cid,
@@ -216,42 +161,77 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
     )
     partial_func = partial(contract.commitRecord, **kwargs)
     try:
-        # 10 seconds is a generous time out
-        async with async_timeout.timeout(10) as cm:
-            try:
-                # try 3 times, wait 1-2 seconds between retries
-                async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
-                    with attempt:
-                        tx_hash_obj = await loop.run_in_executor(None, partial_func)
-            except EVBaseException as evbase:
-                e_obj = evbase
-            except requests.exceptions.HTTPError as errh:
-                e_obj = errh
-            except requests.exceptions.ConnectionError as errc:
-                e_obj = errc
-            except requests.exceptions.Timeout as errt:
-                e_obj = errt
-            except requests.exceptions.RequestException as errr:
-                e_obj = errr
-            except Exception as e:
-                e_obj = e
-            else:
-                rest_logger.debug("The transaction went through successfully")
-                rest_logger.debug(tx_hash_obj)
-    except asyncio.exceptions.CancelledError as cerr:
-        rest_logger.debug("Transaction task cancelled")
-        return -1
-    except asyncio.exceptions.TimeoutError as terr:
-        rest_logger.debug("The transaction timed-out")
-        return -1
+        # try 3 times, wait 1-2 seconds between retries
+        async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+            with attempt:
+                tx_hash_obj = await loop.run_in_executor(None, partial_func)
+                if tx_hash_obj:
+                    break
+    except EVBaseException as evbase:
+        e_obj = evbase
+    except requests.exceptions.HTTPError as errh:
+        e_obj = errh
+    except requests.exceptions.ConnectionError as errc:
+        e_obj = errc
+    except requests.exceptions.Timeout as errt:
+        e_obj = errt
+    except requests.exceptions.RequestException as errr:
+        e_obj = errr
+    except Exception as e:
+        e_obj = e
+    else:
+        rest_logger.debug(
+            "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
+            tx_hash_obj, payload_commit_id
+        )
+        await writer_redis_conn.zadd(
+            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                project_id=project_id, payload_commit_id=payload_commit_id
+            ),
+            member=json.dumps(
+                {
+                    'worker': 'payload_commit_service',
+                    'update': {
+                        'action': 'AuditRecord.Commit',
+                        'info': {
+                            'msg': kwargs,
+                            'status': 'Success',
+                            'txHash': tx_hash_obj
+                        }
+                    }
+                }
+            ),
+            score=int(time.time())
+        )
 
-    if e_obj or cm.expired:
+    if e_obj:
         rest_logger.debug("=" * 80)
-        rest_logger.debug("The transaction was not succesful")
-        rest_logger.debug("Commit Payload failed to MaticVigil API")
+        rest_logger.debug(
+            "Commit Payload to AuditRecord contract failed. The transaction was not successful against commit ID %s",
+            payload_commit_id
+        )
         rest_logger.debug(e_obj)
         rest_logger.debug("=" * 80)
-        return -1
+        await writer_redis_conn.zadd(
+            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                project_id=project_id, payload_commit_id=payload_commit_id
+            ),
+            member=json.dumps(
+                {
+                    'worker': 'payload_commit_service',
+                    'update': {
+                        'action': 'AuditRecord.Commit',
+                        'info': {
+                            'msg': kwargs,
+                            'status': 'Failed',
+                            'exception': e_obj.__repr__()
+                        }
+                    }
+                }
+            ),
+            score=int(time.time())
+        )
+        return None
 
     pending_transaction_key = f"projectID:{project_id}:pendingTransactions"
     tx_hash = tx_hash_obj[0]['txHash']
@@ -261,18 +241,13 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
             score=int(last_tentative_block_height),
             member=tx_hash
      )
-    return 1
+    return tx_hash
 
 
 @app.post('/commit_payload')
-@inject_reader_redis_conn
-@inject_writer_redis_conn
 async def commit_payload(
         request: Request,
-        response: Response,
-        token: str = Depends(get_project_token),
-        reader_redis_conn=None,
-        writer_redis_conn=None
+        response: Response
 ):
     """ 
         This endpoint handles the following cases
@@ -287,6 +262,8 @@ async def commit_payload(
         number is specified in the settings.json file as 'max_pending_payload_commits'
 
     """
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     req_args = await request.json()
     try:
         payload = req_args['payload']
@@ -355,6 +332,24 @@ async def commit_payload(
     # _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
 
     _ = await writer_redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
+    await writer_redis_conn.zadd(
+        key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+            project_id=project_id, payload_commit_id=payload_commit_id
+        ),
+        member=json.dumps(
+            {
+                'worker': 'api_entry',
+                'update': {
+                    'action': 'RabbitMQ.Publish',
+                    'info': {
+                        'msg': payload_for_commit.dict(),
+                        'status': 'Success'
+                    }
+                }
+            }
+        ),
+        score=int(time.time())
+    )
 
     return {
         'tentativeHeight': last_tentative_block_height,
@@ -363,13 +358,12 @@ async def commit_payload(
 
 
 @app.post('/{projectId:str}/diffRules')
-@inject_writer_redis_conn
 async def configure_project(
         request: Request,
         response: Response,
-        projectId: str,
-        writer_redis_conn=None
+        projectId: str
 ):
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     req_args = await request.json()
     """
     {
@@ -393,13 +387,12 @@ async def configure_project(
 
 
 @app.post('/{projectId:str}/confirmations/callback')
-@inject_writer_redis_conn
 async def configure_project(
         request: Request,
         response: Response,
-        projectId: str,
-        writer_redis_conn=None
+        projectId: str
 ):
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     req_json = await request.json()
     await writer_redis_conn.set(f'powerloom:project:{projectId}:callbackURL', req_json['callbackURL'])
     response.status_code = 200
@@ -593,8 +586,6 @@ async def get_payloads_diffs(
 
 
 @app.get('/{projectId:str}/payloads')
-@inject_reader_redis_conn
-@inject_writer_redis_conn
 async def get_payloads(
         request: Request,
         response: Response,
@@ -602,9 +593,7 @@ async def get_payloads(
         from_height: int = Query(default=1),
         diffs: Optional[str] = Query(default='true'),  # FIXME: default flag behavior unexpected
         to_height: int = Query(default=-1),
-        data: Optional[str] = Query(None),
-        reader_redis_conn=None,
-        writer_redis_conn=None
+        data: Optional[str] = Query(None)
 ):
     """
         - Given the from and to_height do the following steps:
@@ -628,6 +617,8 @@ async def get_payloads(
                     - save the span and add a timeout to it.
 
     """
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     out = await helper_functions.check_project_exists(project_id=projectId)
 
     if out == 0:
@@ -846,17 +837,15 @@ async def payload_height(
 
 
 @app.get('/{projectId}/payload/{block_height}')
-@inject_reader_redis_conn
-@inject_writer_redis_conn
 async def get_block(
         request: Request,
         response: Response,
         projectId: str,
-        block_height: int,
-        reader_redis_conn=None,
-        writer_redis_conn=None
+        block_height: int
 
 ):
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     out = await helper_functions.check_project_exists(project_id=projectId)
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
@@ -915,16 +904,14 @@ async def get_block(
 
 
 @app.get('/{projectId:str}/payload/{block_height:int}/data')
-@inject_reader_redis_conn
-@inject_writer_redis_conn
 async def get_block_data(
         request: Request,
         response: Response,
         projectId: str,
-        block_height: int,
-        writer_redis_conn=None,
-        reader_redis_conn=None,
+        block_height: int
 ):
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     out = await helper_functions.check_project_exists(project_id=projectId)
     if out == 0:
         return {'error': 'The projectId provided does not exist'}

@@ -10,9 +10,10 @@ from utils.redis_conn import RedisPool
 from utils import redis_keys
 from utils.rabbitmq_utils import get_rabbitmq_channel, get_rabbitmq_connection
 from functools import partial
+from tenacity import AsyncRetrying, stop_after_attempt, wait_random
 import aio_pika
 import aioredis
-import coloredlogs
+import time
 import logging
 import asyncio
 import sys
@@ -51,22 +52,68 @@ async def commit_single_payload(
         """
             - This function will take a pending payload and commit it to a smart contract
         """
-        writer_redis_conn = aioredis_pool.writer_redis_pool
+        writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
         payload_commit_obj: PayloadCommit = PayloadCommit.parse_raw(message.body)
         payload_commit_id = payload_commit_obj.commitId
         # payload_logger.debug(payload_data)
         snapshot = dict()
         core_payload = payload_commit_obj.payload
         project_id = payload_commit_obj.projectId
-        if type(core_payload) is dict:
-            snapshot_cid = await ipfs_client.add_json(core_payload)
+        try:
+            # try 3 times, wait 1-2 seconds between retries
+            async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+                with attempt:
+                    if type(core_payload) is dict:
+                        snapshot_cid = await ipfs_client.add_json(core_payload)
+                    else:
+                        try:
+                            core_payload = json.dumps(core_payload)
+                        except:
+                            pass
+                        snapshot_cid = await ipfs_client.add_str(str(core_payload))
+                    if snapshot_cid:
+                        break
+        except Exception as e:
+            await writer_redis_conn.zadd(
+                key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                    project_id=project_id, payload_commit_id=payload_commit_id
+                ),
+                member=json.dumps(
+                    {
+                        'worker': 'payload_commit_service',
+                        'update': {
+                            'action': 'IPFS.Commit',
+                            'info': {
+                                'core_payload': core_payload,
+                                'status': 'Failed',
+                                'exception': e.__repr__()
+                            }
+                        }
+                    }
+                ),
+                score=int(time.time())
+            )
+            return
         else:
-            try:
-                core_payload = json.dumps(core_payload)
-            except:
-                pass
-            snapshot_cid = await ipfs_client.add_str(str(core_payload))
-
+            await writer_redis_conn.zadd(
+                key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                    project_id=project_id, payload_commit_id=payload_commit_id
+                ),
+                member=json.dumps(
+                    {
+                        'worker': 'payload_commit_service',
+                        'update': {
+                            'action': 'IPFS.Commit',
+                            'info': {
+                                'core_payload': core_payload,
+                                'status': 'Success',
+                                'exception': snapshot_cid
+                            }
+                        }
+                    }
+                ),
+                score=int(time.time())
+            )
         payload_cid_key = redis_keys.get_payload_cids_key(project_id)
         _ = await writer_redis_conn.zadd(
             key=payload_cid_key,
@@ -78,33 +125,21 @@ async def commit_single_payload(
 
         token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
         _ = await semaphore.acquire()
-        try:
-            result = await make_transaction(
-                snapshot_cid=snapshot_cid,
-                token_hash=token_hash,
-                payload_commit_id=payload_commit_id,
-                last_tentative_block_height=payload_commit_obj.tentativeBlockHeight,
-                project_id=payload_commit_obj.projectId,
-                writer_redis_conn=writer_redis_conn,
-                contract=contract
-            )
-        except Exception as e:
-            payload_logger.debug("There was an error while committing record: ")
-            payload_logger.error(e, exc_info=True)
-            # TODO: remove all abominations like this that return arbitrary integers that have to be made sense of later on
-            result = -1
-        else:
+        result = await make_transaction(
+            snapshot_cid=snapshot_cid,
+            token_hash=token_hash,
+            payload_commit_id=payload_commit_id,
+            last_tentative_block_height=payload_commit_obj.tentativeBlockHeight,
+            project_id=payload_commit_obj.projectId,
+            writer_redis_conn=writer_redis_conn,
+            contract=contract
+        )
+        if result:
             last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
-            payload_logger.debug("Setting the last snapshot_cid as: ")
-            payload_logger.debug(snapshot_cid)
+            payload_logger.debug("Setting the last snapshot_cid as %s for project ID %s", snapshot_cid, project_id)
             _ = await writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
-        finally:
-            semaphore.release()
 
-        if result == -1:
-            payload_logger.warning("The payload commit was unsuccessful..")
-        else:
-            payload_logger.debug("Successfully committed payload")
+        semaphore.release()
 
 
 async def periodic_commit_payload(loop: asyncio.AbstractEventLoop):
