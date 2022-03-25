@@ -6,7 +6,7 @@ import json
 class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
-    payload: str
+    payload: dict
     tentativeBlockHeight: int
 
 

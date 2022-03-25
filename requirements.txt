@@ -27,7 +27,7 @@ uvloop
 async_timeout
 bloom_filter
 requests
-tenacity
+tenacity==8.0.1
 greenletio
 siaskynet
 web3==5.23.1
