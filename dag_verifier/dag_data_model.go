@@ -1,8 +1,15 @@
 package main
 
+type DagChainGap struct {
+	MissingBlockHeightStart int64 `json:"missingBlockHeightStart"`
+	MissingBlockHeightEnd   int64 `json:"missingBlockHeightEnd"`
+	TimestampIdentified     int64 `json:"timestampIdentified"`
+	DAGBlockHeight          int64 `json:"dagBlockHeight"`
+}
+
 type DagPayload struct {
-	PayloadCid     string `json:payloadCid`
-	DagChainHeight int64  `json:dagChainHeight`
+	PayloadCid     string `json:"payloadCid"`
+	DagChainHeight int64  `json:"dagChainHeight"`
 	Data           DagPayloadData
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
@@ -157,14 +158,38 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 		log.Debugf("Index: %d ,payload: %+v", i, payload)
 	}
 	log.Info("Verifying Dagchain for ProjectId %s , from block %d to %d", projectId, chain[0].DagChainHeight, chain[(len(chain)-1)].DagChainHeight)
-	res := verifier.verifyDagForGaps(&chain)
-	if !res {
+	gapsPresent, chainGaps := verifier.verifyDagForGaps(&chain)
+	if !gapsPresent {
 		log.Info("Dag chain has gaps for projectID:", projectId)
+		verifier.updateDagGapsinRedis(projectId, chainGaps)
 	}
 	//Store last verified blockHeight so that in next run, we just need to verify from the same.
 	//Use single hash key in redis to store the same against contractAddress.
 	verifier.lastVerifiedDagBlockHeights[projectId] = strconv.FormatInt(chain[len(chain)-1].DagChainHeight, 10)
 	return nil
+}
+
+func (verifier *DagVerifier) updateDagGapsinRedis(projectId string, chainGaps []DagChainGap) {
+	key := projectId + ":dagChainGaps"
+	var gaps []*redis.Z
+	for i := range chainGaps {
+		gapStr, err := json.Marshal(chainGaps[i])
+		if err != nil {
+			log.Error("Serious issue if json marshal fails..Can't do anything else than continue and log error:", err)
+			continue
+		}
+		gaps = append(gaps, &redis.Z{Score: float64(chainGaps[i].DAGBlockHeight),
+			Member: gapStr,
+		})
+	}
+
+	res := verifier.redisClient.ZAdd(ctx, key, gaps...)
+	if res.Err() != nil {
+		//TODO:Add retry logic later.
+		log.Error("Failed to update dagChainGaps into redis for projectID:", projectId, ", GapData:", chainGaps)
+	}
+	log.Infof("Added %d DagGaps data successfully in redis for project: %s", len(chainGaps), projectId)
+	//TODO: Need to prune older gaps.
 }
 
 //TODO: Need to handle Dagchain reorg event and reset the lastVerifiedBlockHeight to the same.
@@ -203,14 +228,14 @@ func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScor
 	return dagPayloadsInfo, nil
 }
 
-func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) bool {
+func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) (bool, []DagChainGap) {
 	dagPayloads := *chain
 	log.Info("Verifying DAG for gaps. DAG chain length is:", len(dagPayloads))
 	//fmt.Printf("%+v\n", dagChain)
 	var prevDagBlockEnd, lastBlock, firstBlock, numGaps int64
 	firstBlock = dagPayloads[0].Data.ChainHeightRange.End
 	lastBlock = dagPayloads[len(dagPayloads)-1].Data.ChainHeightRange.Begin
-
+	var dagGaps []DagChainGap
 	for i := range dagPayloads {
 		//log.Debug("Processing dag block :", i, "nextDagBlockStart:", nextDagBlockStart)
 		if prevDagBlockEnd != 0 {
@@ -224,6 +249,10 @@ func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) bool {
 			if curBlockStart != prevDagBlockEnd+1 {
 				log.Debug("Gap identified at ChainHeight:", dagPayloads[i].DagChainHeight, ",PayloadCID:", dagPayloads[i].PayloadCid, ", between height:", dagPayloads[i-1].DagChainHeight, " and ", dagPayloads[i].DagChainHeight)
 				log.Debug("Missing blocks from(not including): ", prevDagBlockEnd, " to(not including): ", curBlockStart)
+				dagGaps = append(dagGaps, DagChainGap{MissingBlockHeightStart: prevDagBlockEnd + 1,
+					MissingBlockHeightEnd: curBlockStart - 1,
+					TimestampIdentified:   time.Now().Unix(),
+					DAGBlockHeight:        dagPayloads[i].DagChainHeight})
 				numGaps++
 			}
 		}
@@ -232,9 +261,9 @@ func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) bool {
 	log.Info("Block Range is from:", firstBlock, ", to:", lastBlock)
 	log.Info("Number of gaps found:", numGaps)
 	if numGaps == 0 {
-		return true
+		return true, nil
 	} else {
-		return false
+		return false, dagGaps
 	}
 }
 
