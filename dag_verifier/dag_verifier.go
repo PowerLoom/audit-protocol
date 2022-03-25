@@ -247,7 +247,7 @@ func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) (bool, []DagC
 				//		which are not required from IPFS based on previous and next blocks.
 				log.Errorf("Found Same DagchainHeight %d at 2 levels. DagChain needs to be fixed.", dagPayloads[i].DagChainHeight)
 			}
-			curBlockStart := dagPayloads[i].Data.ChainHeightRange.End
+			curBlockStart := dagPayloads[i].Data.ChainHeightRange.Begin
 			//log.Debug("curBlockEnd", curBlockEnd, " nextDagBlockStart", nextDagBlockStart)
 			if curBlockStart != prevDagBlockEnd+1 {
 				log.Debug("Gap identified at ChainHeight:", dagPayloads[i].DagChainHeight, ",PayloadCID:", dagPayloads[i].PayloadCid, ", between height:", dagPayloads[i-1].DagChainHeight, " and ", dagPayloads[i].DagChainHeight)
