@@ -240,6 +240,9 @@ func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) (bool, []DagC
 		//log.Debug("Processing dag block :", i, "nextDagBlockStart:", nextDagBlockStart)
 		if prevDagBlockEnd != 0 {
 			if dagPayloads[i].DagChainHeight == dagPayloads[i-1].DagChainHeight {
+				dagGaps = append(dagGaps, DagChainGap{IssueType: "DUPLICATE_HEIGHT_IN_CHAIN",
+					TimestampIdentified: time.Now().Unix(),
+					DAGBlockHeight:      dagPayloads[i].DagChainHeight})
 				//TODO:If there are multiple snapshots observed at same blockHeight, need to take action to cleanup snapshots
 				//		which are not required from IPFS based on previous and next blocks.
 				log.Errorf("Found Same DagchainHeight %d at 2 levels. DagChain needs to be fixed.", dagPayloads[i].DagChainHeight)
@@ -249,7 +252,7 @@ func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) (bool, []DagC
 			if curBlockStart != prevDagBlockEnd+1 {
 				log.Debug("Gap identified at ChainHeight:", dagPayloads[i].DagChainHeight, ",PayloadCID:", dagPayloads[i].PayloadCid, ", between height:", dagPayloads[i-1].DagChainHeight, " and ", dagPayloads[i].DagChainHeight)
 				log.Debug("Missing blocks from(not including): ", prevDagBlockEnd, " to(not including): ", curBlockStart)
-				dagGaps = append(dagGaps, DagChainGap{MissingBlockHeightStart: prevDagBlockEnd + 1,
+				dagGaps = append(dagGaps, DagChainGap{IssueType: "GAP_IN_CHAIN", MissingBlockHeightStart: prevDagBlockEnd + 1,
 					MissingBlockHeightEnd: curBlockStart - 1,
 					TimestampIdentified:   time.Now().Unix(),
 					DAGBlockHeight:        dagPayloads[i].DagChainHeight})

@@ -1,6 +1,8 @@
 package main
 
 type DagChainGap struct {
+	IssueType string `json:"issueType"`
+	//In case of missing blocks in chain or Gap
 	MissingBlockHeightStart int64 `json:"missingBlockHeightStart"`
 	MissingBlockHeightEnd   int64 `json:"missingBlockHeightEnd"`
 	TimestampIdentified     int64 `json:"timestampIdentified"`
