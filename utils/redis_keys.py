@@ -194,3 +194,6 @@ def get_uniswap_pair_contract_V2_pair_data(pair_address):
     
 def get_uniswap_pair_cached_token_price(pair_symbol):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:cachedPairPrice'.format(pair_symbol)
+
+def get_uniswap_pair_cached_recent_logs(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:recent24hLogs'.format(pair_address)

@@ -270,6 +270,22 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
             }})
         )
 
+        # store last 24h recent logs, these will be used to show recent transaction for perticular contract
+        recent_logs = list()
+        for log in dag_chain_24h:
+            recent_logs.extend(log['data']['payload']['recent_logs'])
+
+        recent_logs = sorted(recent_logs, key=lambda log: log['timestamp'], reverse=True)
+
+        if len(recent_logs) > 70:
+            recent_logs = recent_logs[:70]
+
+        await writer_redis_conn.set(
+            redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"), 
+            json.dumps(recent_logs)
+        )
+        logger.debug(f"Stored recent logs for pair: {redis_keys.get_uniswap_pair_cached_recent_logs(f'{Web3.toChecksumAddress(pair_contract_address)}')}, of len:{len(recent_logs)}")
+
         logger.debug('Calculated 24h, 7d and fees_24h vol: %s, %s | contract: %s', total_volume_24h, fees_24h, pair_contract_address)
         prepared_snapshot = liquidityProcessedData(
             contractAddress=pair_contract_address,
@@ -335,7 +351,8 @@ async def v2_pairs_data():
 
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    data = loop.run_until_complete(v2_pairs_data())
     print("", "")
-    print(data)
+    # loop = asyncio.get_event_loop()
+    # data = loop.run_until_complete(pair_recent_metadata("0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc"))
+    # print("", "")
+    # print(data)
