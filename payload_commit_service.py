@@ -58,62 +58,65 @@ async def commit_single_payload(
         # payload_logger.debug(payload_data)
         snapshot = dict()
         core_payload = payload_commit_obj.payload
-        project_id = payload_commit_obj.projectId
-        try:
-            # try 3 times, wait 1-2 seconds between retries
-            async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
-                with attempt:
-                    if type(core_payload) is dict:
-                        snapshot_cid = await ipfs_client.add_json(core_payload)
-                    else:
-                        try:
-                            core_payload = json.dumps(core_payload)
-                        except:
-                            pass
-                        snapshot_cid = await ipfs_client.add_str(str(core_payload))
-                    if snapshot_cid:
-                        break
-        except Exception as e:
-            await writer_redis_conn.zadd(
-                key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                    project_id=project_id, payload_commit_id=payload_commit_id
-                ),
-                member=json.dumps(
-                    {
-                        'worker': 'payload_commit_service',
-                        'update': {
-                            'action': 'IPFS.Commit',
-                            'info': {
-                                'core_payload': core_payload,
-                                'status': 'Failed',
-                                'exception': e.__repr__()
-                            }
-                        }
-                    }
-                ),
-                score=int(time.time())
-            )
-            return
+        if core_payload:
+            project_id = payload_commit_obj.projectId
+            try:
+                # try 3 times, wait 1-2 seconds between retries
+                async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+                    with attempt:
+                        if type(core_payload) is dict:
+                            snapshot_cid = await ipfs_client.add_json(core_payload)
+                        else:
+                            try:
+                                core_payload = json.dumps(core_payload)
+                            except:
+                                pass
+                            snapshot_cid = await ipfs_client.add_str(str(core_payload))
+                        if snapshot_cid:
+                            break
+            except Exception as e:
+                # await writer_redis_conn.zadd(
+                #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                #         project_id=project_id, payload_commit_id=payload_commit_id
+                #     ),
+                #     member=json.dumps(
+                #         {
+                #             'worker': 'payload_commit_service',
+                #             'update': {
+                #                 'action': 'IPFS.Commit',
+                #                 'info': {
+                #                     'core_payload': core_payload,
+                #                     'status': 'Failed',
+                #                     'exception': e.__repr__()
+                #                 }
+                #             }
+                #         }
+                #     ),
+                #     score=int(time.time())
+                # )
+                return
+            # else:
+                # await writer_redis_conn.zadd(
+                #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                #         project_id=project_id, payload_commit_id=payload_commit_id
+                #     ),
+                #     member=json.dumps(
+                #         {
+                #             'worker': 'payload_commit_service',
+                #             'update': {
+                #                 'action': 'IPFS.Commit',
+                #                 'info': {
+                #                     'core_payload': core_payload,
+                #                     'status': 'Success',
+                #                     'exception': snapshot_cid
+                #                 }
+                #             }
+                #         }
+                #     ),
+                #     score=int(time.time())
+                # )
         else:
-            await writer_redis_conn.zadd(
-                key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                    project_id=project_id, payload_commit_id=payload_commit_id
-                ),
-                member=json.dumps(
-                    {
-                        'worker': 'payload_commit_service',
-                        'update': {
-                            'action': 'IPFS.Commit',
-                            'info': {
-                                'core_payload': core_payload,
-                                'status': 'Success',
-                                'exception': snapshot_cid
-                            }
-                        }
-                    }
-                ),
-                score=int(time.time())
-            )
+            snapshot_cid = payload_commit_obj.snapshotCID
         payload_cid_key = redis_keys.get_payload_cids_key(project_id)
         _ = await writer_redis_conn.zadd(
             key=payload_cid_key,
@@ -122,10 +125,12 @@ async def commit_single_payload(
         )
         snapshot['cid'] = snapshot_cid
         snapshot['type'] = "HOT_IPFS"
-
-        token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+        if not payload_commit_obj.apiKeyHash:
+            token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+        else:
+            token_hash = payload_commit_obj.apiKeyHash
         _ = await semaphore.acquire()
-        result = await make_transaction(
+        result_tx_hash = await make_transaction(
             snapshot_cid=snapshot_cid,
             token_hash=token_hash,
             payload_commit_id=payload_commit_id,
@@ -134,11 +139,13 @@ async def commit_single_payload(
             writer_redis_conn=writer_redis_conn,
             contract=contract
         )
-        if result:
-            last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
-            payload_logger.debug("Setting the last snapshot_cid as %s for project ID %s", snapshot_cid, project_id)
-            _ = await writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
-
+        if result_tx_hash:
+            if not payload_commit_obj.resubmitted:
+                last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
+                payload_logger.debug("Setting the last snapshot_cid as %s for project ID %s", snapshot_cid, project_id)
+                _ = await writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
+            payload_logger.debug('Setting tx hash %s against payload commit ID %s', result_tx_hash, payload_commit_id)
+            await writer_redis_conn.set(redis_keys.get_payload_commit_key(payload_commit_id), result_tx_hash)
         semaphore.release()
 
 

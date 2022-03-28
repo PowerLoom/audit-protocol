@@ -7,7 +7,6 @@ from maticvigil.EVCore import EVCore
 from tenacity import AsyncRetrying, stop_after_attempt, wait_random
 from maticvigil.exceptions import EVBaseException
 from config import settings
-from pygate_grpc.client import PowerGateClient
 from uuid import uuid4
 from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn, RedisPool
 from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
@@ -184,25 +183,25 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
             "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
             tx_hash_obj, payload_commit_id
         )
-        await writer_redis_conn.zadd(
-            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                project_id=project_id, payload_commit_id=payload_commit_id
-            ),
-            member=json.dumps(
-                {
-                    'worker': 'payload_commit_service',
-                    'update': {
-                        'action': 'AuditRecord.Commit',
-                        'info': {
-                            'msg': kwargs,
-                            'status': 'Success',
-                            'txHash': tx_hash_obj
-                        }
-                    }
-                }
-            ),
-            score=int(time.time())
-        )
+        # await writer_redis_conn.zadd(
+        #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+        #         project_id=project_id, payload_commit_id=payload_commit_id
+        #     ),
+        #     member=json.dumps(
+        #         {
+        #             'worker': 'payload_commit_service',
+        #             'update': {
+        #                 'action': 'AuditRecord.Commit',
+        #                 'info': {
+        #                     'msg': kwargs,
+        #                     'status': 'Success',
+        #                     'txHash': tx_hash_obj
+        #                 }
+        #             }
+        #         }
+        #     ),
+        #     score=int(time.time())
+        # )
 
     if e_obj:
         rest_logger.debug("=" * 80)
@@ -212,25 +211,25 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         )
         rest_logger.debug(e_obj)
         rest_logger.debug("=" * 80)
-        await writer_redis_conn.zadd(
-            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                project_id=project_id, payload_commit_id=payload_commit_id
-            ),
-            member=json.dumps(
-                {
-                    'worker': 'payload_commit_service',
-                    'update': {
-                        'action': 'AuditRecord.Commit',
-                        'info': {
-                            'msg': kwargs,
-                            'status': 'Failed',
-                            'exception': e_obj.__repr__()
-                        }
-                    }
-                }
-            ),
-            score=int(time.time())
-        )
+        # await writer_redis_conn.zadd(
+        #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+        #         project_id=project_id, payload_commit_id=payload_commit_id
+        #     ),
+        #     member=json.dumps(
+        #         {
+        #             'worker': 'payload_commit_service',
+        #             'update': {
+        #                 'action': 'AuditRecord.Commit',
+        #                 'info': {
+        #                     'msg': kwargs,
+        #                     'status': 'Failed',
+        #                     'exception': e_obj.__repr__()
+        #                 }
+        #             }
+        #         }
+        #     ),
+        #     score=int(time.time())
+        # )
         return None
 
     pending_transaction_key = f"projectID:{project_id}:pendingTransactions"
@@ -241,6 +240,13 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
             score=int(last_tentative_block_height),
             member=tx_hash
      )
+
+    # save input data for later re-processing if required
+    await writer_redis_conn.set(
+        redis_keys.get_pending_tx_input_data_key(tx_hash),
+        json.dumps(kwargs)
+    )
+
     return tx_hash
 
 
@@ -329,27 +335,26 @@ async def commit_payload(
         rest_logger.debug(
             'Published payload against commit ID %s to RabbitMQ payload commit service queue', payload_commit_id
         )
-    # _ = await writer_redis_conn.lpush(pending_payload_commits_key, payload_commit_id)
 
     _ = await writer_redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
-    await writer_redis_conn.zadd(
-        key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-            project_id=project_id, payload_commit_id=payload_commit_id
-        ),
-        member=json.dumps(
-            {
-                'worker': 'api_entry',
-                'update': {
-                    'action': 'RabbitMQ.Publish',
-                    'info': {
-                        'msg': payload_for_commit.dict(),
-                        'status': 'Success'
-                    }
-                }
-            }
-        ),
-        score=int(time.time())
-    )
+    # await writer_redis_conn.zadd(
+    #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+    #         project_id=project_id, payload_commit_id=payload_commit_id
+    #     ),
+    #     member=json.dumps(
+    #         {
+    #             'worker': 'api_entry',
+    #             'update': {
+    #                 'action': 'RabbitMQ.Publish',
+    #                 'info': {
+    #                     'msg': payload_for_commit.dict(),
+    #                     'status': 'Success'
+    #                 }
+    #             }
+    #         }
+    #     ),
+    #     score=int(time.time())
+    # )
 
     return {
         'tentativeHeight': last_tentative_block_height,

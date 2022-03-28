@@ -34,6 +34,7 @@ def init_exchanges_queues():
     ch.exchange_declare(exchange=exchange_name, exchange_type='direct', durable=True)
     print('Initialized RabbitMQ Direct exchange: %s', exchange_name)
 
+    # queue name, routing key pairs
     to_be_inited = [
         ('audit-protocol-commit-payloads', 'commit-payloads')
     ]

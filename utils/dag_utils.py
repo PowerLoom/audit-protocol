@@ -244,6 +244,9 @@ async def clear_payload_commit_data(
     )
     deletion_result.append(out)
 
+    # remove tx hash input data
+    await writer_redis_conn.delete(redis_keys.get_pending_tx_input_data_key(tx_hash))
+
     # remove the payload commit id from the list of pending blocks
     out = await writer_redis_conn.zrem(
         key=redis_keys.get_pending_blocks_key(project_id=project_id),

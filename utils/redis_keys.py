@@ -1,11 +1,7 @@
+# keep a mapping from payload commit ID to tx hash
 def get_payload_commit_key(payload_commit_id: str):
     payload_commit_key = "payloadCommit:{}".format(payload_commit_id)
     return payload_commit_key
-
-
-def get_pending_payload_commits_key():
-    pending_payload_commits_key = "pendingPayloadCommits"
-    return pending_payload_commits_key
 
 
 def get_pending_retrieval_requests_key():
@@ -61,6 +57,9 @@ def get_event_data_key(payload_commit_id: str):
     return event_data_key
 
 
+# a ZSET
+# webhook callbacks have arrived against the corresponding tentative block heights, but yet to be included in the
+# DAG chain because of some missing callback in the past which will lead to a gap in the DAG chain
 def get_pending_blocks_key(project_id: str):
     pending_blocks_key = "projectID:{}:pendingBlocks".format(project_id)
     return pending_blocks_key
@@ -163,6 +162,11 @@ def get_diff_rules_key(project_id: str):
 def get_pending_transactions_key(project_id: str):
     pending_transaction_key = "projectID:{}:pendingTransactions".format(project_id)
     return pending_transaction_key
+
+
+# will be used to store input data against a transaction for later re-processing if required
+def get_pending_tx_input_data_key(tx_hash: str):
+    return f'txHash:{tx_hash}:inputData'
 
 
 def get_discarded_transactions_key(project_id: str):

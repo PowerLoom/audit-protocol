@@ -6,8 +6,12 @@ import json
 class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
-    payload: dict
+    payload: Optional[dict] = None
+    # following two can be used to substitute for not supplying the payload but the CID and hash itself
+    snapshotCID: Optional[str] = None
+    apiKeyHash: Optional[str] = None
     tentativeBlockHeight: int
+    resubmitted: bool = False
 
 
 class FilecoinJobData(BaseModel):

@@ -1,19 +1,24 @@
-from fastapi import FastAPI, Request, Response, Header, BackgroundTasks
-import aiohttp
-import time
 import aioredis
+from fastapi import FastAPI, Request, Response, Header, BackgroundTasks
+from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
 from config import settings
-import logging
-import sys
-import json
-import os
-
 from utils import redis_keys
 from utils import helper_functions
 from utils import diffmap_utils
 from utils import dag_utils
 from utils.ipfs_async import client as ipfs_client
 from utils.redis_conn import RedisPool
+from aio_pika import ExchangeType, DeliveryMode, Message
+from functools import partial
+from aio_pika.pool import Pool
+from data_models import PayloadCommit
+import asyncio
+import aiohttp
+import logging
+import sys
+import json
+import os
+
 
 
 app = FastAPI()
@@ -49,6 +54,10 @@ REDIS_READER_CONN_CONF = {
 
 @app.on_event('startup')
 async def startup_boilerplate():
+    app.rmq_connection_pool = Pool(get_rabbitmq_connection, max_size=5, loop=asyncio.get_running_loop())
+    app.rmq_channel_pool = Pool(
+        partial(get_rabbitmq_channel, app.rmq_connection_pool), max_size=20, loop=asyncio.get_running_loop()
+    )
     try:
         os.stat(os.getcwd() + '/bloom_filter_objects')
     except:
@@ -77,8 +86,8 @@ async def create_dag(
         response: Response,
         x_hook_signature: str = Header(None),
 ):
-    reader_redis_conn = request.app.reader_redis_pool
-    writer_redis_conn = request.app.writer_redis_pool
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     event_data = await request.json()
     # Verify the payload that has arrived.
     if x_hook_signature:
@@ -97,15 +106,18 @@ async def create_dag(
             project_id = event_data['event_data']['projectId']
             tentative_block_height_event_data = int(event_data['event_data']['tentativeBlockHeight'])
 
-            # Get the max block height for the project_id
-            max_block_height_project = await helper_functions.get_block_height(
+            # Get the max block height(finalized after all error corrections and reorgs) for the project_id
+            finalized_block_height_project = await helper_functions.get_block_height(
                 project_id=project_id,
                 reader_redis_conn=reader_redis_conn
             )
 
-            rest_logger.debug("Tentative Block Height and Block Height")
+            rest_logger.debug(
+                "Event Data Tentative Block Height: %s | Finalized Project %s Block Height: %s",
+                tentative_block_height_event_data, project_id, finalized_block_height_project
+            )
             rest_logger.debug(tentative_block_height_event_data)
-            rest_logger.debug(max_block_height_project)
+            rest_logger.debug(finalized_block_height_project)
 
             tentative_block_height_cached = await helper_functions.get_tentative_block_height(
                 project_id=project_id,
@@ -113,7 +125,7 @@ async def create_dag(
             )
             # retrieve callback URL for project ID
             cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
-            if tentative_block_height_event_data <= max_block_height_project:
+            if tentative_block_height_event_data <= finalized_block_height_project:
                 rest_logger.debug("Discarding event at height:")
                 rest_logger.debug(tentative_block_height_event_data)
                 redis_output = await dag_utils.discard_event(
@@ -127,14 +139,13 @@ async def create_dag(
                 rest_logger.debug(redis_output)
                 return dict()
 
-            elif tentative_block_height_event_data > max_block_height_project + 1:
+            elif tentative_block_height_event_data > finalized_block_height_project + 1:
                 rest_logger.debug("An out of order event arrived...")
-                rest_logger.debug("Checking if that txHash is in the list of pending Transactions")
 
                 discarded_transactions_key = f"projectID:{project_id}:discardedTransactions"
-                pending_transactions_key = f"projectID:{project_id}:pendingTransactions"
 
-                expected_block_height_for_tx = await reader_redis_conn.zscore(pending_transactions_key, event_data['txHash'])
+                rest_logger.debug("Checking if txHash %s is in the list of pending Transactions", event_data['txHash'])
+                expected_block_height_for_tx = await reader_redis_conn.zscore(redis_keys.get_pending_transactions_key(project_id), event_data['txHash'])
                 if expected_block_height_for_tx is None:
                     rest_logger.debug("Discarding the event...")
                     _ = await dag_utils.clear_payload_commit_data(
@@ -151,14 +162,180 @@ async def create_dag(
 
                     return dict()
 
-                rest_logger.debug("Saving Event data for height: ")
-                rest_logger.debug(tentative_block_height_event_data)
-                _ = await dag_utils.save_event_data(
+                rest_logger.debug(
+                    "Saving Event data for tentative height: %s | %s ",
+                    tentative_block_height_event_data, event_data
+                )
+                await dag_utils.save_event_data(
                     event_data=event_data,
                     writer_redis_conn=writer_redis_conn,
                 )
+                # NOTE: tentative entries in pendingBlocks are a graduation from pendingTransactions set
+                #       find out difference between zsets of pending txs and pending blocks
+                #       this will tell us the tentative heights against which no callbacks have arrived,
+                #       yet we have tx hash identifiers recorded
+                #       set of pending txs tentative heights will always be superset of the same against pending blocks
+                pending_confirmation_callbacks_txs = await reader_redis_conn.zrangebyscore(
+                    key=redis_keys.get_pending_transactions_key(project_id),
+                    min=finalized_block_height_project + 1,
+                    max=tentative_block_height_event_data,
+                    withscores=True
+                )
+                pending_dag_chain_insertion_blocks = await reader_redis_conn.zrangebyscore(
+                    key=redis_keys.get_pending_blocks_key(project_id),
+                    min=finalized_block_height_project + 1,
+                    max=tentative_block_height_event_data,
+                    withscores=True
+                )
+                callback_unseen_heights = set(
+                    map(
+                        lambda x: int(x[1]),
+                        pending_confirmation_callbacks_txs
+                    )
+                ).difference(
+                    set(
+                        map(
+                            lambda x: int(x[1]),
+                            pending_dag_chain_insertion_blocks
+                        )
+                    )
+                )
+                callback_unseen_txs = set()
+                if callback_unseen_heights:
+                    callback_unseen_heights_l = sorted(callback_unseen_heights)
+                    [callback_unseen_txs.add(x.decode('utf-8')) for x in
+                     await reader_redis_conn.zrangebyscore(
+                         key=redis_keys.get_pending_transactions_key(project_id),
+                         min=min(callback_unseen_heights),
+                         max=max(callback_unseen_heights),
+                         withscores=False
+                     )]
+                    rest_logger.debug('Found following tentative block heights '
+                                      'pending confirmed callbacks: %s | Corresponding txs: %s',
+                                      callback_unseen_heights, callback_unseen_txs)
+                    # NOTE: if we do not find a pending entry against finalized height+1, it is a bigger problem.
+                    #       Ideally such a situation should never arise.
+                    if callback_unseen_heights_l[0] != finalized_block_height_project + 1:
+                        # TODO: in such cases the snapshots being sent from a subscribed project need to be resubmitted
+                        #       beginning from the snapshot corresponding to last finalized block height+1.
+                        #       This may be reconstructed as audit protocol informs the last legible state data
+                        #       from the tx input data stored against the expected tx hash
+                        #       (to be referenced from payload commit ID details). Similar strategy would apply for
+                        #       scenarios tagged with critical logs below as well
+                        rest_logger.critical(
+                            'Possible irrecoverable gap in DAG chain creation | Last finalized height: %s | No pending '
+                            'entry found against callback confirmation for tentative height: %s | ' 
+                            'pending confirmed callbacks: %s | Corresponding txs: %s',
+                            finalized_block_height_project, finalized_block_height_project + 1,
+                            callback_unseen_heights, callback_unseen_txs
+                        )
+                    else:
+                        # check if pending tx confirmation callbacks to earliest known pending block is a
+                        # continuous sequence when compared against the corresponding tentative block heights
+                        sequential = True
+                        failed_sequence_height = None
+                        for idx, h in enumerate(callback_unseen_heights_l):
+                            if idx == 0:
+                                continue
+                            if h - callback_unseen_heights_l[idx - 1] != 1:
+                                sequential = False
+                                # tentative block height
+                                failed_sequence_height = callback_unseen_heights_l[idx - 1]
+                                break
+                        if callback_unseen_heights_l[-1] + 1 != int(pending_dag_chain_insertion_blocks[0][1]):
+                            rest_logger.warning(
+                                'Gap between max tentative block height against unreceived webhook callbacks and min '
+                                'tentative block height against received callbacks but pending entry into chain '
+                                '| %s | %s',
+                                callback_unseen_heights_l,
+                                list(map(lambda x: int(x[1]), pending_dag_chain_insertion_blocks))
+                            )
+                            sequential = False
+                        if not sequential:
+                            rest_logger.critical(
+                                'Possible irrecoverable gap in DAG chain creation | Last finalized height: %s | Found'
+                                ' possible gap in transactions pending callback at tentative height: %s while scanning for'
+                                ' continuous pending range of of callbacks between tentative heights %s - %s |'
+                                ' Tentative block heights without callbacks received: %s | Tentative blockheights'
+                                ' pending insertion into DAG chain but callbacks were received: %s',
+                                finalized_block_height_project, failed_sequence_height,
+                                finalized_block_height_project + 1, tentative_block_height_event_data,
+                                callback_unseen_heights_l, list(map(lambda x: int(x[1]), pending_dag_chain_insertion_blocks))
+                            )
+                        else:
+                            if len(pending_dag_chain_insertion_blocks)+len(callback_unseen_heights_l) \
+                                    >= settings.max_pending_payload_commits:
+                                rest_logger.info(
+                                    'Preparing to send out txs for reprocessing for the ones that have not '
+                                    'received any callbacks (possibility of dropped txs) : %s',
+                                    pending_confirmation_callbacks_txs
+                                )
+                                # send out txs for reprocessing
+                                async with request.app.rmq_channel_pool.acquire() as channel:
+                                    exchange = await channel.declare_exchange(
+                                        settings.rabbitmq.setup['core']['exchange'],
+                                        ExchangeType.DIRECT
+                                    )
+                                    for tx_hash_, queued_tentative_height_ in pending_confirmation_callbacks_txs:
+                                        tx_hash = tx_hash_.decode('utf-8')
+                                        # fetch transaction input data. once sent out, clear from set of pending
+                                        # transactions and let tx reprocessing take care of the rest
+                                        s = await reader_redis_conn.get(
+                                            redis_keys.get_pending_tx_input_data_key(tx_hash)
+                                        )
+                                        if not s:
+                                            rest_logger.critical(
+                                                'Possible irrecoverable gap in DAG chain creation | '
+                                                'Did not find cached input data against past tx: %s | '
+                                                'Last finalized height: %s'
+                                                ' Tentative block heights without callbacks received: %s | Tentative blockheights'
+                                                ' pending insertion into DAG chain but callbacks were received: %s',
+                                                tx_hash,
+                                                finalized_block_height_project,
+                                                callback_unseen_heights_l,
+                                                list(map(lambda x: int(x[1]), pending_dag_chain_insertion_blocks))
+                                            )
+                                            break
+                                        # send out to transaction reprocessor
+                                        tx_commit_details = json.loads(s)
+                                        payload_commit_obj = PayloadCommit(
+                                            **{
+                                                'projectId': project_id,
+                                                'commitId': tx_commit_details['payloadCommitId'],
+                                                'snapshotCID': tx_commit_details['snapshotCid'],
+                                                'tentativeBlockHeight': tx_commit_details['tentativeBlockHeight'],
+                                                'apiKeyHash': tx_commit_details['apiKeyHash']
+                                            }
+                                        )
+                                        message = Message(
+                                            payload_commit_obj.json().encode('utf-8'),
+                                            delivery_mode=DeliveryMode.PERSISTENT,
+                                        )
+                                        await exchange.publish(
+                                            message=message,
+                                            routing_key='commit-payloads'
+                                        )
+                                        rest_logger.debug(
+                                            'Re-Published payload against commit ID %s , tentative block height %s for '
+                                            'reprocessing by payload commit service | '
+                                            'Previous tx not found for DAG entry: %s',
+                                            tx_commit_details['payloadCommitId'], tx_commit_details['tentativeBlockHeight'],
+                                            tx_hash_
+                                        )
+                                        _ = await writer_redis_conn.zrem(
+                                            key=redis_keys.get_pending_transactions_key(project_id),
+                                            member=tx_hash_
+                                        )
+                                        if _:
+                                            rest_logger.info(
+                                                'Removed tx hash %s from pending transactions set', tx_hash_
+                                            )
+                                        else:
+                                            rest_logger.warning(
+                                                'Could not remove tx hash %s from pending transactions set', tx_hash_
+                                            )
 
-            elif tentative_block_height_event_data == max_block_height_project + 1:
+            elif tentative_block_height_event_data == finalized_block_height_project + 1:
                 """
                     An event which is in-order has arrived. Create a dag block for this event
                     and process all other pending events for this project
@@ -205,10 +382,10 @@ async def create_dag(
                 )
 
                 """ retrieve all list of all the payload_commit_ids from the pendingBlocks zset """
-                all_pending_blocks = await reader_redis_conn.zrange(
+                all_pending_blocks = await reader_redis_conn.zrangebyscore(
                     key=redis_keys.get_pending_blocks_key(project_id=project_id),
-                    start=tentative_block_height_event_data+1,
-                    stop=-1,  # according to aioredis 1.3.1 docs. redis-py allows for '+inf'
+                    min=tentative_block_height_event_data+1,
+                    # max=-1,  # defaults to inf
                     withscores=True
                 )
                 if len(all_pending_blocks) > 0:
@@ -217,17 +394,13 @@ async def create_dag(
                         list(map(lambda x: x[1], all_pending_blocks))
                     )
                     """ There are some pending blocks left """
-                    cur_max_height_project = await helper_functions.get_block_height(
-                        project_id=project_id,
-                        reader_redis_conn=reader_redis_conn
-                    )
+                    cur_max_height_project = tentative_block_height_event_data + 1
                     for _payload_commit_id, _tt_block_height in all_pending_blocks:
                         _payload_commit_id = _payload_commit_id.decode('utf-8')
                         _tt_block_height = int(_tt_block_height)
 
                         if _tt_block_height == cur_max_height_project + 1:
-                            rest_logger.debug("Processing tentative_block_height: ")
-                            rest_logger.debug(tentative_block_height_event_data)
+                            rest_logger.debug("Processing queued block at tentative_block_height: %s", _tt_block_height)
 
                             """ Retrieve the event data for the payload_commit_id """
                             event_data_key = f"eventData:{_payload_commit_id}"
