@@ -183,25 +183,25 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
             "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
             tx_hash_obj, payload_commit_id
         )
-        # await writer_redis_conn.zadd(
-        #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-        #         project_id=project_id, payload_commit_id=payload_commit_id
-        #     ),
-        #     member=json.dumps(
-        #         {
-        #             'worker': 'payload_commit_service',
-        #             'update': {
-        #                 'action': 'AuditRecord.Commit',
-        #                 'info': {
-        #                     'msg': kwargs,
-        #                     'status': 'Success',
-        #                     'txHash': tx_hash_obj
-        #                 }
-        #             }
-        #         }
-        #     ),
-        #     score=int(time.time())
-        # )
+        await writer_redis_conn.zadd(
+            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                project_id=project_id, payload_commit_id=payload_commit_id
+            ),
+            member=json.dumps(
+                {
+                    'worker': 'payload_commit_service',
+                    'update': {
+                        'action': 'AuditRecord.Commit',
+                        'info': {
+                            'msg': kwargs,
+                            'status': 'Success',
+                            'txHash': tx_hash_obj
+                        }
+                    }
+                }
+            ),
+            score=int(time.time())
+        )
 
     if e_obj:
         rest_logger.debug("=" * 80)
@@ -211,25 +211,25 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         )
         rest_logger.debug(e_obj)
         rest_logger.debug("=" * 80)
-        # await writer_redis_conn.zadd(
-        #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-        #         project_id=project_id, payload_commit_id=payload_commit_id
-        #     ),
-        #     member=json.dumps(
-        #         {
-        #             'worker': 'payload_commit_service',
-        #             'update': {
-        #                 'action': 'AuditRecord.Commit',
-        #                 'info': {
-        #                     'msg': kwargs,
-        #                     'status': 'Failed',
-        #                     'exception': e_obj.__repr__()
-        #                 }
-        #             }
-        #         }
-        #     ),
-        #     score=int(time.time())
-        # )
+        await writer_redis_conn.zadd(
+            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                project_id=project_id, payload_commit_id=payload_commit_id
+            ),
+            member=json.dumps(
+                {
+                    'worker': 'payload_commit_service',
+                    'update': {
+                        'action': 'AuditRecord.Commit',
+                        'info': {
+                            'msg': kwargs,
+                            'status': 'Failed',
+                            'exception': e_obj.__repr__()
+                        }
+                    }
+                }
+            ),
+            score=int(time.time())
+        )
         return None
 
     pending_transaction_key = f"projectID:{project_id}:pendingTransactions"

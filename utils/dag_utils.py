@@ -262,3 +262,14 @@ async def clear_payload_commit_data(
 
     return deletion_result
 
+
+async def clear_payload_commit_processing_logs(
+        project_id: str,
+        payload_commit_id: str,
+        writer_redis_conn: aioredis.Redis
+):
+    _ = await writer_redis_conn.delete(redis_keys.get_payload_commit_id_process_logs_zset_key(
+        project_id=project_id, payload_commit_id=payload_commit_id
+    )
+    )
+    return _

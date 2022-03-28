@@ -349,6 +349,23 @@ async def create_dag(
                     timestamp=event_data['event_data']['timestamp']
                 )
                 rest_logger.info('Created DAG block with CID %s at height %s', _dag_cid, tentative_block_height_event_data)
+                # clear payload commit ID log on success
+                _ = await dag_utils.clear_payload_commit_processing_logs(
+                    project_id=project_id,
+                    payload_commit_id=event_data['event_data']['payloadCommitId'],
+                    writer_redis_conn=writer_redis_conn
+                )
+                if _:
+                    rest_logger.debug(
+                        'Cleared processing logs for payload commit ID: %s', event_data['event_data']['payloadCommitId']
+                    )
+                else:
+                    rest_logger.debug(
+                        'Not sure if processing logs cleared or nonexistent for payload commit ID: %s | '
+                        'Redis return: %s',
+                        event_data['event_data']['payloadCommitId'],
+                        _
+                    )
                 # process diff at this new block height
                 try:
                     diff_map = await diffmap_utils.calculate_diff(
@@ -385,7 +402,7 @@ async def create_dag(
                 all_pending_blocks = await reader_redis_conn.zrangebyscore(
                     key=redis_keys.get_pending_blocks_key(project_id=project_id),
                     min=tentative_block_height_event_data+1,
-                    # max=-1,  # defaults to inf
+                    # `max` arg lef out  # defaults to inf
                     withscores=True
                 )
                 if len(all_pending_blocks) > 0:
@@ -417,7 +434,7 @@ async def create_dag(
                                 payload_cid=_event_data['snapshotCid'],
                                 timestamp=_event_data['timestamp'],
                             )
-                            cur_max_height_project = dag_block['height']
+                            cur_max_height_project = _tt_block_height
                             try:
                                 diff_map = await diffmap_utils.calculate_diff(
                                     dag_cid=_dag_cid,
@@ -436,6 +453,24 @@ async def create_dag(
                                 payload_commit_id=_payload_commit_id,
                                 tx_hash=_tx_hash,
                             )
+
+                            _ = await dag_utils.clear_payload_commit_processing_logs(
+                                project_id=project_id,
+                                payload_commit_id=_payload_commit_id,
+                                writer_redis_conn=writer_redis_conn
+                            )
+                            if _:
+                                rest_logger.debug(
+                                    'Cleared processing logs for payload commit ID: %s',
+                                    _payload_commit_id
+                                )
+                            else:
+                                rest_logger.debug(
+                                    'Not sure if processing logs cleared or nonexistent for payload commit ID: %s | '
+                                    'Redis return: %s',
+                                    _payload_commit_id,
+                                    _
+                                )
                             # send commit ID confirmation callback
                             if cb_url:
                                 await send_commit_callback(

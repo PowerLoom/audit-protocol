@@ -75,46 +75,46 @@ async def commit_single_payload(
                         if snapshot_cid:
                             break
             except Exception as e:
-                # await writer_redis_conn.zadd(
-                #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                #         project_id=project_id, payload_commit_id=payload_commit_id
-                #     ),
-                #     member=json.dumps(
-                #         {
-                #             'worker': 'payload_commit_service',
-                #             'update': {
-                #                 'action': 'IPFS.Commit',
-                #                 'info': {
-                #                     'core_payload': core_payload,
-                #                     'status': 'Failed',
-                #                     'exception': e.__repr__()
-                #                 }
-                #             }
-                #         }
-                #     ),
-                #     score=int(time.time())
-                # )
+                await writer_redis_conn.zadd(
+                    key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                        project_id=project_id, payload_commit_id=payload_commit_id
+                    ),
+                    member=json.dumps(
+                        {
+                            'worker': 'payload_commit_service',
+                            'update': {
+                                'action': 'IPFS.Commit',
+                                'info': {
+                                    'core_payload': core_payload,
+                                    'status': 'Failed',
+                                    'exception': e.__repr__()
+                                }
+                            }
+                        }
+                    ),
+                    score=int(time.time())
+                )
                 return
-            # else:
-                # await writer_redis_conn.zadd(
-                #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                #         project_id=project_id, payload_commit_id=payload_commit_id
-                #     ),
-                #     member=json.dumps(
-                #         {
-                #             'worker': 'payload_commit_service',
-                #             'update': {
-                #                 'action': 'IPFS.Commit',
-                #                 'info': {
-                #                     'core_payload': core_payload,
-                #                     'status': 'Success',
-                #                     'exception': snapshot_cid
-                #                 }
-                #             }
-                #         }
-                #     ),
-                #     score=int(time.time())
-                # )
+            else:
+                await writer_redis_conn.zadd(
+                    key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                        project_id=project_id, payload_commit_id=payload_commit_id
+                    ),
+                    member=json.dumps(
+                        {
+                            'worker': 'payload_commit_service',
+                            'update': {
+                                'action': 'IPFS.Commit',
+                                'info': {
+                                    'core_payload': core_payload,
+                                    'status': 'Success',
+                                    'exception': snapshot_cid
+                                }
+                            }
+                        }
+                    ),
+                    score=int(time.time())
+                )
         else:
             snapshot_cid = payload_commit_obj.snapshotCID
         payload_cid_key = redis_keys.get_payload_cids_key(project_id)
