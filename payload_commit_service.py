@@ -136,6 +136,7 @@ async def commit_single_payload(
             payload_commit_id=payload_commit_id,
             last_tentative_block_height=payload_commit_obj.tentativeBlockHeight,
             project_id=payload_commit_obj.projectId,
+            resubmission_block= payload_commit_obj.resubmissionBlock,
             writer_redis_conn=writer_redis_conn,
             contract=contract
         )

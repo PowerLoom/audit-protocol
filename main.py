@@ -16,7 +16,7 @@ from utils.redis_conn import REDIS_WRITER_CONN_CONF, REDIS_READER_CONN_CONF
 from functools import partial
 from utils import retrieval_utils
 from utils.diffmap_utils import process_payloads_for_diff, preprocess_dag
-from data_models import ContainerData, PayloadCommit
+from data_models import ContainerData, PayloadCommit, PendingTransaction
 from pydantic import ValidationError
 from aio_pika import ExchangeType, DeliveryMode, Message
 from aio_pika.pool import Pool
@@ -138,8 +138,10 @@ async def create_retrieval_request(project_id: str, from_height: int, to_height:
     return request_id
 
 
-async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id,
-                           writer_redis_conn, contract):
+async def make_transaction(
+        snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id, writer_redis_conn,
+        contract, resubmission_block=0
+):
     """
         - Create a unqiue transaction_id associated with this transaction, 
         and add it to the set of pending transactions
@@ -232,13 +234,13 @@ async def make_transaction(snapshot_cid, payload_commit_id, token_hash, last_ten
         )
         return None
 
-    pending_transaction_key = f"projectID:{project_id}:pendingTransactions"
+    pending_transaction_key = redis_keys.get_pending_transactions_key(project_id)
     tx_hash = tx_hash_obj[0]['txHash']
-
+    tx_hash_pending_entry = PendingTransaction(txHash=tx_hash, lastTouchedBlock=resubmission_block)
     _ = await writer_redis_conn.zadd(
             key=pending_transaction_key,
             score=int(last_tentative_block_height),
-            member=tx_hash
+            member=tx_hash_pending_entry.json()
      )
 
     # save input data for later re-processing if required

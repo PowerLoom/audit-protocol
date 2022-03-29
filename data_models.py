@@ -3,6 +3,11 @@ from typing import Union, List, Optional
 import json
 
 
+class PendingTransaction(BaseModel):
+    txHash: str
+    lastTouchedBlock: int = 0
+
+
 class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
@@ -12,6 +17,7 @@ class PayloadCommit(BaseModel):
     apiKeyHash: Optional[str] = None
     tentativeBlockHeight: int
     resubmitted: bool = False
+    resubmissionBlock: int = 0  # corresponds to lastTouchedBlock in PendingTransaction model
 
 
 class FilecoinJobData(BaseModel):
