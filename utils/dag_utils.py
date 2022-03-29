@@ -190,7 +190,8 @@ async def discard_event(
     d_r = await clear_payload_commit_data(
         project_id=project_id,
         payload_commit_id=payload_commit_id,
-        tx_hash=tx_hash
+        tx_hash=tx_hash,
+        tentative_height_pending_tx_entry=tentative_block_height
     )
     redis_output.extend(d_r)
 
