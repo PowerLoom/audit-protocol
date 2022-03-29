@@ -167,6 +167,7 @@ async def create_dag(
                     _ = await dag_utils.clear_payload_commit_data(
                         project_id=project_id,
                         tx_hash=event_data['txHash'],
+                        tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
                         payload_commit_id=event_data['event_data']['payloadCommitId']
                     )
 
@@ -470,6 +471,7 @@ async def create_dag(
                     project_id=project_id,
                     payload_commit_id=event_data['event_data']['payloadCommitId'],
                     tx_hash=event_data['txHash'],
+                    tentative_height_pending_tx_entry=tentative_block_height_event_data
                 )
 
                 """ retrieve all list of all the payload_commit_ids from the pendingBlocks zset """
@@ -528,6 +530,7 @@ async def create_dag(
                                 project_id=project_id,
                                 payload_commit_id=_payload_commit_id,
                                 tx_hash=_tx_hash,
+                                tentative_height_pending_tx_entry=_tt_block_height
                             )
 
                             _ = await dag_utils.clear_payload_commit_processing_logs(

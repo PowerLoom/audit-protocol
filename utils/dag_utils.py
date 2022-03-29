@@ -217,6 +217,7 @@ async def clear_payload_commit_data(
         project_id: str,
         payload_commit_id: str,
         tx_hash: str,
+        tentative_height_pending_tx_entry: int,
         writer_redis_conn: aioredis.Redis
 ):
     """
@@ -225,7 +226,7 @@ async def clear_payload_commit_data(
     particular dag block, since these key will not be needed anymore
     once the dag block has been created successfully.
         - Clear Event Data
-        - Remove the tx_hash from pendingTransactions key
+        - Remove the tagged transaction hash entry from pendingTransactions set, by its tentative height score
         - Remove the payload_commit_id from pendingBlocks
         - Delete the payload_commit_data
     """
@@ -238,9 +239,10 @@ async def clear_payload_commit_data(
     deletion_result.append(out)
 
     # remove tx_hash from list of pending transactions
-    out = await writer_redis_conn.zrem(
+    out = await writer_redis_conn.zremrangebyscore(
         key=redis_keys.get_pending_transactions_key(project_id=project_id),
-        member=tx_hash
+        min=tentative_height_pending_tx_entry,
+        max=tentative_height_pending_tx_entry
     )
     deletion_result.append(out)
 
