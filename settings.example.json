@@ -16,6 +16,16 @@
 			}
 		}
 	},
+	"contract_addresses": {
+		"iuniswap_v2_factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+		"iuniswap_v2_router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+		"iuniswap_v2_pair": "0x3356c9A8f40F8E9C1d192A4347A76D18243fABC5",
+		"USDT": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+		"DAI": "0x6b175474e89094c44da98b954eedeac495271d0f",
+		"USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+		"WETH": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
+	},
 	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
 	"snapshot_interval": 4,
 	"dag_table_name": "DAG_CID",

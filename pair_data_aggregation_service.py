@@ -1,4 +1,5 @@
 from typing import List
+from time import time
 from web3 import Web3
 from utils import redis_keys
 import asyncio
@@ -305,15 +306,36 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
             token0TradeVolume_7d=0.0,
             token1TradeVolume_7d=0.0
         )
+        logger.debug('Prepared trades, token reserves snapshot and storing it in redis: %s', prepared_snapshot)
+        logger.debug(f"Storing recent logs for pair: {redis_keys.get_uniswap_pair_cached_recent_logs(f'{Web3.toChecksumAddress(pair_contract_address)}')}, of len:{len(recent_logs)}")
+        logger.debug('Adding calculated snapshot to daily stats zset and pruning it for just 24h data')
+        now = int(time())
+        await asyncio.gather(
+            writer_redis_conn.set(
+                redis_keys.get_uniswap_pair_contract_V2_pair_data(f"{Web3.toChecksumAddress(pair_contract_address)}"),
+                prepared_snapshot.json()
+            ),
+            writer_redis_conn.set(
+                redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"), 
+                json.dumps(recent_logs)
+            ),
+            writer_redis_conn.zadd(
+                key=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+                member=json.dumps(prepared_snapshot.json()),
+                score= now
+            )
+        )
+        # excluded below redis call from asyncio.gather becuase 
+        # above redis call are on different key and below one write on same key
+        await writer_redis_conn.zremrangebyscore(
+            key=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+            min=float('-inf'),
+            max=float(now - 60 * 60 * 24)
+        )
     except Exception as e:
         logger.error('Error in process_pairs_trade_volume_and_reserves: %s', e, exc_info=True)
         raise(e)
-    
-    
-    logger.debug('Prepared trades, token reserves snapshot and storing it in redis: %s', prepared_snapshot)
-    r = await writer_redis_conn.set(
-        redis_keys.get_uniswap_pair_contract_V2_pair_data(f"{Web3.toChecksumAddress(pair_contract_address)}"),
-        prepared_snapshot.json())
+
     logger.debug(f"Calculated v2 pair data for contract: {pair_contract_address} | symbol:{pair_token_metadata['token0']['symbol']}-{pair_token_metadata['token1']['symbol']}")
 
     return json.loads(prepared_snapshot.json())
@@ -349,10 +371,9 @@ async def v2_pairs_data():
         if f is not None:
             f.close()
 
-
 if __name__ == '__main__':
     print("", "")
     # loop = asyncio.get_event_loop()
-    # data = loop.run_until_complete(pair_recent_metadata("0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc"))
+    # data = loop.run_until_complete(daily_stats_test())
     # print("", "")
     # print(data)
