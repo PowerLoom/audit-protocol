@@ -135,46 +135,54 @@ func (verifier *DagVerifier) VerifyAllProjects() {
 }
 
 func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
-	//For now only the PayloadChain that is stored in redis is used as a reference to verify.
-	//TODO: Need to validate the original dag chain either from redis/from what is stored in IPFS.
-	var chain []DagPayload
+	//Fetch the DAGChain cached in redis and then corresponding payloads at chainHeight.
+	// For now only the Chain that is stored in redis is used as a reference to verify.
+	//TODO: Need to validate the original dag chain from what is stored in IPFS. Is this required??
+	var dagChain []DagChainBlock
+	dagChain, err := verifier.GetDagChainCidsFromRedis(projectId, verifier.lastVerifiedDagBlockHeights[projectId])
+	if err != nil {
+		//Raise an alarm in future for this
+		log.Error("Failed to fetch DAG Chain CIDS for projectID from redis:", projectId)
+		return err
+	}
+	if len(dagChain) == 0 {
+		log.Info("No new blocks to verify in the chain from previous height for projectId", projectId)
+		return nil
+	}
 	//Get ZSet from redis for payloadCids and start verifying if there are any gaps.
-	chain, err := verifier.GetPayloadCidsFromRedis(projectId, verifier.lastVerifiedDagBlockHeights[projectId])
+	dagChain, err = verifier.GetPayloadCidsFromRedis(projectId, verifier.lastVerifiedDagBlockHeights[projectId], dagChain)
 	if err != nil {
 		//Raise an alarm in future for this
 		log.Error("Failed to fetch payload CIDS for projectID from redis:", projectId)
 		return err
 	}
-	if len(chain) == 0 {
-		log.Info("No new blocks to verify in the chain from previous height for projectId", projectId)
-		return nil
-	}
-	for i := range chain {
-		payload, err := ipfsClient.GetPayload(chain[i].PayloadCid, 3)
+
+	for i := range dagChain {
+		payload, err := ipfsClient.GetPayload(dagChain[i].Payload.PayloadCid, 3)
 		if err != nil {
 			//If we are unable to fetch a CID from IPFS, retry
-			log.Error("Failed to get PayloadCID from IPFS. Either cache is corrupt or there is an actual issue.CID:", chain[i].PayloadCid)
+			log.Error("Failed to get PayloadCID from IPFS. Either cache is corrupt or there is an actual issue.CID:", dagChain[i].Payload.PayloadCid)
 			//TODO: Either cache is corrupt or there is an actual issue.
 			//Check and fix cache corruption by getting Dagchain from IPFS.
 			return err
 		}
-		chain[i].Data = payload
+		dagChain[i].Payload.Data = payload
 		//Fetch payload from IPFS and check gaps in chainHeight.\
 		log.Debugf("Index: %d ,payload: %+v", i, payload)
 	}
-	log.Info("Verifying Dagchain for ProjectId %s , from block %d to %d", projectId, chain[0].DagChainHeight, chain[(len(chain)-1)].DagChainHeight)
-	gapsPresent, chainGaps := verifier.verifyDagForGaps(&chain)
-	if !gapsPresent {
-		log.Info("Dag chain has gaps for projectID:", projectId)
-		verifier.updateDagGapsinRedis(projectId, chainGaps)
+	log.Info("Verifying Dagchain for ProjectId %s , from block %d to %d", projectId, dagChain[0].Height, dagChain[(len(dagChain)-1)].Height)
+	issuesPresent, chainIssues := verifier.verifyDagForIssues(&dagChain)
+	if !issuesPresent {
+		log.Info("Dag chain has issues for projectID:", projectId)
+		verifier.updateDagGapsinRedis(projectId, chainIssues)
 	}
 	//Store last verified blockHeight so that in next run, we just need to verify from the same.
 	//Use single hash key in redis to store the same against contractAddress.
-	verifier.lastVerifiedDagBlockHeights[projectId] = strconv.FormatInt(chain[len(chain)-1].DagChainHeight, 10)
+	verifier.lastVerifiedDagBlockHeights[projectId] = strconv.FormatInt(dagChain[len(dagChain)-1].Height, 10)
 	return nil
 }
 
-func (verifier *DagVerifier) updateDagGapsinRedis(projectId string, chainGaps []DagChainGap) {
+func (verifier *DagVerifier) updateDagGapsinRedis(projectId string, chainGaps []DagChainIssue) {
 	key := fmt.Sprintf(REDIS_KEY_PROJECT_DAG_CHAIN_GAPS, projectId)
 	var gaps []*redis.Z
 	for i := range chainGaps {
@@ -202,22 +210,18 @@ func (verifier *DagVerifier) updateDagGapsinRedis(projectId string, chainGaps []
 
 }*/
 
-func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScore string) ([]DagPayload, error) {
-	var dagPayloadsInfo []DagPayload
+func (verifier *DagVerifier) GetDagChainCidsFromRedis(projectId string, startScore string) ([]DagChainBlock, error) {
+	var dagChainCids []DagChainBlock
 
 	//key := projectId + ":payloadCids"
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_CIDS, projectId)
 
-	log.Debug("Fetching PayloadCids from redis at key:", key, ",with startScore: ", startScore)
+	log.Debug("Fetching DAG Chain Cids from redis at key:", key, ",with startScore: ", startScore)
 	zRangeByScore := verifier.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 		Min: startScore,
 		Max: "+inf",
 	})
-	/* 	zRangeByScore := verifier.redisClient.ZRangeByScoreWithScores("projectID:uniswap_pairContract_pair_total_reserves_0x61b62c5d56ccd158a38367ef2f539668a06356ab_UNISWAPV2:payloadCids", redis.ZRangeBy{
-		Min: startScore,
-		Max: "3",
-	}) */
-	//verifier.redisClient.Z
+
 	err := zRangeByScore.Err()
 	log.Debug("Result for ZRangeByScoreWithScores : ", zRangeByScore)
 	if err != nil {
@@ -225,55 +229,92 @@ func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScor
 		return nil, err
 	}
 	res := zRangeByScore.Val()
-	dagPayloadsInfo = make([]DagPayload, len(res))
-	log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
+	dagChainCids = make([]DagChainBlock, len(res))
+	log.Debugf("Fetched %d DAG Chain CIDs for key %s", len(res), key)
 	for i := range res {
 		//Safe to convert as we know height will always be int.
-		dagPayloadsInfo[i].DagChainHeight = int64(res[i].Score)
-		dagPayloadsInfo[i].PayloadCid = fmt.Sprintf("%v", res[i].Member)
+		dagChainCids[i].Height = int64(res[i].Score)
+		dagChainCids[i].Data.Cid = fmt.Sprintf("%v", res[i].Member)
 	}
-	return dagPayloadsInfo, nil
+	lastVerifiedStatus, err := strconv.ParseInt(startScore, 10, 64)
+	if err != nil && len(dagChainCids) == 1 && dagChainCids[0].Height == lastVerifiedStatus {
+		//This means no new dag blocks in the chain from last verified height.
+		dagChainCids = nil
+	}
+	return dagChainCids, nil
 }
 
-func (verifier *DagVerifier) verifyDagForGaps(chain *[]DagPayload) (bool, []DagChainGap) {
-	dagPayloads := *chain
-	log.Info("Verifying DAG for gaps. DAG chain length is:", len(dagPayloads))
+func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScore string, dagChain []DagChainBlock) ([]DagChainBlock, error) {
+	//var dagPayloadsInfo []DagPayload
+
+	//key := projectId + ":payloadCids"
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+
+	log.Debug("Fetching PayloadCids from redis at key:", key, ",with startScore: ", startScore)
+	zRangeByScore := verifier.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+		Min: startScore,
+		//Max: "+inf",
+		Max: fmt.Sprintf("%d", dagChain[len(dagChain)-1].Height),
+	})
+
+	err := zRangeByScore.Err()
+	log.Debug("Result for ZRangeByScoreWithScores : ", zRangeByScore)
+	if err != nil {
+		log.Error("Could not fetch entries error: ", err, "Query:", zRangeByScore)
+		return dagChain, err
+	}
+	res := zRangeByScore.Val()
+	//dagPayloadsInfo = make([]DagPayload, len(res))
+	log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
+	for i := range res {
+		if dagChain[i].Height != int64(res[i].Score) {
+			return dagChain, fmt.Errorf("CRITICAL:Inconsistency between DAG Chain and Payloads stored in redis for Project:%s", projectId)
+		}
+		dagChain[i].Payload.PayloadCid = fmt.Sprintf("%v", res[i].Member)
+	}
+	return dagChain, nil
+}
+
+func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, []DagChainIssue) {
+	dagChain := *chain
+	log.Info("Verifying DAG for Issues. DAG chain length is:", len(dagChain))
 	//fmt.Printf("%+v\n", dagChain)
-	var prevDagBlockEnd, lastBlock, firstBlock, numGaps int64
-	firstBlock = dagPayloads[0].Data.ChainHeightRange.End
-	lastBlock = dagPayloads[len(dagPayloads)-1].Data.ChainHeightRange.Begin
-	var dagGaps []DagChainGap
-	for i := range dagPayloads {
+	var prevDagBlockEnd, lastBlock, firstBlock, numGaps, numDuplicates int64
+	firstBlock = dagChain[0].Payload.Data.ChainHeightRange.End
+	lastBlock = dagChain[len(dagChain)-1].Payload.Data.ChainHeightRange.Begin
+	var dagIssues []DagChainIssue
+	for i := range dagChain {
 		//log.Debug("Processing dag block :", i, "nextDagBlockStart:", nextDagBlockStart)
 		if prevDagBlockEnd != 0 {
-			if dagPayloads[i].DagChainHeight == dagPayloads[i-1].DagChainHeight {
-				dagGaps = append(dagGaps, DagChainGap{IssueType: DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT,
+			if dagChain[i].Height == dagChain[i-1].Height {
+				dagIssues = append(dagIssues, DagChainIssue{IssueType: DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT,
 					TimestampIdentified: time.Now().Unix(),
-					DAGBlockHeight:      dagPayloads[i].DagChainHeight})
+					DAGBlockHeight:      dagChain[i].Height})
 				//TODO:If there are multiple snapshots observed at same blockHeight, need to take action to cleanup snapshots
 				//		which are not required from IPFS based on previous and next blocks.
-				log.Errorf("Found Same DagchainHeight %d at 2 levels. DagChain needs to be fixed.", dagPayloads[i].DagChainHeight)
+				log.Errorf("Found Same DagchainHeight %d at 2 levels. DagChain needs to be fixed.", dagChain[i].Height)
+				numDuplicates++
 			}
-			curBlockStart := dagPayloads[i].Data.ChainHeightRange.Begin
+			curBlockStart := dagChain[i].Payload.Data.ChainHeightRange.Begin
 			//log.Debug("curBlockEnd", curBlockEnd, " nextDagBlockStart", nextDagBlockStart)
 			if curBlockStart != prevDagBlockEnd+1 {
-				log.Debug("Gap identified at ChainHeight:", dagPayloads[i].DagChainHeight, ",PayloadCID:", dagPayloads[i].PayloadCid, ", between height:", dagPayloads[i-1].DagChainHeight, " and ", dagPayloads[i].DagChainHeight)
+				log.Debug("Gap identified at ChainHeight:", dagChain[i].Height, ",PayloadCID:", dagChain[i].Payload.PayloadCid, ", between height:", dagChain[i-1].Height, " and ", dagChain[i].Height)
 				log.Debug("Missing blocks from(not including): ", prevDagBlockEnd, " to(not including): ", curBlockStart)
-				dagGaps = append(dagGaps, DagChainGap{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, MissingBlockHeightStart: prevDagBlockEnd + 1,
+				dagIssues = append(dagIssues, DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, MissingBlockHeightStart: prevDagBlockEnd + 1,
 					MissingBlockHeightEnd: curBlockStart - 1,
 					TimestampIdentified:   time.Now().Unix(),
-					DAGBlockHeight:        dagPayloads[i].DagChainHeight})
+					DAGBlockHeight:        dagChain[i].Height})
 				numGaps++
 			}
 		}
-		prevDagBlockEnd = dagPayloads[i].Data.ChainHeightRange.End
+		prevDagBlockEnd = dagChain[i].Payload.Data.ChainHeightRange.End
 	}
 	log.Info("Block Range is from:", firstBlock, ", to:", lastBlock)
-	log.Info("Number of gaps found:", numGaps)
-	if numGaps == 0 {
+	log.Infof("Number of gaps found:%d. Number of Duplicates found:%d", numGaps, numDuplicates)
+	if numGaps == 0 && numDuplicates == 0 {
 		return true, nil
 	} else {
-		return false, dagGaps
+		return false, dagIssues
 	}
 }
 

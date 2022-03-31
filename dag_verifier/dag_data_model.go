@@ -1,6 +1,6 @@
 package main
 
-type DagChainGap struct {
+type DagChainIssue struct {
 	IssueType string `json:"issueType"`
 	//In case of missing blocks in chain or Gap
 	MissingBlockHeightStart int64 `json:"missingBlockHeightStart"`
@@ -33,8 +33,9 @@ type DagChainBlock struct {
 		Cid  string `json:"cid"`
 		Type string `json:"type"`
 	} `json:"data"`
-	Height    int64  `json:"height"`
-	PrevCid   string `json:"prevCid"`
-	Timestamp int64  `json:"timestamp"`
-	TxHash    string `json:"txHash"`
+	Height    int64      `json:"height"`
+	PrevCid   string     `json:"prevCid"`
+	Timestamp int64      `json:"timestamp"`
+	TxHash    string     `json:"txHash"`
+	Payload   DagPayload `json:"payload"`
 }
