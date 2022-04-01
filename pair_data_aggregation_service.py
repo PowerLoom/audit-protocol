@@ -281,10 +281,6 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
         if len(recent_logs) > 70:
             recent_logs = recent_logs[:70]
 
-        await writer_redis_conn.set(
-            redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"), 
-            json.dumps(recent_logs)
-        )
         logger.debug(f"Stored recent logs for pair: {redis_keys.get_uniswap_pair_cached_recent_logs(f'{Web3.toChecksumAddress(pair_contract_address)}')}, of len:{len(recent_logs)}")
 
         logger.debug('Calculated 24h, 7d and fees_24h vol: %s, %s | contract: %s', total_volume_24h, fees_24h, pair_contract_address)
@@ -311,14 +307,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
         logger.debug('Adding calculated snapshot to daily stats zset and pruning it for just 24h data')
         now = int(time())
         await asyncio.gather(
-            writer_redis_conn.set(
-                redis_keys.get_uniswap_pair_contract_V2_pair_data(f"{Web3.toChecksumAddress(pair_contract_address)}"),
-                prepared_snapshot.json()
-            ),
-            writer_redis_conn.set(
-                redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"), 
-                json.dumps(recent_logs)
-            ),
+            writer_redis_conn.mset({
+                redis_keys.get_uniswap_pair_contract_V2_pair_data(f"{Web3.toChecksumAddress(pair_contract_address)}"): prepared_snapshot.json(),
+                redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"): json.dumps(recent_logs)
+            }),
             writer_redis_conn.zadd(
                 key=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
                 member=json.dumps(prepared_snapshot.json()),
@@ -330,7 +322,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
         await writer_redis_conn.zremrangebyscore(
             key=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
             min=float('-inf'),
-            max=float(now - 60 * 60 * 24)
+            max=float(now - 60 * 60 * 25)
         )
     except Exception as e:
         logger.error('Error in process_pairs_trade_volume_and_reserves: %s', e, exc_info=True)
@@ -374,6 +366,6 @@ async def v2_pairs_data():
 if __name__ == '__main__':
     print("", "")
     # loop = asyncio.get_event_loop()
-    # data = loop.run_until_complete(daily_stats_test())
+    # data = loop.run_until_complete(v2_pairs_data())
     # print("", "")
     # print(data)
