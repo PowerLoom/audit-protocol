@@ -1,0 +1,46 @@
+@startuml "DAG Verifier Service flow"
+
+
+skinparam ResponseMessageBelowArrow true
+autonumber
+
+
+participant DAGVerifierService as mon
+database Redis as redis
+participant IPFS as ipfs
+
+== initialization ==
+note left of mon 
+Parsing Project info from static file.
+Connecting to redis and IPFS.
+end note
+
+
+== DAGVerification (Runs every 5 mins) ==
+
+note over mon: Verify DAG chain payloads for each project by querying redis cache.\nIdentify gaps in the chain and trace back source of the problem for these gaps.
+mon <-> redis: Fetch lastDagVerificationStatus ZSet from redis
+
+loop each project in a separate Go-Routine
+
+mon <-> redis: Fetch DagPayload ZSet from redis from lastVerifiedHeight to +inf
+loop each payloadCid [build DAGPayload Chain]
+mon <-> ipfs : Fetch Payload using CID.
+alt error fetching from IPFS 
+
+note left of mon 
+Retry fetching for 3 times from IPFS.
+In case of failure,skip this project for current run. 
+Try in next cycle.
+end note 
+
+end // error
+
+end // loop payloadCid
+
+end  //loop project
+
+note over mon :Wait for all go-routines to complete
+
+mon -> redis: Update latestVerifiedHeight for each project. 
+mon -> redis: Store Gaps identified in the Chain for each project in a Zset.
