@@ -22,7 +22,7 @@ import requests
 import redis
 import ray
 
-ray.init()
+ray.init(include_dashboard=True, dashboard_port=8085, ignore_reinit_error=True, logging_level=logging.INFO)
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -39,92 +39,114 @@ payload_logger.addHandler(stdout_handler)
 payload_logger.addHandler(stderr_handler)
 # coloredlogs.install(level="DEBUG", logger=payload_logger, stream=sys.stdout)
 
-payload_logger.debug("Initialized Payload")
+payload_logger.debug("Starting Payload Commit Service...")
 
 
 @ray.remote
-class TransactionActor:
+class TransactionActorAsync:
     def __init__(self):
-        self.evc = EVCore(verbose=True)
-        self.contract = self.evc.generate_contract_sdk(
-            contract_address=settings.audit_contract,
-            app_name='auditrecords'
-        )
-        self.redis_pool = redis.BlockingConnectionPool(**REDIS_CONN_CONF, max_connections=20)
+        self.aioredis_pool = RedisPool(pool_size=10)
+        formatter = logging.Formatter(
+            u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setLevel(logging.DEBUG)
+        stdout_handler.setFormatter(formatter)
 
-    def make_transaction(
-            self, snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id,
-            resubmission_block=0
-    ):
-        with get_redis_conn_from_pool(self.redis_pool) as writer_redis_conn:
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(logging.ERROR)
+        stderr_handler.setFormatter(formatter)
+        logging.basicConfig(level=logging.INFO)
+        self.contract = None
 
-            """
-                - Create a unique transaction_id associated with this transaction,
-                and add it to the set of pending transactions
-            """
-            e_obj = None
-
-            kwargs = dict(
-                payloadCommitId=payload_commit_id,
-                snapshotCid=snapshot_cid,
-                apiKeyHash=token_hash,
-                projectId=project_id,
-                tentativeBlockHeight=last_tentative_block_height,
+    def _init_sdk(self):
+        if not self.contract:
+            self.evc = EVCore(verbose=True)
+            self.contract = self.evc.generate_contract_sdk(
+                contract_address=settings.audit_contract,
+                app_name='auditrecords'
             )
-            try:
-                # try 3 times, wait 1-2 seconds between retries
-                for attempt in Retrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
-                    with attempt:
-                        tx_hash_obj = self.contract.commitRecord(**kwargs)
-                        if tx_hash_obj:
-                            break
-            except EVBaseException as evbase:
-                e_obj = evbase
-            except requests.exceptions.HTTPError as errh:
-                e_obj = errh
-            except requests.exceptions.ConnectionError as errc:
-                e_obj = errc
-            except requests.exceptions.Timeout as errt:
-                e_obj = errt
-            except requests.exceptions.RequestException as errr:
-                e_obj = errr
-            except Exception as e:
-                e_obj = e
-            else:
-                payload_logger.debug(
-                    "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
-                    tx_hash_obj[0]['txHash'], payload_commit_id
-                )
-                member_str = json.dumps(
-                        {
-                            'worker': 'payload_commit_service',
-                            'update': {
-                                'action': 'AuditRecord.Commit',
-                                'info': {
-                                    'msg': kwargs,
-                                    'status': 'Success',
-                                    'txHash': tx_hash_obj
-                                }
+
+    async def make_transaction(
+            self, snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id, resubmission_block=0
+    ):
+        """
+            - Create a unique transaction_id associated with this transaction,
+            and add it to the set of pending transactions
+        """
+        self._init_sdk()
+        await self.aioredis_pool.populate()
+        writer_redis_conn: aioredis.Redis = self.aioredis_pool.writer_redis_pool
+        e_obj = None
+        try:
+            loop = asyncio.get_running_loop()
+        except Exception as e:
+            logging.warning("There was an error while trying to get event loop")
+            logging.error(e, exc_info=True)
+            return None
+        kwargs = dict(
+            payloadCommitId=payload_commit_id,
+            snapshotCid=snapshot_cid,
+            apiKeyHash=token_hash,
+            projectId=project_id,
+            tentativeBlockHeight=last_tentative_block_height,
+        )
+        partial_func = partial(self.contract.commitRecord, **kwargs)
+        try:
+            # try 3 times, wait 1-2 seconds between retries
+            async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+                with attempt:
+                    tx_hash_obj = await loop.run_in_executor(None, partial_func)
+                    if tx_hash_obj:
+                        break
+        except EVBaseException as evbase:
+            e_obj = evbase
+        except requests.exceptions.HTTPError as errh:
+            e_obj = errh
+        except requests.exceptions.ConnectionError as errc:
+            e_obj = errc
+        except requests.exceptions.Timeout as errt:
+            e_obj = errt
+        except requests.exceptions.RequestException as errr:
+            e_obj = errr
+        except Exception as e:
+            e_obj = e
+        else:
+            logging.info(
+                "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
+                tx_hash_obj, payload_commit_id
+            )
+            await writer_redis_conn.zadd(
+                key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                    project_id=project_id, payload_commit_id=payload_commit_id
+                ),
+                member=json.dumps(
+                    {
+                        'worker': 'payload_commit_service',
+                        'update': {
+                            'action': 'AuditRecord.Commit',
+                            'info': {
+                                'msg': kwargs,
+                                'status': 'Success',
+                                'txHash': tx_hash_obj
                             }
                         }
-                    )
-                writer_redis_conn.zadd(
-                    name=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                        project_id=project_id, payload_commit_id=payload_commit_id
-                    ),
-                    mapping={member_str: int(time.time())}
-                )
+                    }
+                ),
+                score=int(time.time())
+            )
 
-            if e_obj:
-                payload_logger.debug("=" * 80)
-                payload_logger.debug(
-                    "Commit Payload to AuditRecord contract failed. "
-                    "The transaction was not successful against commit ID %s",
-                    payload_commit_id
-                )
-                payload_logger.debug(e_obj)
-                payload_logger.debug("=" * 80)
-                member_str = json.dumps(
+        if e_obj:
+            logging.info(
+                "=" * 80 +
+                "Commit Payload to AuditRecord contract failed. Tx was not successful against commit ID %s\n%s" +
+                "=" * 80,
+                payload_commit_id, e_obj
+            )
+            await writer_redis_conn.zadd(
+                key=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                    project_id=project_id, payload_commit_id=payload_commit_id
+                ),
+                member=json.dumps(
                     {
                         'worker': 'payload_commit_service',
                         'update': {
@@ -136,14 +158,10 @@ class TransactionActor:
                             }
                         }
                     }
-                )
-                writer_redis_conn.zadd(
-                    name=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                        project_id=project_id, payload_commit_id=payload_commit_id
-                    ),
-                    mapping={member_str: int(time.time())}
-                )
-                return None
+                ),
+                score=int(time.time())
+            )
+            return None
 
         pending_transaction_key = redis_keys.get_pending_transactions_key(project_id)
         tx_hash = tx_hash_obj[0]['txHash']
@@ -161,9 +179,10 @@ class TransactionActor:
             lastTouchedBlock=resubmission_block,
             event_data=event_data
         )
-        _ = writer_redis_conn.zadd(
-            name=pending_transaction_key,
-            mapping={tx_hash_pending_entry.json(): int(last_tentative_block_height)}
+        _ = await writer_redis_conn.zadd(
+            key=pending_transaction_key,
+            member=tx_hash_pending_entry.json(),
+            score=last_tentative_block_height
         )
 
         return tx_hash
@@ -173,6 +192,16 @@ class TransactionActor:
 class CommitPayloadProcessorActor:
     def __init__(self):
         self.aioredis_pool = RedisPool(pool_size=10)
+        formatter = logging.Formatter(
+            u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setLevel(logging.DEBUG)
+        stdout_handler.setFormatter(formatter)
+
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(logging.ERROR)
+        stderr_handler.setFormatter(formatter)
+        logging.basicConfig(level=logging.INFO, handlers=[stdout_handler, stderr_handler])
 
     async def single_payload_commit(self, msg_body):
         await self.aioredis_pool.populate()
@@ -236,7 +265,7 @@ class CommitPayloadProcessorActor:
                                 'info': {
                                     'core_payload': core_payload,
                                     'status': 'Success',
-                                    'exception': snapshot_cid
+                                    'CID': snapshot_cid
                                 }
                             }
                         }
@@ -268,9 +297,9 @@ class CommitPayloadProcessorActor:
         if result_tx_hash:
             if not payload_commit_obj.resubmitted:
                 last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
-                payload_logger.debug("Setting the last snapshot_cid as %s for project ID %s", snapshot_cid, project_id)
+                logging.debug("Setting the last snapshot_cid as %s for project ID %s", snapshot_cid, project_id)
                 _ = await writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
-            payload_logger.debug('Setting tx hash %s against payload commit ID %s', result_tx_hash, payload_commit_id)
+            logging.debug('Setting tx hash %s against payload commit ID %s', result_tx_hash, payload_commit_id)
             await writer_redis_conn.set(redis_keys.get_payload_commit_key(payload_commit_id), result_tx_hash)
 
 
@@ -320,7 +349,7 @@ def verifier_crash_cb(fut: asyncio.Future):
 
 if __name__ == "__main__":
     ev_loop = asyncio.get_event_loop()
-    transaction_processor_actor = TransactionActor.options(
+    transaction_processor_actor = TransactionActorAsync.options(
         max_concurrency=settings.max_payload_commits,
         lifetime='detached'
     ).remote()
