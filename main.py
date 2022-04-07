@@ -3,9 +3,7 @@ from fastapi import Depends, FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
-from maticvigil.EVCore import EVCore
 from tenacity import AsyncRetrying, stop_after_attempt, wait_random
-from maticvigil.exceptions import EVBaseException
 from config import settings
 from uuid import uuid4
 from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn, RedisPool
@@ -136,120 +134,6 @@ async def create_retrieval_request(project_id: str, from_height: int, to_height:
     _ = await writer_redis_conn.sadd(requests_list_key, request_id)
 
     return request_id
-
-
-async def make_transaction(
-        snapshot_cid, payload_commit_id, token_hash, last_tentative_block_height, project_id, writer_redis_conn,
-        contract, resubmission_block=0
-):
-    """
-        - Create a unqiue transaction_id associated with this transaction, 
-        and add it to the set of pending transactions
-    """
-    e_obj = None
-    try:
-        loop = asyncio.get_event_loop()
-    except Exception as e:
-        rest_logger.warning("There was an error while trying to get event loop")
-        rest_logger.error(e, exc_info=True)
-        return None
-    kwargs = dict(
-        payloadCommitId=payload_commit_id,
-        snapshotCid=snapshot_cid,
-        apiKeyHash=token_hash,
-        projectId=project_id,
-        tentativeBlockHeight=last_tentative_block_height,
-    )
-    partial_func = partial(contract.commitRecord, **kwargs)
-    try:
-        # try 3 times, wait 1-2 seconds between retries
-        async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
-            with attempt:
-                tx_hash_obj = await loop.run_in_executor(None, partial_func)
-                if tx_hash_obj:
-                    break
-    except EVBaseException as evbase:
-        e_obj = evbase
-    except requests.exceptions.HTTPError as errh:
-        e_obj = errh
-    except requests.exceptions.ConnectionError as errc:
-        e_obj = errc
-    except requests.exceptions.Timeout as errt:
-        e_obj = errt
-    except requests.exceptions.RequestException as errr:
-        e_obj = errr
-    except Exception as e:
-        e_obj = e
-    else:
-        rest_logger.debug(
-            "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
-            tx_hash_obj, payload_commit_id
-        )
-        await writer_redis_conn.zadd(
-            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                project_id=project_id, payload_commit_id=payload_commit_id
-            ),
-            member=json.dumps(
-                {
-                    'worker': 'payload_commit_service',
-                    'update': {
-                        'action': 'AuditRecord.Commit',
-                        'info': {
-                            'msg': kwargs,
-                            'status': 'Success',
-                            'txHash': tx_hash_obj
-                        }
-                    }
-                }
-            ),
-            score=int(time.time())
-        )
-
-    if e_obj:
-        rest_logger.debug("=" * 80)
-        rest_logger.debug(
-            "Commit Payload to AuditRecord contract failed. The transaction was not successful against commit ID %s",
-            payload_commit_id
-        )
-        rest_logger.debug(e_obj)
-        rest_logger.debug("=" * 80)
-        await writer_redis_conn.zadd(
-            key=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                project_id=project_id, payload_commit_id=payload_commit_id
-            ),
-            member=json.dumps(
-                {
-                    'worker': 'payload_commit_service',
-                    'update': {
-                        'action': 'AuditRecord.Commit',
-                        'info': {
-                            'msg': kwargs,
-                            'status': 'Failed',
-                            'exception': e_obj.__repr__()
-                        }
-                    }
-                }
-            ),
-            score=int(time.time())
-        )
-        return None
-
-    pending_transaction_key = redis_keys.get_pending_transactions_key(project_id)
-    tx_hash = tx_hash_obj[0]['txHash']
-    tx_hash_pending_entry = PendingTransaction(txHash=tx_hash, lastTouchedBlock=resubmission_block)
-    _ = await writer_redis_conn.zadd(
-            key=pending_transaction_key,
-            score=int(last_tentative_block_height),
-            member=tx_hash_pending_entry.json()
-     )
-
-    # save input data for later re-processing if required
-    await writer_redis_conn.set(
-        redis_keys.get_pending_tx_input_data_key(tx_hash),
-        json.dumps(kwargs)
-    )
-
-    return tx_hash
 
 
 @app.post('/commit_payload')

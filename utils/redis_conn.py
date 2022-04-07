@@ -1,9 +1,13 @@
-import aioredis
 from functools import wraps
-import traceback
 from config import settings as settings_conf
-import asyncio
+import aioredis
+import traceback
+import redis
+import contextlib
+import redis.exceptions as redis_exc
 import logging
+
+
 logger = logging.getLogger(__name__)
 logger.setLevel(level="DEBUG")
 
@@ -29,22 +33,57 @@ REDIS_READER_CONN_CONF = {
 }
 
 
-async def get_writer_redis_pool():
+@contextlib.contextmanager
+def get_redis_conn_from_pool(connection_pool: redis.BlockingConnectionPool) -> redis.Redis:
+    """
+    Contextmanager that will create and teardown a session.
+    """
+    try:
+        redis_conn = redis.Redis(connection_pool=connection_pool)
+        yield redis_conn
+    except redis_exc.RedisError:
+        raise
+    except KeyboardInterrupt:
+        pass
+
+
+def provide_redis_conn(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        arg_conn = 'redis_conn'
+        func_params = fn.__code__.co_varnames
+        conn_in_args = arg_conn in func_params and func_params.index(arg_conn) < len(args)
+        conn_in_kwargs = arg_conn in kwargs
+        if conn_in_args or conn_in_kwargs:
+            # logging.debug('Found redis_conn populated already in %s', fn.__name__)
+            return fn(*args, **kwargs)
+        else:
+            # logging.debug('Found redis_conn not populated in %s', fn.__name__)
+            connection_pool = redis.BlockingConnectionPool(**REDIS_CONN_CONF, max_connections=20)
+            # logging.debug('Created Redis connection Pool')
+            with get_redis_conn_from_pool(connection_pool) as redis_obj:
+                kwargs[arg_conn] = redis_obj
+                logging.debug('Returning after populating redis connection object')
+                return fn(*args, **kwargs)
+    return wrapper
+
+
+async def get_writer_redis_pool(pool_size=200):
     out = await aioredis.create_redis_pool(
         address=(REDIS_WRITER_CONN_CONF['host'], REDIS_WRITER_CONN_CONF['port']),
         db=REDIS_WRITER_CONN_CONF['db'],
         password=REDIS_WRITER_CONN_CONF['password'],
-        maxsize=200
+        maxsize=pool_size
     )
     return out
 
 
-async def get_reader_redis_pool():
+async def get_reader_redis_pool(pool_size=200):
     out = await aioredis.create_redis_pool(
         address=(REDIS_READER_CONN_CONF['host'], REDIS_READER_CONN_CONF['port']),
         db=REDIS_READER_CONN_CONF['db'],
         password=REDIS_READER_CONN_CONF['password'],
-        maxsize=200
+        maxsize=pool_size
     )
     return out
 
@@ -68,13 +107,16 @@ async def get_reader_redis_conn():
 
 
 class RedisPool:
-    def __init__(self):
+    def __init__(self, pool_size=200):
         self.reader_redis_pool = None
         self.writer_redis_pool = None
+        self._pool_size = pool_size
 
     async def populate(self):
-        self.reader_redis_pool: aioredis.Redis = await get_reader_redis_pool()
-        self.writer_redis_pool: aioredis.Redis = await get_writer_redis_pool()
+        if not self.reader_redis_pool:
+            self.reader_redis_pool: aioredis.Redis = await get_reader_redis_pool(self._pool_size)
+        if not self.writer_redis_pool:
+            self.writer_redis_pool: aioredis.Redis = await get_writer_redis_pool(self._pool_size)
 
 
 def setup_teardown_boilerplate(fn):
