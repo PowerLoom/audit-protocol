@@ -322,13 +322,13 @@ async def create_dag(
                                     'Re-Published payload against commit ID %s , tentative block height %s for '
                                     'reprocessing by payload commit service | '
                                     'Previous tx not found for DAG entry: %s',
-                                    tx_commit_details['payloadCommitId'], tx_commit_details['tentativeBlockHeight'],
+                                    tx_commit_details.payloadCommitId, tx_commit_details.tentativeBlockHeight,
                                     tx_hash
                                 )
                                 republished_txs.append({
                                     'txHash': tx_hash,
                                     'payloadCommitID': payload_commit_obj.commitId,
-                                    'unconfirmedTentativeHeight': tx_commit_details['tentativeBlockHeight'],
+                                    'unconfirmedTentativeHeight': tx_commit_details.tentativeBlockHeight,
                                     'resubmittedAtConfirmedBlockHeight': tentative_block_height_event_data
                                 })
                                 # NOTE: dont remove hash from pending transactions key, instead overwrite with
@@ -392,9 +392,15 @@ async def create_dag(
                     max=float('+inf'),
                     withscores=False
                 )
+                # rest_logger.debug('All pending transactions for project %s in key %s : %s',
+                #                   project_id, redis_keys.get_pending_transactions_key(project_id),
+                #                   all_pending_tx_entries)
                 is_pending = False
                 for k in all_pending_tx_entries:
                     pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(k)
+                    rest_logger.debug('Comparing event data tx hash %s with pending tx obj tx hash %s '
+                                      '| tx obj itself: %s',
+                                      event_data['txHash'], pending_tx_obj.txHash, pending_tx_obj)
                     if pending_tx_obj.txHash == event_data['txHash']:
                         is_pending = True
                         pending_tx_set_entry = k
@@ -437,11 +443,8 @@ async def create_dag(
                         payload_commit_id=event_data['event_data']['payloadCommitId'],
                         writer_redis_conn=writer_redis_conn
                     )
-                    # clear commit ID mapping to tx hash
-                    out = await writer_redis_conn.delete(
-                        key=redis_keys.get_payload_commit_key(
-                            payload_commit_id=event_data['event_data']['payloadCommitId'])
-                    )
+
+
                     # clear from pending set
                     await writer_redis_conn.zrem(
                         member=pending_tx_set_entry,
@@ -561,12 +564,7 @@ async def create_dag(
                                     pending_tx_obj.event_data.payloadCommitId,
                                     _
                                 )
-                            # clear commit ID mapping to tx hash
-                            out = await writer_redis_conn.delete(
-                                key=redis_keys.get_payload_commit_key(
-                                    payload_commit_id=pending_tx_obj.event_data.payloadCommitId
-                                )
-                            )
+
                             # clear from pending set
                             await writer_redis_conn.zrem(
                                 member=pending_tx_entry,
