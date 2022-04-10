@@ -107,16 +107,20 @@ async def get_reader_redis_conn():
 
 
 class RedisPool:
-    def __init__(self, pool_size=200):
+    def __init__(self, pool_size=200, replication_mode=False):
         self.reader_redis_pool = None
         self.writer_redis_pool = None
         self._pool_size = pool_size
+        self._replication_mode = False
 
     async def populate(self):
-        if not self.reader_redis_pool:
-            self.reader_redis_pool: aioredis.Redis = await get_reader_redis_pool(self._pool_size)
         if not self.writer_redis_pool:
             self.writer_redis_pool: aioredis.Redis = await get_writer_redis_pool(self._pool_size)
+            if not self._replication_mode:
+                self.reader_redis_pool = self.writer_redis_pool
+            else:
+                if not self.reader_redis_pool:
+                    self.reader_redis_pool: aioredis.Redis = await get_reader_redis_pool(self._pool_size)
 
 
 def setup_teardown_boilerplate(fn):
