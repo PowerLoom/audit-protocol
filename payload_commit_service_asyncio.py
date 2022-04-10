@@ -354,7 +354,7 @@ if __name__ == "__main__":
     for s in signals:
         ev_loop.add_signal_handler(
             s, lambda x=s: ev_loop.create_task(shutdown(x, ev_loop)))
-    PAYLOAD_COMMIT_REQUESTS_QUEUE_INTERNAL = asyncio.Queue(maxsize=10000)
+    PAYLOAD_COMMIT_REQUESTS_QUEUE_INTERNAL = asyncio.Queue(maxsize=100000)
     TX_SENDER_LIMITING_SEMAPHORE = asyncio.BoundedSemaphore(settings.max_payload_commits)
     evc = EVCore(verbose=True)
     audit_record_store_contract = evc.generate_contract_sdk(
@@ -373,10 +373,11 @@ if __name__ == "__main__":
     # monkey patch
     audit_record_store_contract.commitRecord = async_contract.async_commit_record
 
-    payload_logger.debug("Starting RabbitMQ payload commit queue listener...")
-    f = asyncio.ensure_future(payload_commit_queue_listener(ev_loop))
-    f.add_done_callback(payload_commit_q_listener_crash_cb)
-    payload_logger.debug("Started RabbitMQ payload commit queue listener...")
+    payload_logger.debug("Starting RabbitMQ payload commit queue listeners...")
+    for _ in range(10):
+        f = asyncio.ensure_future(payload_commit_queue_listener(ev_loop))
+        f.add_done_callback(payload_commit_q_listener_crash_cb)
+    payload_logger.debug("Started RabbitMQ payload commit queue listeners...")
     for k in range(100):
         f2 = asyncio.ensure_future(single_payload_commit())
         f2.add_done_callback(queue_dispatcher_crash_cb)
