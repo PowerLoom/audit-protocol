@@ -170,7 +170,7 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 		//Fetch payload from IPFS and check gaps in chainHeight.\
 		log.Debugf("Index: %d ,payload: %+v", i, payload)
 	}
-	log.Info("Verifying Dagchain for ProjectId %s , from block %d to %d", projectId, dagChain[0].Height, dagChain[(len(dagChain)-1)].Height)
+	log.Infof("Verifying Dagchain for ProjectId %s , from block %d to %d", projectId, dagChain[0].Height, dagChain[(len(dagChain)-1)].Height)
 	issuesPresent, chainIssues := verifier.verifyDagForIssues(&dagChain)
 	if !issuesPresent {
 		log.Info("Dag chain has issues for projectID:", projectId)
