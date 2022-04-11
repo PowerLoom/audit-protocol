@@ -3,9 +3,20 @@ from typing import Union, List, Optional
 import json
 
 
+class AuditRecordTxEventData(BaseModel):
+    txHash: str
+    projectId: str
+    apiKeyHash: str
+    timestamp: float
+    payloadCommitId: str
+    snapshotCid: str
+    tentativeBlockHeight: int
+
+
 class PendingTransaction(BaseModel):
     txHash: str
     lastTouchedBlock: int = 0
+    event_data: Optional[AuditRecordTxEventData] = dict()
 
 
 class PayloadCommit(BaseModel):

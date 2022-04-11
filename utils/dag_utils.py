@@ -4,6 +4,7 @@ from utils.redis_conn import provide_async_reader_conn_inst, provide_async_write
 from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
 from utils import helper_functions
+from data_models import PendingTransaction
 import async_timeout
 import asyncio
 import json
@@ -37,35 +38,60 @@ def check_signature(core_payload, signature):
     return _sign_rebuilt == signature
 
 
-async def save_event_data(event_data: dict, writer_redis_conn):
+async def update_pending_tx_block_touch(
+        pending_tx_set_entry: bytes,
+        touched_at_block: int,
+        project_id: str,
+        tentative_block_height: int,
+        writer_redis_conn: aioredis.Redis,
+        event_data: dict=None
+):
+    # update last touched block in pending txs key to ensure it is known this guy is already home
+    # first, remove
+    r_ = await writer_redis_conn.zrem(
+        key=redis_keys.get_pending_transactions_key(project_id),
+        member=pending_tx_set_entry
+    )
+    # then, put in new entry
+    new_pending_tx_set_entry_obj: PendingTransaction = PendingTransaction.parse_raw(pending_tx_set_entry)
+    new_pending_tx_set_entry_obj.lastTouchedBlock = touched_at_block
+    if event_data:
+        new_pending_tx_set_entry_obj.event_data = event_data
+    r__ = await writer_redis_conn.zadd(
+        key=redis_keys.get_pending_transactions_key(project_id),
+        member=new_pending_tx_set_entry_obj.json(),
+        score=tentative_block_height
+    )
+    return {'status': bool(r_) and bool(r__), 'results': {'zrem': r_, 'zadd': r__}}
+
+
+async def save_event_data(event_data: dict, pending_tx_set_entry: bytes, writer_redis_conn: aioredis.Redis):
     """
         - Given event_data, save the txHash, timestamp, projectId, snapshotCid, tentativeBlockHeight
         onto a redis HashTable with key: eventData:{payloadCommitId}
+        - Update state in pending tx
         - And then add the payload_commit_id to a zset with key: projectId:{projectId}:pendingBlocks
         with score being the tentativeBlockHeight
     """
 
-    event_data_key = f"eventData:{event_data['event_data']['payloadCommitId']}"
     fields = {
         'txHash': event_data['txHash'],
         'projectId': event_data['event_data']['projectId'],
         'timestamp': event_data['event_data']['timestamp'],
         'snapshotCid': event_data['event_data']['snapshotCid'],
+        'payloadCommitId': event_data['event_data']['payloadCommitId'],
+        'apiKeyHash': event_data['event_data']['apiKeyHash'],
         'tentativeBlockHeight': event_data['event_data']['tentativeBlockHeight']
     }
-    _ = await writer_redis_conn.hmset_dict(
-        key=event_data_key,
-        **fields
-    )
 
-    pending_blocks_key = f"projectID:{event_data['event_data']['projectId']}:pendingBlocks"
-    _ = await writer_redis_conn.zadd(
-        key=pending_blocks_key,
-        member=event_data['event_data']['payloadCommitId'],
-        score=int(event_data['event_data']['tentativeBlockHeight'])
+    return await update_pending_tx_block_touch(
+        pending_tx_set_entry=pending_tx_set_entry,
+        touched_at_block=-1,
+        project_id=fields['projectId'],
+        tentative_block_height=int(event_data['event_data']['tentativeBlockHeight']),
+        event_data=fields,
+        writer_redis_conn=writer_redis_conn
     )
-
-    return 0
 
 
 async def get_dag_block(dag_cid: str):
@@ -233,12 +259,6 @@ async def clear_payload_commit_data(
     """
     deletion_result = []
 
-    # Delete the event data
-    out = await writer_redis_conn.delete(
-        key=redis_keys.get_event_data_key(payload_commit_id=payload_commit_id)
-    )
-    deletion_result.append(out)
-
     # remove tx_hash from list of pending transactions
     out = await writer_redis_conn.zremrangebyscore(
         key=redis_keys.get_pending_transactions_key(project_id=project_id),
@@ -247,14 +267,6 @@ async def clear_payload_commit_data(
     )
     deletion_result.append(out)
 
-    # remove tx hash input data
-    await writer_redis_conn.delete(redis_keys.get_pending_tx_input_data_key(tx_hash))
-
-    # remove the payload commit id from the list of pending blocks
-    out = await writer_redis_conn.zrem(
-        key=redis_keys.get_pending_blocks_key(project_id=project_id),
-        member=payload_commit_id
-    )
     deletion_result.append(out)
 
     # delete the payload commit id data

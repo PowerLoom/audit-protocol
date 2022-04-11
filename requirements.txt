@@ -3,7 +3,7 @@ uvicorn
 pygate_grpc
 git+https://github.com/blockvigil/maticvigil-python-sdk.git
 eth_utils
-aioredis
+aioredis==1.3.1
 aiofiles
 aiohttp
 redis
@@ -33,3 +33,4 @@ siaskynet
 web3==5.23.1
 aio_pika==6.8.0
 pika==1.2.0
+aioredlock==0.7.3
