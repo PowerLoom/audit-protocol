@@ -3,6 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type TestPayload struct {
@@ -22,13 +26,25 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	var pc PayloadCommit
-	pc.CommitId = "testCommitId"
-	pc.ProjectId = "testProjectId"
-	pc.TentativeBlockHeight = 1
-	pc.Payload = TestPayload{Field1: "Hello", Field2: "Go Payload Commit service."}
-	bytes, err := json.Marshal(pc)
-	fmt.Println("Sending +%v to rabbitmq.", pc)
-	fmt.Println("Sending bytes", bytes)
-	conn.Publish("commit-payloads", bytes)
+	numProjects := 50
+	var tentativeBlockHeights [50]int64
+	for j := 0; ; j++ {
+		log.Infof("Sending %d burst to rabbitmq.", j)
+		for i := 0; i < numProjects; i++ {
+			tentativeBlockHeights[i] += 1
+			var pc PayloadCommit
+			pc.CommitId = "testCommitId" + fmt.Sprint(rand.Int())
+			pc.ProjectId = "testProjectId" + fmt.Sprint(i)
+			pc.TentativeBlockHeight = tentativeBlockHeights[i]
+			pc.Payload = TestPayload{Field1: "Hello", Field2: "Go Payload Commit service." + fmt.Sprint(rand.Int())}
+			bytes, _ := json.Marshal(pc)
+			log.Debugf("Sending +%v to rabbitmq.", pc)
+			//fmt.Println("Sending bytes", bytes)
+			err := conn.Publish("commit-payloads", bytes)
+			if err != nil {
+				log.Error("Failed to publish msg to rabbitmq.")
+			}
+		}
+		time.Sleep(5 * 1000000000)
+	}
 }
