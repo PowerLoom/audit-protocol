@@ -3,7 +3,6 @@ from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
 from utils import helper_functions
 from utils import dag_utils
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 import aioredis
 import json
 import logging
@@ -39,7 +38,6 @@ def check_intersection(span_a, span_b):
     return result
 
 
-@provide_async_reader_conn_inst
 async def check_overlap(
         from_height: int,
         to_height: int,
@@ -114,7 +112,7 @@ async def get_container_id(
     """
 
     target_containers = await reader_redis_conn.zrangebyscore(
-        key=redis_keys.get_containers_created_key(project_id),
+        name=redis_keys.get_containers_created_key(project_id),
         max=settings.container_height * 2 + dag_block_height + 1,
         min=dag_block_height - settings.container_height * 2 - 1
     )
@@ -144,36 +142,34 @@ async def check_container_cached(
     """
 
     cached_container_key = redis_keys.get_cached_containers_key(container_id)
-    out = await reader_redis_conn.exists(key=cached_container_key)
+    out = await reader_redis_conn.exists(cached_container_key)
     if out is 1:
         return True
     else:
         return False
 
 
-@provide_async_reader_conn_inst
 async def check_containers(
         from_height,
         to_height,
         project_id: str,
         reader_redis_conn: aioredis.Redis,
-        each_height_spans: dict = {},
+        each_height_spans: dict = dict()
 
 ):
     """
         - Given the from_height and to_height, check for each dag_cid, what container is required
         and if that container is cached
     """
-
     # Get the dag cid's for the span
     out = await reader_redis_conn.zrangebyscore(
-        key=redis_keys.get_dag_cids_key(project_id=project_id),
+        name=redis_keys.get_dag_cids_key(project_id=project_id),
         max=to_height,
         min=from_height,
         withscores=True
     )
 
-    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=project_id)
+    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=project_id, reader_redis_conn=reader_redis_conn)
 
     containers_required = []
     cached = {}
@@ -252,10 +248,9 @@ async def save_span(
     span_data['dag_blocks'] = dag_blocks
     live_span_key = redis_keys.get_live_spans_key(project_id=project_id, span_id=span_id)
     _ = await writer_redis_conn.set(live_span_key, json.dumps(span_data))
-    _ = await writer_redis_conn.expire(live_span_key, timeout=settings.span_expire_timeout)
+    _ = await writer_redis_conn.expire(live_span_key, settings.span_expire_timeout)
 
 
-@provide_async_reader_conn_inst
 async def fetch_blocks(
         from_height: int,
         to_height: int,
@@ -277,10 +272,10 @@ async def fetch_blocks(
     current_height = to_height
     dag_blocks = {}
     while current_height >= from_height:
-        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
+        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height, reader_redis_conn=reader_redis_conn)
         if each_height_spans.get(current_height) is None:
             # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
-            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
+            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height, reader_redis_conn=reader_redis_conn)
             dag_block = await dag_utils.get_dag_block(dag_cid)
             if data_flag:
                 dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)

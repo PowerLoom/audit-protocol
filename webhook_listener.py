@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response, Header, BackgroundTasks
+from fastapi import FastAPI, Request, Response, Header
 from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
 from config import settings
 from utils import redis_keys
@@ -11,8 +11,8 @@ from aio_pika import ExchangeType, DeliveryMode, Message
 from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional
-from data_models import PayloadCommit, PendingTransaction, AuditRecordTxEventData
-from aioredlock import Aioredlock, LockError
+from data_models import PayloadCommit, PendingTransaction
+from aioredis.lock import Lock as aioredisLock
 import aioredis
 import asyncio
 import aiohttp
@@ -78,13 +78,6 @@ async def startup_boilerplate():
             connect=settings.aiohtttp_timeouts.connect
         )
     )
-    app.redis_lock_manager = Aioredlock(
-        redis_connections=[REDIS_WRITER_CONN_CONF],
-        retry_count=5,
-        retry_delay_min=5,
-        retry_delay_max=10,
-        internal_lock_timeout=10
-    )
 
 
 @app.post('/')
@@ -130,26 +123,19 @@ async def create_dag(
             rest_logger.debug(tentative_block_height_event_data)
             rest_logger.debug(finalized_block_height_project)
 
-            tentative_block_height_cached = await helper_functions.get_tentative_block_height(
-                project_id=project_id,
-                reader_redis_conn=reader_redis_conn
-            )
+            # tentative_block_height_cached = await helper_functions.get_tentative_block_height(
+            #     project_id=project_id,
+            #     reader_redis_conn=reader_redis_conn
+            # )
             # acquire project ID processing lock
-            lock_acquired = False
-            try:
-                lock = await request.app.redis_lock_manager.lock(project_id, lock_timeout=10)
-            except LockError:
-                rest_logger.error(
-                    'Could not acquire redlock for processing project %s callback',
-                    project_id
-                )
-                lock_acquired = False
-            else:
-                if not (lock.valid and await request.app.redis_lock_manager.is_locked(project_id)):
-                    lock_acquired = False
-                else:
-                    lock_acquired = True
-            if not lock_acquired:
+            lock = aioredisLock(
+                redis=request.app.writer_redis_pool,
+                name=project_id,
+                blocking_timeout=5,  # should not need more than 5 seconds of waiting on acquiring a lock
+                timeout=10  # entire operation should not take more than 10 seconds
+            )
+            ret = await lock.acquire()
+            if not ret:
                 response_status_code = 500
                 response_body = dict()
                 response.status_code = response_status_code
@@ -165,6 +151,7 @@ async def create_dag(
                     tx_hash=event_data['txHash'],
                     payload_cid=event_data['event_data']['snapshotCid'],
                     tentative_block_height=tentative_block_height_event_data,
+                    writer_redis_conn=writer_redis_conn
                 )
                 # rest_logger.debug("Redis operations output: ")
                 # rest_logger.debug(redis_output)
@@ -181,7 +168,7 @@ async def create_dag(
                 rest_logger.debug("Checking if txHash %s is in the list of pending Transactions", event_data['txHash'])
 
                 _ = await reader_redis_conn.zrangebyscore(
-                    key=redis_keys.get_pending_transactions_key(project_id),
+                    name=redis_keys.get_pending_transactions_key(project_id),
                     min=float('-inf'),
                     max=float('+inf'),
                     withscores=False
@@ -206,13 +193,13 @@ async def create_dag(
                         project_id=project_id,
                         tx_hash=event_data['txHash'],
                         tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
-                        payload_commit_id=event_data['event_data']['payloadCommitId']
+                        payload_commit_id=event_data['event_data']['payloadCommitId'],
+                        writer_redis_conn=writer_redis_conn
                     )
 
                     _ = await writer_redis_conn.zadd(
-                        key=discarded_transactions_key,
-                        score=tentative_block_height_event_data,
-                        member=event_data['txHash']
+                        name=discarded_transactions_key,
+                        mapping={event_data['txHash']: tentative_block_height_event_data}
                     )
 
                     response_body = {'status': 'Discarded', 'reason': 'Not found in pending transaction set'}
@@ -233,7 +220,7 @@ async def create_dag(
                     }
                     # first, we get transactions in the 'pending' state
                     pending_confirmation_callbacks_txs = await reader_redis_conn.zrangebyscore(
-                        key=redis_keys.get_pending_transactions_key(project_id),
+                        name=redis_keys.get_pending_transactions_key(project_id),
                         min=finalized_block_height_project + 1,
                         max=tentative_block_height_event_data,
                         withscores=True
@@ -387,7 +374,7 @@ async def create_dag(
                 """
                 pending_tx_set_entry = None  # will be used to reset lastTouchBlocked tag in pending set
                 all_pending_tx_entries = await reader_redis_conn.zrangebyscore(
-                    key=redis_keys.get_pending_transactions_key(project_id),
+                    name=redis_keys.get_pending_transactions_key(project_id),
                     min=float('-inf'),
                     max=float('+inf'),
                     withscores=False
@@ -416,13 +403,13 @@ async def create_dag(
                         project_id=project_id,
                         tx_hash=event_data['txHash'],
                         tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
-                        payload_commit_id=event_data['event_data']['payloadCommitId']
+                        payload_commit_id=event_data['event_data']['payloadCommitId'],
+                        writer_redis_conn=writer_redis_conn
                     )
 
                     _ = await writer_redis_conn.zadd(
-                        key=discarded_transactions_key,
-                        score=tentative_block_height_event_data,
-                        member=event_data['txHash']
+                        name=discarded_transactions_key,
+                        mapping={event_data['txHash']: tentative_block_height_event_data}
                     )
 
                     response_body = {'status': 'Discarded', 'reason': 'Not found in pending transaction set'}
@@ -432,7 +419,9 @@ async def create_dag(
                         project_id=project_id,
                         tentative_block_height=tentative_block_height_event_data,
                         payload_cid=event_data['event_data']['snapshotCid'],
-                        timestamp=event_data['event_data']['timestamp']
+                        timestamp=event_data['event_data']['timestamp'],
+                        reader_redis_conn=reader_redis_conn,
+                        writer_redis_conn=writer_redis_conn
                     )
                     rest_logger.info('Created DAG block with CID %s at height %s', _dag_cid,
                                      tentative_block_height_event_data)
@@ -444,11 +433,9 @@ async def create_dag(
                         writer_redis_conn=writer_redis_conn
                     )
 
-
                     # clear from pending set
                     await writer_redis_conn.zrem(
-                        member=pending_tx_set_entry,
-                        key=redis_keys.get_pending_transactions_key(project_id)
+                        pending_tx_set_entry, *[redis_keys.get_pending_transactions_key(project_id)]
                     )
                     if _:
                         rest_logger.debug(
@@ -473,8 +460,8 @@ async def create_dag(
                             dag_cid=_dag_cid,
                             dag=dag_block,
                             project_id=project_id,
-                            ipfs_client=ipfs_client
-                            # writer_redis_conn=writer_redis_conn
+                            ipfs_client=ipfs_client,
+                            writer_redis_conn=writer_redis_conn
                         )
                     except json.decoder.JSONDecodeError as jerr:
                         rest_logger.debug("There was an error while decoding the JSON data: %s", jerr, exc_info=True)
@@ -498,8 +485,9 @@ async def create_dag(
                     # and form a continous sequence
                     # hence, are ready to be added to chain
                     all_pending_txs = await reader_redis_conn.zrangebyscore(
-                        key=redis_keys.get_pending_transactions_key(project_id),
+                        name=redis_keys.get_pending_transactions_key(project_id),
                         min=tentative_block_height_event_data+1,
+                        max='+inf',
                         withscores=True
                     )
                     all_qualified_dag_addition_txs = filter(
@@ -524,7 +512,9 @@ async def create_dag(
                                 project_id=project_id,
                                 tentative_block_height=_tt_block_height,
                                 payload_cid=pending_tx_obj.event_data.snapshotCid,
-                                timestamp=pending_tx_obj.event_data.timestamp,
+                                timestamp=int(pending_tx_obj.event_data.timestamp),
+                                reader_redis_conn=reader_redis_conn,
+                                writer_redis_conn=writer_redis_conn
                             )
                             rest_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
                                              _tt_block_height)
@@ -538,8 +528,8 @@ async def create_dag(
                                     dag_cid=_dag_cid,
                                     dag=dag_block,
                                     project_id=project_id,
-                                    ipfs_client=ipfs_client
-                                    # writer_redis_conn=writer_redis_conn
+                                    ipfs_client=ipfs_client,
+                                    writer_redis_conn=writer_redis_conn
                                 )
                             except json.decoder.JSONDecodeError as jerr:
                                 rest_logger.debug("There was an error while decoding the JSON data: %s", jerr,
@@ -567,8 +557,7 @@ async def create_dag(
 
                             # clear from pending set
                             await writer_redis_conn.zrem(
-                                member=pending_tx_entry,
-                                key=redis_keys.get_pending_transactions_key(project_id)
+                                pending_tx_entry, redis_keys.get_pending_transactions_key(project_id)
                             )
                             # send commit ID confirmation callback
                             if cb_url:
@@ -582,8 +571,8 @@ async def create_dag(
                                     }
                                 )
                     response_body.update({'pendingBlocksFinalized': pending_blocks_finalized})
-            # release redlock
-            await request.app.redis_lock_manager.unlock(lock)
+            # release aioredis lock
+            await lock.release()
     response.status_code = response_status_code
     return response_body
 

@@ -11,7 +11,6 @@ import siaskynet
 from siaskynet import SkynetClient
 
 from config import settings
-from utils.redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
 
 from data_models import ContainerData, FilecoinJobData, SiaRenterData, SiaSkynetData
 from pydantic import ValidationError
@@ -211,8 +210,6 @@ async def get_backup_data(container_data: dict, container_id: str):
     return data
 
 
-@provide_async_reader_conn_inst
-@provide_async_writer_conn_inst
 async def backup_to_filecoin(
         container_data: dict,
         reader_redis_conn=None,

@@ -1,12 +1,10 @@
 from utils import redis_keys
 import aioredis
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 
 
-@provide_async_reader_conn_inst
 async def get_tentative_block_height(
         project_id: str,
-        reader_redis_conn
+        reader_redis_conn: aioredis.Redis
 ) -> int:
     tentative_block_height_key = redis_keys.get_tentative_block_height_key(project_id=project_id)
     out: bytes = await reader_redis_conn.get(tentative_block_height_key)
@@ -17,10 +15,9 @@ async def get_tentative_block_height(
     return tentative_block_height
 
 
-@provide_async_reader_conn_inst
 async def get_last_dag_cid(
         project_id: str,
-        reader_redis_conn
+        reader_redis_conn: aioredis.Redis
 ) -> str:
     last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id=project_id)
     out: bytes = await reader_redis_conn.get(last_dag_cid_key)
@@ -32,7 +29,6 @@ async def get_last_dag_cid(
     return last_dag_cid
 
 
-@provide_async_reader_conn_inst
 async def get_dag_cid(
         project_id: str,
         block_height: int,
@@ -41,7 +37,7 @@ async def get_dag_cid(
 
     dag_cids_key = redis_keys.get_dag_cids_key(project_id)
     out = await reader_redis_conn.zrangebyscore(
-        key=dag_cids_key,
+        name=dag_cids_key,
         max=block_height,
         min=block_height,
         withscores=False
@@ -57,10 +53,9 @@ async def get_dag_cid(
     return dag_cid
 
 
-@provide_async_reader_conn_inst
 async def get_last_payload_cid(
         project_id: str,
-        reader_redis_conn
+        reader_redis_conn: aioredis.Redis
 ):
     last_payload_cid_key = redis_keys.get_last_snapshot_cid_key(project_id=project_id)
     out: bytes = await reader_redis_conn.get(last_payload_cid_key)
@@ -72,7 +67,6 @@ async def get_last_payload_cid(
     return last_payload_cid
 
 
-@provide_async_reader_conn_inst
 async def get_block_height(
         project_id: str,
         reader_redis_conn,
@@ -87,32 +81,27 @@ async def get_block_height(
     return block_height
 
 
-@provide_async_writer_conn_inst
-@provide_async_reader_conn_inst
 async def get_last_pruned_height(
         project_id: str,
-        reader_redis_conn,
-        writer_redis_conn
+        reader_redis_conn
 ):
     last_pruned_key = redis_keys.get_last_pruned_key(project_id=project_id)
     out: bytes = await reader_redis_conn.get(last_pruned_key)
     if out:
         last_pruned_height: int = int(out.decode('utf-8'))
     else:
-        _ = await writer_redis_conn.set(last_pruned_key, 0)
         last_pruned_height: int = 0
     return last_pruned_height
 
 
-@provide_async_reader_conn_inst
 async def check_project_exists(
         project_id: str,
         reader_redis_conn: aioredis.Redis
 ):
     stored_projects_key = redis_keys.get_stored_project_ids_key()
     out = await reader_redis_conn.sismember(
-        key=stored_projects_key,
-        member=project_id
+        name=stored_projects_key,
+        value=project_id
     )
 
     return out

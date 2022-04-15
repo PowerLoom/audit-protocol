@@ -1,15 +1,11 @@
 from utils import redis_keys
-from utils.ipfs_async import client as ipfs_client
-from config import settings
 from utils.redis_conn import RedisPool
 from utils import helper_functions, dag_utils
-from utils.retrieval_utils import retrieve_block_data
-from functools import wraps, partial
+from functools import wraps
 from pair_data_aggregation_service import v2_pairs_data
 import aioredis
 import asyncio
 import json
-import coloredlogs
 import logging
 import sys
 
@@ -48,9 +44,11 @@ def convert_time_period_str_to_timestamp(time_period_str: str):
     return ts_map.get(time_period_str, 60 * 60)  # 1 hour timestamp returned by default
 
 
-async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts: int):
+async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts: int, redis_conn: aioredis.Redis):
     current_height = tail
-    head_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=head)
+    head_cid = await helper_functions.get_dag_cid(
+        project_id=project_id, block_height=head, reader_redis_conn=redis_conn
+    )
     head_block = await dag_utils.get_dag_block(head_cid)
     sliding_cacher_logger.debug(
         'Got head block at %s | Project ID : %s | DAG CID: %s \n%s',
@@ -59,7 +57,9 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
     present_ts = int(head_block['timestamp'])
     sliding_cacher_logger.debug('Head time stamp: %s', present_ts)
     while current_height < head:
-        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
+        dag_cid = await helper_functions.get_dag_cid(
+            project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
+        )
         # dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
         dag_block = await dag_utils.get_dag_block(dag_cid)
         # dag_blocks[dag_cid] = dag_block
@@ -69,9 +69,11 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
     return None
 
 
-async def find_tail(head: int, project_id: str, time_period_ts: int):
+async def find_tail(head: int, project_id: str, time_period_ts: int, redis_conn: aioredis.Redis):
     current_height = 1
-    head_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=head)
+    head_cid = await helper_functions.get_dag_cid(
+        project_id=project_id, block_height=head, reader_redis_conn=redis_conn
+    )
     head_block = await dag_utils.get_dag_block(head_cid)
     sliding_cacher_logger.debug(
         'Got head block at %s | Project ID : %s | DAG CID: %s \n%s',
@@ -80,7 +82,9 @@ async def find_tail(head: int, project_id: str, time_period_ts: int):
     present_ts = int(head_block['timestamp'])
     sliding_cacher_logger.debug('Head time stamp: %s', present_ts)
     while current_height < head:
-        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
+        dag_cid = await helper_functions.get_dag_cid(
+            project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
+        )
         # dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
         dag_block = await dag_utils.get_dag_block(dag_cid)
         # dag_blocks[dag_cid] = dag_block
@@ -119,7 +123,7 @@ async def build_primary_index(
     markers = [await writer_redis_conn.get(k) for k in [idx_head_key, idx_tail_key]]
     if not all(markers):
         sliding_cacher_logger.info('Finding %s tail marker for the first time for project %s', time_period, project_id)
-        tail_marker = await find_tail(head_marker, project_id, time_period_ts)
+        tail_marker = await find_tail(head_marker, project_id, time_period_ts, writer_redis_conn)
         if not tail_marker:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s for %s calculation', project_id, time_period
@@ -133,7 +137,7 @@ async def build_primary_index(
         )
     else:
         tail_marker = int(markers[1])
-        tail_ahead = await seek_ahead_tail(head_marker, tail_marker, project_id, time_period_ts)
+        tail_ahead = await seek_ahead_tail(head_marker, tail_marker, project_id, time_period_ts, writer_redis_conn)
         if not tail_ahead:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s to seek tail ahead for %s calculation | present head: %s',

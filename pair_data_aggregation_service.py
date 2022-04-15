@@ -1,22 +1,21 @@
-from typing import List
+from functools import partial
 from time import time
+
+import aioredis
 from web3 import Web3
+
+from config import settings
+from data_models import liquidityProcessedData
+from utils import helper_functions
 from utils import redis_keys
+from utils.ipfs_async import client as ipfs_client
+from utils.redis_conn import RedisPool
+from utils.retrieval_utils import retrieve_block_data
 import asyncio
-import aiohttp
-import math
-from functools import wraps, partial
 import json
+import logging.config
 import os
 import sys
-import logging.config
-from config import settings
-from utils.ipfs_async import client as ipfs_client
-from utils.retrieval_utils import retrieve_block_data
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst, RedisPool
-import aioredis
-from utils import helper_functions, dag_utils
-from data_models import liquidityProcessedData
 
 logger = logging.getLogger('AuditProtocol|PairDataAggregation')
 logger.setLevel(logging.DEBUG)
@@ -37,10 +36,15 @@ w3 = Web3(Web3.HTTPProvider("https://rpc-eth-arch.blockvigil.com/v1/2b3e1495cc8d
 # TODO: Use async http provider once it is considered stable by the web3.py project maintainers
 # web3_async = Web3(Web3.AsyncHTTPProvider(settings.RPC.MATIC[0]))
 
-async def get_dag_block_by_height(project_id, block_height):
+
+async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis):
     dag_block = {}
     try:
-        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=block_height)
+        dag_cid = await helper_functions.get_dag_cid(
+            project_id=project_id,
+            block_height=block_height,
+            reader_redis_conn=reader_redis_conn
+        )
         dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
         dag_block["dagCid"] = dag_cid
     except Exception as e:
@@ -50,15 +54,16 @@ async def get_dag_block_by_height(project_id, block_height):
     return dag_block
 
 
-async def get_dag_blocks_in_range(project_id, from_block, to_block):
+async def get_dag_blocks_in_range(project_id, from_block, to_block, reader_redis_conn: aioredis.Redis):
     tasks = []
     for i in range(from_block, to_block + 1):
-        t = get_dag_block_by_height(project_id, i)
+        t = get_dag_block_by_height(project_id, i, reader_redis_conn)
         tasks.append(t)
     
     dag_chain = await asyncio.gather(*tasks)
 
     return dag_chain
+
 
 def read_json_file(file_path: str):
     """Read given json file and return its content as a dictionary."""
@@ -185,7 +190,7 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
     }
         
 
-async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contract_address):
+async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Redis, pair_contract_address):
     try:
         project_id_trade_volume = f'uniswap_pairContract_trade_volume_{pair_contract_address}_UNISWAPV2'
         project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_UNISWAPV2'
@@ -210,7 +215,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
         # tail_marker_7d = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '7d'))
         # head_marker_7d = await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '7d'))
         
-        dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h)
+        dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h, writer_redis_conn)
 
         # get tokens prices:
         token0Price = await writer_redis_conn.get(
@@ -234,7 +239,11 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
         # liquidty data
         liquidity_head_marker = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '24h'))
         liquidity_head_marker = int(liquidity_head_marker.decode('utf-8')) if liquidity_head_marker else 0
-        liquidity_data = await get_dag_block_by_height(project_id_token_reserve, liquidity_head_marker)
+        liquidity_data = await get_dag_block_by_height(
+            project_id_token_reserve,
+            liquidity_head_marker,
+            writer_redis_conn
+        )
         
         if not liquidity_data:
             logger.error(f"No liquidity data avaiable for - projectId:{project_id_token_reserve} and liquidity head marker:{liquidity_head_marker}")
@@ -312,15 +321,14 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn, pair_contra
                 redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"): json.dumps(recent_logs)
             }),
             writer_redis_conn.zadd(
-                key=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
-                member=json.dumps(prepared_snapshot.json()),
-                score= now
+                name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+                mapping={json.dumps(prepared_snapshot.json()): now}
             )
         )
         # excluded below redis call from asyncio.gather becuase 
         # above redis call are on different key and below one write on same key
         await writer_redis_conn.zremrangebyscore(
-            key=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+            name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
             min=float('-inf'),
             max=float(now - 60 * 60 * 25)
         )

@@ -1,13 +1,11 @@
-import json
-from copy import deepcopy
-import logging
-import logging.handlers
-import sys
-from config import settings
-
 from utils import dag_utils
 from utils import redis_keys
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from config import settings
+from copy import deepcopy
+import aioredis
+import json
+import logging.handlers
+import sys
 
 utils_logger = logging.getLogger(__name__)
 utils_logger.setLevel(level="DEBUG")
@@ -25,7 +23,6 @@ utils_logger.addHandler(stdout_handler)
 utils_logger.addHandler(stderr_handler)
 
 
-@provide_async_reader_conn_inst
 async def get_diff_rules(
         project_id: str,
         reader_redis_conn
@@ -44,9 +41,9 @@ async def get_diff_rules(
     return diff_rules
 
 
-async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict):
+async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, redis_conn: aioredis.Redis):
     # load diff rules
-    diff_rules = await get_diff_rules(project_id)
+    diff_rules = await get_diff_rules(project_id, redis_conn)
     key_rules = dict()
     compare_rules = dict()
     # TODO: refactor logic into another helper that solely preprocesses key rules into an accepted structure
@@ -223,13 +220,12 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
     return comparison_results
 
 
-@provide_async_writer_conn_inst
 async def calculate_diff(
         dag_cid: str,
         dag: dict,
         project_id: str,
         ipfs_client,
-        writer_redis_conn
+        writer_redis_conn: aioredis.Redis
 ):
     # cache last seen diffs
     dag_height = dag['height']
@@ -251,6 +247,7 @@ async def calculate_diff(
                 project_id,
                 prev_data,
                 payload,
+                writer_redis_conn
             )
             utils_logger.debug('After payload clean up and comparison if any')
             utils_logger.debug(result)
@@ -282,9 +279,8 @@ async def calculate_diff(
                 }
                 diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
                 await writer_redis_conn.zadd(
-                    diff_snapshots_cache_zset,
-                    score=int(dag['height']),
-                    member=json.dumps(diff_data)
+                    name=diff_snapshots_cache_zset,
+                    mapping={json.dumps(diff_data): int(dag['height'])}
                 )
                 latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
                 await writer_redis_conn.hset(

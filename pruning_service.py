@@ -8,7 +8,6 @@ from bloom_filter import BloomFilter
 from eth_utils import keccak
 import json
 from utils.ipfs_async import client as ipfs_client
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 from utils.diffmap_utils import preprocess_dag
 from data_models import ContainerData, FilecoinJobData, SiaSkynetData, BackupMetaData, SiaRenterData
 from pydantic import ValidationError
@@ -51,8 +50,6 @@ def startup_boilerplate():
         os.mkdir(os.getcwd() + '/temp_files')
 
 
-@provide_async_reader_conn_inst
-@provide_async_writer_conn_inst
 async def choose_targets(
         reader_redis_conn=None,
         writer_redis_conn=None
@@ -85,8 +82,7 @@ async def choose_targets(
         # Get the height of last pruned cid
         last_pruned_height = await helper_functions.get_last_pruned_height(
             project_id=project_id,
-            reader_redis_conn=reader_redis_conn,
-            writer_redis_conn=writer_redis_conn
+            reader_redis_conn=reader_redis_conn
         )
         pruning_logger.debug("Last Pruned Height: ")
         pruning_logger.debug(last_pruned_height)
@@ -112,9 +108,8 @@ async def choose_targets(
         dag_unpin_key = redis_keys.get_target_dags_key(project_id=project_id)
         for cid, height in block_cids_to_prune:
             _ = await writer_redis_conn.zadd(
-                key=dag_unpin_key,
-                member=cid,
-                score=int(height)
+                name=dag_unpin_key,
+                mapping={cid: int(height)}
             )
 
         """ Store the min and max heights of the dag blocks that need to be pruned """
@@ -132,7 +127,6 @@ async def choose_targets(
         _ = await writer_redis_conn.sadd(to_unpin_projects_key, project_id)
 
 
-@provide_async_reader_conn_inst
 async def build_container(
         project_id: str,
         reader_redis_conn=None,
@@ -273,11 +267,9 @@ async def store_container_data(
     return 0
 
 
-@provide_async_writer_conn_inst
-@provide_async_reader_conn_inst
 async def prune_targets(
-    reader_redis_conn=None,
-    writer_redis_conn=None
+    reader_redis_conn: aioredis.Redis,
+    writer_redis_conn: aioredis.Redis
 ):
     """
         - Get the list of all project_id's that need to be unpinned
@@ -378,9 +370,8 @@ async def prune_targets(
         """ Once the container has been backed up, then add it to the list of containers available """
         containers_created_key = f"projectID:{project_id}:containers"
         _ = await writer_redis_conn.zadd(
-            key=containers_created_key,
-            member=container_data['containerId'],
-            score=container_data['toHeight']
+            name=containers_created_key,
+            mapping={container_data['containerId']: container_data['toHeight']}
         )
 
         # Set the lastPruned for this projectId
@@ -394,16 +385,16 @@ async def prune_targets(
         """ Empty up the targetDags redis ZSET"""
         target_dags_key = f"projectID:{project_id}:targetDags"
         _ = await writer_redis_conn.zremrangebyrank(
-            key=target_dags_key,
-            start=0,
-            stop=-1
+            name=target_dags_key,
+            min=0,
+            max=-1
         )
 
 
 def verifier_crash_cb(fut: asyncio.Future):
     try:
         exc = fut.exception()
-    except (asyncio.CancelledError, aioredis.ConnectionClosedError):
+    except (asyncio.CancelledError, aioredis.exceptions.ConnectionError):
         pruning_logger.error('Respawning pruning task...')
         t = asyncio.ensure_future(periodic_pruning())
         t.add_done_callback(verifier_crash_cb)

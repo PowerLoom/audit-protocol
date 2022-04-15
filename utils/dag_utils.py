@@ -1,6 +1,5 @@
 from config import settings
 from maticvigil.EVCore import EVCore
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
 from utils import helper_functions
@@ -44,13 +43,12 @@ async def update_pending_tx_block_touch(
         project_id: str,
         tentative_block_height: int,
         writer_redis_conn: aioredis.Redis,
-        event_data: dict=None
+        event_data: dict = None
 ):
     # update last touched block in pending txs key to ensure it is known this guy is already home
     # first, remove
     r_ = await writer_redis_conn.zrem(
-        key=redis_keys.get_pending_transactions_key(project_id),
-        member=pending_tx_set_entry
+        redis_keys.get_pending_transactions_key(project_id), pending_tx_set_entry
     )
     # then, put in new entry
     new_pending_tx_set_entry_obj: PendingTransaction = PendingTransaction.parse_raw(pending_tx_set_entry)
@@ -58,9 +56,8 @@ async def update_pending_tx_block_touch(
     if event_data:
         new_pending_tx_set_entry_obj.event_data = event_data
     r__ = await writer_redis_conn.zadd(
-        key=redis_keys.get_pending_transactions_key(project_id),
-        member=new_pending_tx_set_entry_obj.json(),
-        score=tentative_block_height
+        name=redis_keys.get_pending_transactions_key(project_id),
+        mapping={new_pending_tx_set_entry_obj.json(): tentative_block_height}
     )
     return {'status': bool(r_) and bool(r__), 'results': {'zrem': r_, 'zadd': r__}}
 
@@ -149,16 +146,14 @@ async def get_payload(payload_cid: str):
     return payload
 
 
-@provide_async_reader_conn_inst
-@provide_async_writer_conn_inst
 async def create_dag_block(
         tx_hash: str,
         project_id: str,
         tentative_block_height: int,
         payload_cid: str,
         timestamp: int,
-        reader_redis_conn,
-        writer_redis_conn,
+        reader_redis_conn: aioredis.Redis,
+        writer_redis_conn: aioredis.Redis,
 ):
     """ Get the last dag cid using the tentativeBlockHeight"""
     last_dag_cid = await helper_functions.get_dag_cid(
@@ -192,9 +187,8 @@ async def create_dag_block(
     _ = await writer_redis_conn.set(last_dag_cid_key, dag_cid)
 
     _ = await writer_redis_conn.zadd(
-        key=redis_keys.get_dag_cids_key(project_id),
-        score=tentative_block_height,
-        member=dag_cid
+        name=redis_keys.get_dag_cids_key(project_id),
+        mapping={dag_cid: tentative_block_height}
     )
 
     block_height_key = redis_keys.get_block_height_key(project_id=project_id)
@@ -203,7 +197,6 @@ async def create_dag_block(
     return dag_cid, dag
 
 
-@provide_async_writer_conn_inst
 async def discard_event(
         project_id: str,
         payload_commit_id: str,
@@ -217,7 +210,8 @@ async def discard_event(
         project_id=project_id,
         payload_commit_id=payload_commit_id,
         tx_hash=tx_hash,
-        tentative_height_pending_tx_entry=tentative_block_height
+        tentative_height_pending_tx_entry=tentative_block_height,
+        writer_redis_conn=writer_redis_conn
     )
     redis_output.extend(d_r)
 
@@ -230,16 +224,14 @@ async def discard_event(
 
     # Add the transaction Hash to discarded Transactions
     out = await writer_redis_conn.zadd(
-        key=redis_keys.get_discarded_transactions_key(project_id),
-        member=tx_hash,
-        score=tentative_block_height
+        name=redis_keys.get_discarded_transactions_key(project_id),
+        mapping={tx_hash: tentative_block_height}
     )
     redis_output.append(out)
 
     return redis_output
 
 
-@provide_async_writer_conn_inst
 async def clear_payload_commit_data(
         project_id: str,
         payload_commit_id: str,
@@ -261,7 +253,7 @@ async def clear_payload_commit_data(
 
     # remove tx_hash from list of pending transactions
     out = await writer_redis_conn.zremrangebyscore(
-        key=redis_keys.get_pending_transactions_key(project_id=project_id),
+        name=redis_keys.get_pending_transactions_key(project_id=project_id),
         min=tentative_height_pending_tx_entry,
         max=tentative_height_pending_tx_entry
     )
@@ -271,7 +263,7 @@ async def clear_payload_commit_data(
 
     # delete the payload commit id data
     out = await writer_redis_conn.delete(
-        key=redis_keys.get_payload_commit_key(payload_commit_id=payload_commit_id)
+        redis_keys.get_payload_commit_key(payload_commit_id=payload_commit_id)
     )
     deletion_result.append(out)
 

@@ -1,20 +1,18 @@
 from typing import Optional
-from fastapi import Depends, FastAPI, Request, Response, Query
+from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
-from tenacity import AsyncRetrying, stop_after_attempt, wait_random
 from config import settings
 from uuid import uuid4
-from utils.redis_conn import inject_reader_redis_conn, inject_writer_redis_conn, RedisPool
+from utils.redis_conn import RedisPool
 from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
 from utils import helper_functions
 from utils import redis_keys
-from utils.redis_conn import REDIS_WRITER_CONN_CONF, REDIS_READER_CONN_CONF
 from functools import partial
 from utils import retrieval_utils
-from utils.diffmap_utils import process_payloads_for_diff, preprocess_dag
-from data_models import ContainerData, PayloadCommit, PendingTransaction
+from utils.diffmap_utils import process_payloads_for_diff
+from data_models import ContainerData, PayloadCommit
 from pydantic import ValidationError
 from aio_pika import ExchangeType, DeliveryMode, Message
 from aio_pika.pool import Pool
@@ -24,8 +22,6 @@ import json
 import aioredis
 import redis
 import time
-import requests
-import async_timeout
 import asyncio
 
 
@@ -100,21 +96,21 @@ async def startup_boilerplate():
     # )
 
 
-async def get_max_block_height(project_id: str, reader_redis_conn):
+async def get_max_block_height(project_id: str, reader_redis_conn: aioredis.Redis):
     """
         - Given the projectId and redis_conn, get the prev_dag_cid, block height and
         tetative block height of that projectId from redis
     """
-    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id)
-    block_height = await helper_functions.get_block_height(project_id)
+    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id=project_id, reader_redis_conn=reader_redis_conn)
+    block_height = await helper_functions.get_block_height(project_id=project_id, reader_redis_conn=reader_redis_conn)
     last_tentative_block_height = await helper_functions.get_tentative_block_height(
-        project_id=project_id,
+        project_id=project_id, reader_redis_conn=reader_redis_conn
     )
-    last_payload_cid = await helper_functions.get_last_payload_cid(project_id)
+    last_payload_cid = await helper_functions.get_last_payload_cid(project_id, reader_redis_conn)
     return prev_dag_cid, block_height, last_tentative_block_height, last_payload_cid
 
 
-async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn):
+async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn: aioredis.Redis):
     request_id = str(uuid4())
 
     """ Setup the retrievalRequestInfo HashTable """
@@ -126,9 +122,9 @@ async def create_retrieval_request(project_id: str, from_height: int, to_height:
         'data': data
     }
 
-    _ = await writer_redis_conn.hmset_dict(
-        key=retrieval_request_info_key,
-        **fields
+    _ = await writer_redis_conn.hset(
+        name=retrieval_request_info_key,
+        mapping=fields
     )
     requests_list_key = f"pendingRetrievalRequests"
     _ = await writer_redis_conn.sadd(requests_list_key, request_id)
@@ -291,19 +287,20 @@ async def configure_project(
 
 
 @app.get('/{projectId:str}/getDiffRules')
-@inject_reader_redis_conn
 async def get_diff_rules(
         request: Request,
         response: Response,
-        projectId: str,
-        reader_redis_conn=None,
+        projectId: str
 ):
     """ This endpoint returs the diffRules set against a projectId """
-    out = await helper_functions.check_project_exists(project_id=projectId)
+    out = await helper_functions.check_project_exists(
+        project_id=projectId, reader_redis_conn=request.app.reader_redis_pool
+    )
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
 
     diff_rules_key = redis_keys.get_diff_rules_key(projectId)
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     out = await reader_redis_conn.get(diff_rules_key)
     if out is None:
         """ For projectId's who dont have any diffRules, return empty dict"""
@@ -314,18 +311,16 @@ async def get_diff_rules(
 
 
 @app.get('/requests/{request_id:str}')
-@inject_reader_redis_conn
 async def request_status(
         request: Request,
         response: Response,
-        request_id: str,
-        reader_redis_conn=None,
+        request_id: str
 ):
     """
         Given a request_id, return either the status of that request or retrieve all the payloads for that
     """
 
-
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     # Check if the request is already in the pending list
     requests_list_key = f"pendingRetrievalRequests"
     out = await reader_redis_conn.sismember(requests_list_key, request_id)
@@ -335,9 +330,9 @@ async def request_status(
     # Get all the retrieved files
     retrieval_files_key = redis_keys.get_retrieval_request_files_key(request_id)
     retrieved_files = await reader_redis_conn.zrange(
-        key=retrieval_files_key,
+        name=retrieval_files_key,
         start=0,
-        stop=-1,
+        end=-1,
         withscores=True
     )
 
@@ -368,15 +363,14 @@ async def request_status(
 
 # TODO: get API key/token specific updates corresponding to projects committed with those credentials
 @app.get('/projects/updates')
-@inject_reader_redis_conn
 async def get_latest_project_updates(
         request: Request,
         response: Response,
         namespace: str = Query(default=None),
-        maxCount: int = Query(default=20),
-        reader_redis_conn=None
+        maxCount: int = Query(default=20)
 ):
     project_diffs_snapshots = list()
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     h = await reader_redis_conn.hgetall(redis_keys.get_last_seen_snapshots_key())
     if len(h) < 1:
         return {}
@@ -402,19 +396,16 @@ async def get_latest_project_updates(
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs/count')
-@inject_reader_redis_conn
 async def get_payloads_diff_counts(
         request: Request,
         response: Response,
         projectId: str,
-        maxCount: int = Query(default=10),
-        reader_redis_conn=None
+        maxCount: int = Query(default=10)
 ):
-
-    out = await helper_functions.check_project_exists(project_id=projectId)
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
-
     diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
     r = await reader_redis_conn.zcard(diff_snapshots_cache_zset)
     if not r:
@@ -430,17 +421,16 @@ async def get_payloads_diff_counts(
 
 
 @app.get('/{projectId:str}/payloads/cachedDiffs')
-@inject_reader_redis_conn
 async def get_payloads_diffs(
         request: Request,
         response: Response,
         projectId: str,
         from_height: int = Query(default=1),
         to_height: int = Query(default=-1),
-        maxCount: int = Query(default=10),
-        reader_redis_conn=None
+        maxCount: int = Query(default=10)
 ):
-    out = await helper_functions.check_project_exists(project_id=projectId)
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
 
@@ -460,7 +450,7 @@ async def get_payloads_diffs(
     diff_response = list()
     diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
     r = await reader_redis_conn.zrevrangebyscore(
-        key=diff_snapshots_cache_zset,
+        name=diff_snapshots_cache_zset,
         min=from_height,
         max=to_height,
         withscores=False
@@ -510,7 +500,7 @@ async def get_payloads(
     """
     reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
-    out = await helper_functions.check_project_exists(project_id=projectId)
+    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
 
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
@@ -542,7 +532,9 @@ async def get_payloads(
         response.status_code = 400
         return {'error': 'Invalid Height'}
 
-    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=projectId)
+    last_pruned_height = await helper_functions.get_last_pruned_height(
+        project_id=projectId, reader_redis_conn=reader_redis_conn
+    )
     rest_logger.debug('Last pruned height: %s', last_pruned_height)
     rest_logger.debug("Checking max overlap...")
 
@@ -552,7 +544,8 @@ async def get_payloads(
     max_overlap, max_span_id, each_height_spans = await retrieval_utils.check_overlap(
         from_height=from_height,
         to_height=to_height,
-        project_id=projectId
+        project_id=projectId,
+        reader_redis_conn=reader_redis_conn
     )
     # rest_logger.debug("Max overlap, Max Span ID, Each height spans:")
     # rest_logger.debug(max_overlap)
@@ -576,7 +569,8 @@ async def get_payloads(
         from_height=from_height,
         to_height=to_height,
         each_height_spans=each_height_spans,
-        project_id=projectId
+        project_id=projectId,
+        reader_redis_conn=reader_redis_conn
     )
 
     rest_logger.debug("Containers Required: ")
@@ -598,7 +592,8 @@ async def get_payloads(
         from_height=from_height,
         to_height=to_height,
         project_id=projectId,
-        data_flag=data
+        data_flag=data,
+        reader_redis_conn=reader_redis_conn
     )
 
     current_height = to_height
@@ -611,7 +606,7 @@ async def get_payloads(
         if not prev_dag_cid:
             project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
             r = await reader_redis_conn.zrangebyscore(
-                key=project_cids_key_zset,
+                name=project_cids_key_zset,
                 min=current_height,
                 max=current_height,
                 withscores=False
@@ -670,6 +665,7 @@ async def get_payloads(
                             project_id=projectId,
                             prev_data=prev_data,
                             cur_data=cur_data,
+                            redis_conn=reader_redis_conn
                         )
                         # rest_logger.debug('After payload clean up and comparison if any')
                         # rest_logger.debug(result)
@@ -709,15 +705,12 @@ async def get_payloads(
 
 
 @app.get('/{projectId}/payloads/height')
-@inject_reader_redis_conn
 async def payload_height(
         request: Request,
         response: Response,
-        projectId: str,
-        reader_redis_conn=None
+        projectId: str
 ):
-
-    max_block_height = -1
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     max_block_height = await helper_functions.get_block_height(
         project_id=projectId,
         reader_redis_conn=reader_redis_conn
@@ -737,7 +730,7 @@ async def get_block(
 ):
     reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
-    out = await helper_functions.check_project_exists(project_id=projectId)
+    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
 
@@ -757,8 +750,7 @@ async def get_block(
 
     last_pruned_height = await helper_functions.get_last_pruned_height(
         project_id=projectId,
-        reader_redis_conn=reader_redis_conn,
-        writer_redis_conn=writer_redis_conn
+        reader_redis_conn=reader_redis_conn
     )
 
     if block_height < last_pruned_height:
@@ -781,7 +773,7 @@ async def get_block(
     """ Access the block at block_height """
     project_cids_key_zset = f'projectID:{projectId}:Cids'
     r = await reader_redis_conn.zrangebyscore(
-        key=project_cids_key_zset,
+        name=project_cids_key_zset,
         min=block_height,
         max=block_height,
         withscores=False
@@ -803,7 +795,7 @@ async def get_block_data(
 ):
     reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
-    out = await helper_functions.check_project_exists(project_id=projectId)
+    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
 
@@ -822,8 +814,7 @@ async def get_block_data(
 
     last_pruned_height = await helper_functions.get_last_pruned_height(
         project_id=projectId,
-        reader_redis_conn=reader_redis_conn,
-        writer_redis_conn=writer_redis_conn
+        reader_redis_conn=reader_redis_conn
     )
     if block_height < last_pruned_height:
         from_height = block_height
@@ -841,7 +832,7 @@ async def get_block_data(
 
     project_cids_key_zset = redis_keys.get_dag_cids_key(project_id=projectId)
     r = await reader_redis_conn.zrangebyscore(
-        key=project_cids_key_zset,
+        name=project_cids_key_zset,
         min=block_height,
         max=block_height,
         withscores=False
@@ -856,12 +847,10 @@ async def get_block_data(
 
 # Get the containerData using container_id
 @app.get("/query/containerData/{container_id:str}")
-@inject_reader_redis_conn
 async def get_container_data(
         request: Request,
         response: Response,
-        container_id: str,
-        reader_redis_conn=None
+        container_id: str
 ):
     """
         - retrieve the containerData from containerData key
@@ -871,6 +860,7 @@ async def get_container_data(
     rest_logger.debug("Retrieving containerData for container_id: ")
     rest_logger.debug(container_id)
     container_data_key = f"containerData:{container_id}"
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     out = await reader_redis_conn.hgetall(container_data_key)
     out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
     if not out:
@@ -887,19 +877,17 @@ async def get_container_data(
 
 
 @app.get("/query/executingContainers")
-@inject_reader_redis_conn
 async def get_executing_containers(
         request: Request,
         response: Response,
         maxCount: int = Query(default=10),
-        data: str = Query(default="false"),
-        reader_redis_conn=None
+        data: str = Query(default="false")
 ):
     """
         - Get all the container_id's from the executingContainers redis SET
         - if the data field is true, then get the containerData for each of the container as well
     """
-
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     if isinstance(data, str):
         if data.lower() == "true":
             data = True
