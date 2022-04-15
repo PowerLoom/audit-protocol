@@ -120,8 +120,6 @@ async def create_dag(
                 "Event Data Tentative Block Height: %s | Finalized Project %s Block Height: %s",
                 tentative_block_height_event_data, project_id, finalized_block_height_project
             )
-            rest_logger.debug(tentative_block_height_event_data)
-            rest_logger.debug(finalized_block_height_project)
 
             # tentative_block_height_cached = await helper_functions.get_tentative_block_height(
             #     project_id=project_id,
@@ -143,8 +141,7 @@ async def create_dag(
             # retrieve callback URL for project ID
             cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
             if tentative_block_height_event_data <= finalized_block_height_project:
-                rest_logger.debug("Discarding event at height %s | %s", tentative_block_height_event_data, event_data)
-                rest_logger.debug(tentative_block_height_event_data)
+                rest_logger.debug("Discarding event at height %s | %s", tentative_block_height_event_data, event_data)                
                 await dag_utils.discard_event(
                     project_id=project_id,
                     payload_commit_id=event_data['event_data']['payloadCommitId'],
