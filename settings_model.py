@@ -59,6 +59,7 @@ class Settings(BaseModel):
     seed: str
     dag_structure: dict
     audit_contract: str
+    contract_call_backend: str
     app_name: str
     powergate_client_addr: str
     max_ipfs_blocks: int

@@ -28,6 +28,7 @@
 	},
 	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
 	"snapshot_interval": 4,
+	"contract_call_backend": "http://127.0.0.1:8888/writer",
 	"dag_table_name": "DAG_CID",
 	"seed": "THISISRANDOMSEED",
 	"dag_structure" : {

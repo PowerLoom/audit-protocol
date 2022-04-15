@@ -1,3 +1,5 @@
+import concurrent.futures
+
 from config import settings
 from data_models import PayloadCommit, PendingTransaction
 from eth_utils import keccak
@@ -106,224 +108,6 @@ def chunks(start_idx, stop_idx, n):
         yield begin_idx, end_idx, run_idx
 
 
-def make_transaction_sync(
-    snapshot_cid,
-    payload_commit_id,
-    token_hash,
-    last_tentative_block_height,
-    project_id,
-    writer_redis_conn: redis.Redis,
-    audit_record_store_contract,
-    resubmission_block=0,
-):
-    """
-        - Create a unique transaction_id associated with this transaction,
-        and add it to the set of pending transactions
-    """
-
-    e_obj = None
-    kwargs = dict(
-        payloadCommitId=payload_commit_id,
-        snapshotCid=snapshot_cid,
-        apiKeyHash=token_hash,
-        projectId=project_id,
-        tentativeBlockHeight=last_tentative_block_height,
-    )
-
-    try:
-        # try 3 times, wait 1-2 seconds between retries
-        for attempt in Retrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
-            with attempt:
-                tx_hash_obj = audit_record_store_contract.commitRecord(**kwargs)
-                if tx_hash_obj:
-                    break
-    except EVBaseException as evbase:
-        e_obj = evbase
-    except requests.exceptions.HTTPError as errh:
-        e_obj = errh
-    except requests.exceptions.ConnectionError as errc:
-        e_obj = errc
-    except requests.exceptions.Timeout as errt:
-        e_obj = errt
-    except requests.exceptions.RequestException as errr:
-        e_obj = errr
-    except Exception as e:
-        e_obj = e
-    else:
-        # right away update pending transactions
-        pending_transaction_key = redis_keys.get_pending_transactions_key(project_id)
-        tx_hash = tx_hash_obj[0]['txHash']
-        event_data = {
-            'txHash': tx_hash,
-            'projectId': project_id,
-            'payloadCommitId': payload_commit_id,
-            'timestamp': int(time.time()),  # will be updated to actual blockchain timestamp once callback arrives
-            'snapshotCid': snapshot_cid,
-            'apiKeyHash': token_hash,
-            'tentativeBlockHeight': last_tentative_block_height
-        }
-        tx_hash_pending_entry = PendingTransaction(
-            txHash=tx_hash,
-            lastTouchedBlock=resubmission_block,
-            event_data=event_data
-        )
-        _ = writer_redis_conn.zadd(
-            name=pending_transaction_key,
-            mapping={tx_hash_pending_entry.json(): last_tentative_block_height}
-        )
-        payload_logger.info(
-            "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
-            tx_hash_obj, payload_commit_id
-        )
-        service_log_update = {
-            'worker': 'payload_commit_service',
-            'update': {
-                'action': 'AuditRecord.Commit',
-                'info': {
-                    'msg': kwargs,
-                    'status': 'Success',
-                    'txHash': tx_hash_obj
-                }
-            }
-        }
-        payload_logger.debug(service_log_update)
-        # writer_redis_conn.zadd(
-        #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
-        #         project_id=project_id, payload_commit_id=payload_commit_id
-        #     ),
-        #     mapping={json.dumps(service_log_update): int(time.time())}
-        # )
-
-    if e_obj:
-        payload_logger.info(
-            "=" * 80 +
-            "Commit Payload to AuditRecord contract failed. Tx was not successful against commit ID %s\n%s" +
-            "=" * 80,
-            payload_commit_id, e_obj
-        )
-        service_log_update = {
-            'worker': 'payload_commit_service',
-            'update': {
-                'action': 'AuditRecord.Commit',
-                'info': {
-                    'msg': kwargs,
-                    'status': 'Failed',
-                    'exception': e_obj.__repr__()
-                }
-            }
-        }
-        payload_logger.debug(service_log_update)
-        # writer_redis_conn.zadd(
-        #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
-        #         project_id=project_id, payload_commit_id=payload_commit_id
-        #     ),
-        #     mapping={json.dumps(service_log_update): int(time.time())
-        #     }
-        # )
-        writer_redis_conn.close()
-        return None
-
-    writer_redis_conn.close()
-    return tx_hash
-
-
-def single_payload_commit_sync(payload_commit_obj: PayloadCommit, audit_record_store_contract):
-    writer_redis_conn: redis.Redis = redis.Redis(**REDIS_WRITER_CONN_CONF, single_connection_client=True)
-    payload_commit_id = payload_commit_obj.commitId
-    # payload_logger.debug(payload_data)
-    snapshot = dict()
-    core_payload = payload_commit_obj.payload
-    project_id = payload_commit_obj.projectId
-    snapshot_cid = None
-    if core_payload:
-        ipfs_client_sync = ipfshttpclient.connect(settings.ipfs_url)
-        try:
-            # try 3 times, wait 1-2 seconds between retries
-            for attempt in Retrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
-                with attempt:
-                    if type(core_payload) is dict:
-                        snapshot_cid = ipfs_client_sync.add_json(core_payload)
-                    else:
-                        try:
-                            core_payload = json.dumps(core_payload)
-                        except:
-                            pass
-                        snapshot_cid = ipfs_client_sync.add_str(str(core_payload))
-                    if snapshot_cid:
-                        break
-        except Exception as e:
-            service_log_update = {
-                'worker': 'payload_commit_service',
-                'update': {
-                    'action': 'IPFS.Commit',
-                    'info': {
-                        'core_payload': core_payload,
-                        'status': 'Failed',
-                        'exception': e.__repr__()
-                    }
-                }
-            }
-            # writer_redis_conn.zadd(
-            #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
-            #         project_id=project_id, payload_commit_id=payload_commit_id
-            #     ),
-            #     mapping={json.dumps(service_log_update): int(time.time())}
-            # )
-            payload_logger.debug(service_log_update)
-            return
-        else:
-            if snapshot_cid:
-                service_log_update = {
-                    'worker': 'payload_commit_service',
-                    'update': {
-                        'action': 'IPFS.Commit',
-                        'info': {
-                            'core_payload': core_payload,
-                            'status': 'Success',
-                            'CID': snapshot_cid
-                        }
-                    }
-                }
-                # writer_redis_conn.zadd(
-                #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
-                #         project_id=project_id, payload_commit_id=payload_commit_id
-                #     ),
-                #     mapping={json.dumps(service_log_update): int(time.time())
-                #     }
-                # )
-                payload_logger.debug(service_log_update)
-    else:
-        snapshot_cid = payload_commit_obj.snapshotCID
-    payload_cid_key = redis_keys.get_payload_cids_key(project_id)
-    _ = writer_redis_conn.zadd(
-        name=payload_cid_key,
-        mapping={snapshot_cid: int(payload_commit_obj.tentativeBlockHeight)}
-    )
-    snapshot['cid'] = snapshot_cid
-    snapshot['type'] = "HOT_IPFS"
-    if not payload_commit_obj.apiKeyHash:
-        token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
-    else:
-        token_hash = payload_commit_obj.apiKeyHash
-    result_tx_hash = make_transaction_sync(
-        snapshot_cid=snapshot_cid,
-        token_hash=token_hash,
-        payload_commit_id=payload_commit_id,
-        last_tentative_block_height=payload_commit_obj.tentativeBlockHeight,
-        project_id=payload_commit_obj.projectId,
-        resubmission_block=payload_commit_obj.resubmissionBlock,
-        audit_record_store_contract=audit_record_store_contract,
-        writer_redis_conn=writer_redis_conn
-    )
-    if result_tx_hash:
-        if not payload_commit_obj.resubmitted:
-            last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
-            payload_logger.debug("Setting the last snapshot_cid as %s for project ID %s", snapshot_cid, project_id)
-            _ = writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
-        payload_logger.debug('Setting tx hash %s against payload commit ID %s', result_tx_hash, payload_commit_id)
-    writer_redis_conn.close()
-
-
 class PayloadCommitRequestsEntry(multiprocessing.Process):
     def __init__(self, name, worker_id, sync_q: queue.Queue):
         multiprocessing.Process.__init__(self, name=name)
@@ -332,16 +116,265 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
         self._queue = sync_q
         self._payload_commit_rabbitmq_queue_name = 'audit-protocol-commit-payloads'
         self.rabbitmq_interactor = None
-        self._qd_msgs: List[PayloadCommit] = list()
+        self._qd_msgs = queue.Queue()
+        self._local_buffer: List[PayloadCommit] = list()
         self._audit_record_store_contract = evc.generate_contract_sdk(
             contract_address=settings.audit_contract,
             app_name='auditrecords'
         )
+        self._requests_session = requests.Session()
+
+        self._common_request_params = {
+            'contract': settings.audit_contract.lower(),
+            'method': 'commitRecord',
+            'params': dict(),
+            'networkid': 137,
+            'proxy': None,
+            'hackerman': False,
+            'ignoreGasEstimate': False
+        }
+        self._worker_thread_supervisor = None
+
+    def _make_request(self, contract_call_params: dict):
+        json_params = self._common_request_params
+        json_params['params'].update(contract_call_params)
+        return self._requests_session.post(
+            url=settings.contract_call_backend,
+            json=json_params
+        )
+
+    def _make_transaction_sync(
+        self,
+        snapshot_cid,
+        payload_commit_id,
+        token_hash,
+        last_tentative_block_height,
+        project_id,
+        writer_redis_conn: redis.Redis,
+        resubmission_block=0,
+    ):
+        """
+            - Create a unique transaction_id associated with this transaction,
+            and add it to the set of pending transactions
+        """
+
+        e_obj = None
+        call_params = dict(
+            payloadCommitId=payload_commit_id,
+            snapshotCid=snapshot_cid,
+            apiKeyHash=token_hash,
+            projectId=project_id,
+            tentativeBlockHeight=last_tentative_block_height,
+        )
+
+        try:
+            # try 3 times, wait 1-2 seconds between retries
+            for attempt in Retrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+                with attempt:
+                    tx_hash_obj = self._make_request(contract_call_params=call_params)
+                    if tx_hash_obj:
+                        break
+        except requests.exceptions.HTTPError as errh:
+            e_obj = errh
+        except requests.exceptions.ConnectionError as errc:
+            e_obj = errc
+        except requests.exceptions.Timeout as errt:
+            e_obj = errt
+        except requests.exceptions.RequestException as errr:
+            e_obj = errr
+        except Exception as e:
+            e_obj = e
+        else:
+            # right away update pending transactions
+            pending_transaction_key = redis_keys.get_pending_transactions_key(project_id)
+            # TODO: check for error flag in response
+            tx_hash_response = tx_hash_obj.json()
+            tx_hash = tx_hash_response['data'][0]['txHash']
+            event_data = {
+                'txHash': tx_hash,
+                'projectId': project_id,
+                'payloadCommitId': payload_commit_id,
+                'timestamp': int(time.time()),  # will be updated to actual blockchain timestamp once callback arrives
+                'snapshotCid': snapshot_cid,
+                'apiKeyHash': token_hash,
+                'tentativeBlockHeight': last_tentative_block_height
+            }
+            tx_hash_pending_entry = PendingTransaction(
+                txHash=tx_hash,
+                lastTouchedBlock=resubmission_block,
+                event_data=event_data
+            )
+            _ = writer_redis_conn.zadd(
+                name=pending_transaction_key,
+                mapping={tx_hash_pending_entry.json(): last_tentative_block_height}
+            )
+            payload_logger.info(
+                "Successful transaction %s committed to AuditRecord contract against payload commit ID %s",
+                tx_hash_obj, payload_commit_id
+            )
+            service_log_update = {
+                'worker': 'payload_commit_service',
+                'update': {
+                    'action': 'AuditRecord.Commit',
+                    'info': {
+                        'msg': call_params,
+                        'status': 'Success',
+                        'txHash': tx_hash_obj
+                    }
+                }
+            }
+            payload_logger.debug(service_log_update)
+            # writer_redis_conn.zadd(
+            #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
+            #         project_id=project_id, payload_commit_id=payload_commit_id
+            #     ),
+            #     mapping={json.dumps(service_log_update): int(time.time())}
+            # )
+
+        if e_obj:
+            payload_logger.info(
+                "=" * 80 +
+                "Commit Payload to AuditRecord contract failed. Tx was not successful against commit ID %s\n%s" +
+                "=" * 80,
+                payload_commit_id, e_obj
+            )
+            service_log_update = {
+                'worker': 'payload_commit_service',
+                'update': {
+                    'action': 'AuditRecord.Commit',
+                    'info': {
+                        'msg': call_params,
+                        'status': 'Failed',
+                        'exception': e_obj.__repr__()
+                    }
+                }
+            }
+            payload_logger.debug(service_log_update)
+            # writer_redis_conn.zadd(
+            #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
+            #         project_id=project_id, payload_commit_id=payload_commit_id
+            #     ),
+            #     mapping={json.dumps(service_log_update): int(time.time())
+            #     }
+            # )
+            writer_redis_conn.close()
+            return None
+
+        writer_redis_conn.close()
+        return tx_hash
+
+    def _single_payload_commit_sync(self, payload_commit_obj: PayloadCommit):
+        writer_redis_conn: redis.Redis = redis.Redis(**REDIS_WRITER_CONN_CONF, single_connection_client=True)
+        payload_commit_id = payload_commit_obj.commitId
+        # payload_logger.debug(payload_data)
+        snapshot = dict()
+        core_payload = payload_commit_obj.payload
+        project_id = payload_commit_obj.projectId
+        snapshot_cid = None
+        if core_payload:
+            ipfs_client_sync = ipfshttpclient.connect(settings.ipfs_url)
+            try:
+                # try 3 times, wait 1-2 seconds between retries
+                for attempt in Retrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+                    with attempt:
+                        if type(core_payload) is dict:
+                            snapshot_cid = ipfs_client_sync.add_json(core_payload)
+                        else:
+                            try:
+                                core_payload = json.dumps(core_payload)
+                            except:
+                                pass
+                            snapshot_cid = ipfs_client_sync.add_str(str(core_payload))
+                        if snapshot_cid:
+                            break
+            except Exception as e:
+                service_log_update = {
+                    'worker': 'payload_commit_service',
+                    'update': {
+                        'action': 'IPFS.Commit',
+                        'info': {
+                            'core_payload': core_payload,
+                            'status': 'Failed',
+                            'exception': e.__repr__()
+                        }
+                    }
+                }
+                # writer_redis_conn.zadd(
+                #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                #         project_id=project_id, payload_commit_id=payload_commit_id
+                #     ),
+                #     mapping={json.dumps(service_log_update): int(time.time())}
+                # )
+                payload_logger.debug(service_log_update)
+                return
+            else:
+                if snapshot_cid:
+                    service_log_update = {
+                        'worker': 'payload_commit_service',
+                        'update': {
+                            'action': 'IPFS.Commit',
+                            'info': {
+                                'core_payload': core_payload,
+                                'status': 'Success',
+                                'CID': snapshot_cid
+                            }
+                        }
+                    }
+                    # writer_redis_conn.zadd(
+                    #     name=redis_keys.get_payload_commit_id_process_logs_zset_key(
+                    #         project_id=project_id, payload_commit_id=payload_commit_id
+                    #     ),
+                    #     mapping={json.dumps(service_log_update): int(time.time())
+                    #     }
+                    # )
+                    payload_logger.debug(service_log_update)
+        else:
+            snapshot_cid = payload_commit_obj.snapshotCID
+        payload_cid_key = redis_keys.get_payload_cids_key(project_id)
+        _ = writer_redis_conn.zadd(
+            name=payload_cid_key,
+            mapping={snapshot_cid: int(payload_commit_obj.tentativeBlockHeight)}
+        )
+        snapshot['cid'] = snapshot_cid
+        snapshot['type'] = "HOT_IPFS"
+        if not payload_commit_obj.apiKeyHash:
+            token_hash = '0x' + keccak(text=json.dumps(snapshot)).hex()
+        else:
+            token_hash = payload_commit_obj.apiKeyHash
+        result_tx_hash = self._make_transaction_sync(
+            snapshot_cid=snapshot_cid,
+            token_hash=token_hash,
+            payload_commit_id=payload_commit_id,
+            last_tentative_block_height=payload_commit_obj.tentativeBlockHeight,
+            project_id=payload_commit_obj.projectId,
+            resubmission_block=payload_commit_obj.resubmissionBlock,
+            writer_redis_conn=writer_redis_conn
+        )
+        if result_tx_hash:
+            if not payload_commit_obj.resubmitted:
+                last_snapshot_cid_key = redis_keys.get_last_snapshot_cid_key(project_id)
+                payload_logger.debug("Setting the last snapshot_cid as %s for project ID %s", snapshot_cid, project_id)
+                _ = writer_redis_conn.set(last_snapshot_cid_key, snapshot_cid)
+            payload_logger.debug('Setting tx hash %s against payload commit ID %s', result_tx_hash, payload_commit_id)
+        writer_redis_conn.close()
+
+    def _worker_thread_supervisor_fn(self):
+        while True:
+            new_commit_obj: PayloadCommit = self._qd_msgs.get(block=True, timeout=None)
+            self._local_buffer.append(new_commit_obj)
+            self._qd_msgs.task_done()
+            if len(self._local_buffer) >= 5:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=6) as thread_pool:
+                    [
+                        thread_pool.submit(self._single_payload_commit_sync, payload_commit_obj=_)
+                        for _ in self._local_buffer
+                    ]
+                self._local_buffer = list()
 
     def _commit_payload_processing_callback(self, dont_use_ch, method, properties, body):
         self.rabbitmq_interactor._channel.basic_ack(delivery_tag=method.delivery_tag)
         if body:
-            payload_logger.debug(body)
+            # payload_logger.debug(body)
             payload_commit_obj: PayloadCommit = PayloadCommit.parse_raw(body)
             if payload_commit_obj.payload:
                 payload_logger.debug('Recd. incoming payload commit message at tentative DAG height %s '
@@ -361,18 +394,21 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
                                          'for project %s',
                                          payload_commit_obj.tentativeBlockHeight, payload_commit_obj.projectId
                                          )
-            t = threading.Thread(
-                target=single_payload_commit_sync,
-                daemon=True,
-                kwargs={
-                    'payload_commit_obj': payload_commit_obj,
-                    'audit_record_store_contract': self._audit_record_store_contract
-                }
-            )
-            t.start()
+            # t = threading.Thread(
+            #     target=single_payload_commit_sync,
+            #     daemon=True,
+            #     kwargs={
+            #         'payload_commit_obj': payload_commit_obj,
+            #         'audit_record_store_contract': self._audit_record_store_contract
+            #     }
+            # )
+            # t.start()
+            self._qd_msgs.put(payload_commit_obj)
 
     @process_exception_handler
     def run(self) -> None:
+        self._worker_thread_supervisor = threading.Thread(target=self._worker_thread_supervisor_fn)
+        self._worker_thread_supervisor.start()
         self.rabbitmq_interactor: RabbitmqSelectLoopInteractor = RabbitmqSelectLoopInteractor(
             consume_queue_name=self._payload_commit_rabbitmq_queue_name,
             consume_callback=self._commit_payload_processing_callback
@@ -415,8 +451,8 @@ class InternalProcessMonitor(multiprocessing.Process):
             payload_logger.debug("Starting Internal process monitor...")
             jobs = []
             try:
-                workers = multiprocessing.cpu_count() * 2
-                # workers = 4
+                # workers = multiprocessing.cpu_count() * 2
+                workers = 8
             except NotImplementedError:
                 workers = 1
             jobs = [
