@@ -134,6 +134,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
             'ignoreGasEstimate': False
         }
         self._worker_thread_supervisor = None
+        self._redis_connection_pool = None
 
     def _make_request(self, contract_call_params: dict):
         json_params = self._common_request_params
@@ -264,7 +265,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
         return tx_hash
 
     def _single_payload_commit_sync(self, payload_commit_obj: PayloadCommit):
-        writer_redis_conn: redis.Redis = redis.Redis(**REDIS_WRITER_CONN_CONF, single_connection_client=True)
+        writer_redis_conn: redis.Redis = redis.Redis(connection_pool=self._redis_connection_pool)
         payload_commit_id = payload_commit_obj.commitId
         # payload_logger.debug(payload_data)
         snapshot = dict()
@@ -409,6 +410,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
     def run(self) -> None:
         self._worker_thread_supervisor = threading.Thread(target=self._worker_thread_supervisor_fn)
         self._worker_thread_supervisor.start()
+        self._redis_connection_pool = redis.BlockingConnectionPool(**REDIS_WRITER_CONN_CONF, max_connections=20)
         self.rabbitmq_interactor: RabbitmqSelectLoopInteractor = RabbitmqSelectLoopInteractor(
             consume_queue_name=self._payload_commit_rabbitmq_queue_name,
             consume_callback=self._commit_payload_processing_callback
