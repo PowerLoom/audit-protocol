@@ -27,7 +27,7 @@ loguru
 httptools
 uvloop
 bloom_filter
-requests
+requests>=2.27,<2.28
 tenacity==8.0.1
 greenletio
 siaskynet

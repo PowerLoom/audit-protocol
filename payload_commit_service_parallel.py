@@ -10,7 +10,7 @@ from utils import redis_keys
 from utils.rabbitmq_utils import RabbitmqSelectLoopInteractor
 from functools import partial
 from maticvigil.exceptions import EVBaseException
-from tenacity import Retrying, stop_after_attempt, wait_random
+from tenacity import Retrying, stop_after_attempt, wait_random, wait_random_exponential
 from multiprocessing.managers import SyncManager
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -122,7 +122,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
             contract_address=settings.audit_contract,
             app_name='auditrecords'
         )
-        self._requests_session = requests.Session()
+        self._requests_session_tx = requests.Session()
 
         self._common_request_params = {
             'contract': settings.audit_contract.lower(),
@@ -135,11 +135,12 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
         }
         self._worker_thread_supervisor = None
         self._redis_connection_pool = None
+        self._ipfs_client_sync = None
 
     def _make_request(self, contract_call_params: dict):
         json_params = self._common_request_params
         json_params['params'].update(contract_call_params)
-        return self._requests_session.post(
+        return self._requests_session_tx.post(
             url=settings.contract_call_backend,
             json=json_params
         )
@@ -215,6 +216,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
             )
             service_log_update = {
                 'worker': 'payload_commit_service',
+                'projectID': project_id,
                 'update': {
                     'action': 'AuditRecord.Commit',
                     'info': {
@@ -241,6 +243,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
             )
             service_log_update = {
                 'worker': 'payload_commit_service',
+                'projectID': project_id,
                 'update': {
                     'action': 'AuditRecord.Commit',
                     'info': {
@@ -273,24 +276,25 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
         project_id = payload_commit_obj.projectId
         snapshot_cid = None
         if core_payload:
-            ipfs_client_sync = ipfshttpclient.connect(settings.ipfs_url)
             try:
-                # try 3 times, wait 1-2 seconds between retries
-                for attempt in Retrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
+                # random exponential backoff retries wait 2**x seconds between each retry,
+                # where x is randomly chosen until 2**x reaches or exceeds 30 seconds
+                for attempt in Retrying(reraise=True, wait=wait_random_exponential(max=30)):
                     with attempt:
                         if type(core_payload) is dict:
-                            snapshot_cid = ipfs_client_sync.add_json(core_payload)
+                            snapshot_cid = self._ipfs_client_sync.add_json(core_payload)
                         else:
                             try:
                                 core_payload = json.dumps(core_payload)
                             except:
                                 pass
-                            snapshot_cid = ipfs_client_sync.add_str(str(core_payload))
+                            snapshot_cid = self._ipfs_client_sync.add_str(str(core_payload))
                         if snapshot_cid:
                             break
             except Exception as e:
                 service_log_update = {
                     'worker': 'payload_commit_service',
+                    'projectID': project_id,
                     'update': {
                         'action': 'IPFS.Commit',
                         'info': {
@@ -312,6 +316,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
                 if snapshot_cid:
                     service_log_update = {
                         'worker': 'payload_commit_service',
+                        'projectID': project_id,
                         'update': {
                             'action': 'IPFS.Commit',
                             'info': {
@@ -408,6 +413,9 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
 
     @process_exception_handler
     def run(self) -> None:
+        self._ipfs_client_sync = ipfshttpclient.connect(
+            addr=settings.ipfs_url, session=True
+        )
         self._worker_thread_supervisor = threading.Thread(target=self._worker_thread_supervisor_fn)
         self._worker_thread_supervisor.start()
         self._redis_connection_pool = redis.BlockingConnectionPool(**REDIS_WRITER_CONN_CONF, max_connections=20)
