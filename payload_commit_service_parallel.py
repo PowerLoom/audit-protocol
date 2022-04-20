@@ -1,5 +1,3 @@
-import concurrent.futures
-
 from config import settings
 from data_models import PayloadCommit, PendingTransaction
 from eth_utils import keccak
@@ -12,8 +10,10 @@ from functools import partial
 from maticvigil.exceptions import EVBaseException
 from tenacity import Retrying, stop_after_attempt, wait_random, wait_random_exponential
 from multiprocessing.managers import SyncManager
+import concurrent.futures
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import requests
+import requests.adapters
 import uuid
 import queue
 import ipfshttpclient
@@ -25,7 +25,6 @@ import time
 import logging
 import sys
 import json
-import requests
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -122,8 +121,9 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
             contract_address=settings.audit_contract,
             app_name='auditrecords'
         )
+        self._connection_pool_id_queue = queue.Queue(maxsize=200)
+        self._request_tcp_connections = dict()
         self._requests_session_tx = requests.Session()
-
         self._common_request_params = {
             'contract': settings.audit_contract.lower(),
             'method': 'commitRecord',
@@ -137,13 +137,19 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
         self._redis_connection_pool = None
         self._ipfs_client_sync = None
 
-    def _make_request(self, contract_call_params: dict):
-        json_params = self._common_request_params
-        json_params['params'].update(contract_call_params)
-        return self._requests_session_tx.post(
-            url=settings.contract_call_backend,
-            json=json_params
+    def _requests_session_w_connection_pool(self, size):
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=size, pool_maxsize=size
         )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
+
+    def _init_threadsafe_request_pool(self, size):
+        for i in range(size):
+            self._connection_pool_id_queue.put(i)
+            self._request_tcp_connections[i] = self._requests_session_w_connection_pool(1)
 
     def _make_transaction_sync(
         self,
@@ -168,12 +174,18 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
             projectId=project_id,
             tentativeBlockHeight=last_tentative_block_height,
         )
-
+        json_params = self._common_request_params
+        json_params['params'].update(call_params)
         try:
+            connection_id = self._connection_pool_id_queue.get()
+            sess = self._request_tcp_connections[connection_id]
             # try 3 times, wait 1-2 seconds between retries
             for attempt in Retrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random(1, 2)):
                 with attempt:
-                    tx_hash_obj = self._make_request(contract_call_params=call_params)
+                    tx_hash_obj = sess.post(
+                        url=settings.contract_call_backend,
+                        json=json_params
+                    )
                     if tx_hash_obj:
                         break
         except requests.exceptions.HTTPError as errh:
@@ -233,7 +245,15 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
             #     ),
             #     mapping={json.dumps(service_log_update): int(time.time())}
             # )
-
+        finally:
+            try:
+                self._connection_pool_id_queue.task_done()
+                self._connection_pool_id_queue.put(connection_id)
+            except Exception as e:
+                payload_logger.error(
+                    'Exception returning connection instance to connection pool queue: %s', e, exc_info=True
+                )
+                pass
         if e_obj:
             payload_logger.info(
                 "=" * 80 +
@@ -416,6 +436,7 @@ class PayloadCommitRequestsEntry(multiprocessing.Process):
         self._ipfs_client_sync = ipfshttpclient.connect(
             addr=settings.ipfs_url, session=True
         )
+        self._init_threadsafe_request_pool(size=200)
         self._worker_thread_supervisor = threading.Thread(target=self._worker_thread_supervisor_fn)
         self._worker_thread_supervisor.start()
         self._redis_connection_pool = redis.BlockingConnectionPool(**REDIS_WRITER_CONN_CONF, max_connections=20)
