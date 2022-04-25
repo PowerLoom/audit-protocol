@@ -15,10 +15,11 @@ import (
 var ctx = context.Background()
 
 type DagVerifier struct {
-	redisClient                 *redis.Client
-	projects                    []string
-	periodicRetrievalInterval   time.Duration
-	lastVerifiedDagBlockHeights map[string]string
+	redisClient                      *redis.Client
+	projects                         []string
+	periodicRetrievalInterval        time.Duration
+	lastVerifiedDagBlockHeights      map[string]string
+	lastVerifiedDagBlockHeightsMutex *sync.Mutex
 }
 
 //TODO: Migrate to env or settings.
@@ -38,6 +39,7 @@ func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddres
 	verifier.periodicRetrievalInterval = 300 * time.Second
 	//Fetch DagChain verification status from redis for all projects.
 	verifier.FetchLastVerificationStatusFromRedis()
+	verifier.lastVerifiedDagBlockHeightsMutex = &sync.Mutex{}
 }
 
 func (verifier *DagVerifier) PopulateProjects(pairContractAddresses *[]string) {
@@ -178,7 +180,9 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	}
 	//Store last verified blockHeight so that in next run, we just need to verify from the same.
 	//Use single hash key in redis to store the same against contractAddress.
+	verifier.lastVerifiedDagBlockHeightsMutex.Lock()
 	verifier.lastVerifiedDagBlockHeights[projectId] = strconv.FormatInt(dagChain[len(dagChain)-1].Height, 10)
+	verifier.lastVerifiedDagBlockHeightsMutex.Unlock()
 	return nil
 }
 
