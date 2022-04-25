@@ -55,12 +55,10 @@ async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: a
 
 
 async def get_dag_blocks_in_range(project_id, from_block, to_block, reader_redis_conn: aioredis.Redis):
-    tasks = []
+    dag_chain = []
     for i in range(from_block, to_block + 1):
-        t = get_dag_block_by_height(project_id, i, reader_redis_conn)
-        tasks.append(t)
-    
-    dag_chain = await asyncio.gather(*tasks)
+        t = await get_dag_block_by_height(project_id, i, reader_redis_conn)
+        dag_chain.append(t)
 
     return dag_chain
 
@@ -74,7 +72,6 @@ def read_json_file(file_path: str):
         logger.error(e, exc_info=True)
         raise e
     else:
-        logger.debug(f"Reading {file_path} file")
         json_data = json.loads(f_.read())
     return json_data
     
@@ -96,7 +93,6 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
         also returns pair symbol by concatenating {token0Symbol}-{token1Symbol}
     """
     pair_address = Web3.toChecksumAddress(pair_address)
-    logger.debug(f"Fetch pair data, pair address:{pair_address}")
 
     pairTokensAddresses = await writer_redis_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_addresses(pair_address))
     if pairTokensAddresses:
@@ -124,11 +120,9 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
     )
     pair_tokens_data = await writer_redis_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(pair_address))
     
-    logger.debug(f"Fetch token data, token0:{token0Addr} token1:{token1Addr}")
+    logger.debug(f"Fetch token metadata, token0:{token0Addr} token1:{token1Addr}")
     
     if pair_tokens_data:
-        logger.debug(f"got pair token data from cache | pair:{pair_address}")
-
         token0_decimals = pair_tokens_data[b"token0_decimals"].decode('utf-8')
         token1_decimals = pair_tokens_data[b"token1_decimals"].decode('utf-8')
         token0_symbol = pair_tokens_data[b"token0_symbol"].decode('utf-8')
@@ -158,8 +152,6 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
             token0_name, token0_symbol, token0_decimals,
             token1_name, token1_symbol, token1_decimals
         ] = await asyncio.gather(*executor_gather)
-
-        logger.debug(f"Storing pair tokens data in redis | pair:{pair_address}")
 
         await writer_redis_conn.hmset(
             redis_keys.get_uniswap_pair_contract_tokens_data(pair_address),
@@ -214,8 +206,14 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         head_marker_24h = int(head_marker_24h.decode('utf-8')) if head_marker_24h else 0
         # tail_marker_7d = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '7d'))
         # head_marker_7d = await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '7d'))
-        
+        if not tail_marker_24h or not head_marker_24h:
+            logger.error(f"head or tail is empty for pair:{pair_contract_address}, tail:{tail_marker_24h}, head:{head_marker_24h}")
+            return
+
         dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h, writer_redis_conn)
+        if not dag_chain_24h:
+            logger.error(f"dag_chain_24h array is empty for pair:{pair_contract_address}, avoiding trade volume calculations")
+            return
 
         # get tokens prices:
         token0Price = await writer_redis_conn.get(
@@ -271,14 +269,20 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         
         volume_24h_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in dag_chain_24h]
         # volume_7d_cids = [{ 'dagCid': obj_7d['dagCid'], 'payloadCid': obj_7d['data']['cid']} for obj_7d in volume_7d_data]
-
+        
         cids_volume_24h = await asyncio.gather(
-            ipfs_client.add_json({ 'resultant':{
-                "cids": volume_24h_cids,
-                'latestTimestamp_volume_24h': dag_chain_24h[0]['timestamp'],
-                'earliestTimestamp_volume_24h': dag_chain_24h[-1]['timestamp']
-            }})
+            ipfs_client.add_json({ 
+                'resultant':{
+                    "cids": volume_24h_cids,
+                    'latestTimestamp_volume_24h': dag_chain_24h[0]['timestamp'],
+                    'earliestTimestamp_volume_24h': dag_chain_24h[-1]['timestamp']
+                }
+            })
         )
+        print(f"HERE ### CID: {cids_volume_24h}")
+        # data = await ipfs_client.cat(cids_volume_24h[0])
+        # print(f"cid get: {data}")
+            
 
         # store last 24h recent logs, these will be used to show recent transaction for perticular contract
         recent_logs = list()
@@ -291,7 +295,6 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             recent_logs = recent_logs[:70]
 
         logger.debug(f"Stored recent logs for pair: {redis_keys.get_uniswap_pair_cached_recent_logs(f'{Web3.toChecksumAddress(pair_contract_address)}')}, of len:{len(recent_logs)}")
-
         logger.debug('Calculated 24h, 7d and fees_24h vol: %s, %s | contract: %s', total_volume_24h, fees_24h, pair_contract_address)
         prepared_snapshot = liquidityProcessedData(
             contractAddress=pair_contract_address,
