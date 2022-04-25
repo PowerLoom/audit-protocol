@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"math/rand"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -22,9 +24,17 @@ var ctx = context.Background()
 
 var redisClient *redis.Client
 var ipfsClient *shell.Shell
+var httpClient http.Client
+var settingsObj SettingsObj
+
+//var httpTraceCtx context.Context
 
 var REDIS_KEY_PAYLOAD_CIDS = "projectID:%s:payloadCids"
 var REDIS_KEY_PENDING_TXNS = "projectID:%s:pendingTransactions"
+
+const MAX_RETRY_COUNT = 3
+
+var commonVigilParams CommonVigilRequestParams
 
 func InitLogger() {
 	if len(os.Args) < 2 {
@@ -34,7 +44,7 @@ func InitLogger() {
 	} else {
 		logLevel, err := strconv.ParseUint(os.Args[1], 10, 32)
 		if err != nil || logLevel > 6 {
-			log.SetLevel(log.DebugLevel)
+			log.SetLevel(log.DebugLevel) //TODO: Change default level to error
 		} else {
 			//TODO: Need to come up with approach to dynamically update logLevel.
 			log.SetLevel(log.Level(logLevel))
@@ -45,8 +55,10 @@ func InitLogger() {
 
 func main() {
 	InitLogger()
+	settingsObj = ParseSettings("../settings.json")
 	InitIPFSClient()
 	InitRedisClient()
+	InitVigilClient()
 	log.Info("Starting RabbitMq Consumer")
 	InitRabbitmqConsumer()
 }
@@ -54,15 +66,21 @@ func main() {
 func InitRabbitmqConsumer() {
 	//conn, err := GetConn("amqp://powerloom:powerloom@172.31.23.45:5672/")
 	concurrency := 50
-	rabbitMqURL := "amqp://guest:guest@localhost:5672/"
+	//rabbitMqURL := "amqp://guest:guest@localhost:5672/"
+	//rabbitMqURL := "amqp://powerloom:powerloom@172.31.23.45:5672/" //Staging
+	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
 	conn, err := GetConn(rabbitMqURL)
 	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, concurrency)
 	if err != nil {
 		panic(err)
 	}
+	rmqExchangeName := "powerloom-backend"
+	rmqExchangeName = settingsObj.Rabbitmq.Setup.Core.Exchange
+	//TODO: These settings need to be moved to json config.
+	rmqQueueName := "audit-protocol-commit-payloads"
+	rmqRoutingKey := "commit-payloads"
 
-	err = conn.StartConsumer("audit-protocol-commit-payloads", "powerloom-backend", "commit-payloads", RabbitmqMsgHandler, concurrency)
-
+	err = conn.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, concurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -73,10 +91,10 @@ func InitRabbitmqConsumer() {
 
 func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	if d.Body == nil {
-		log.Errorf("Error, no message body!")
-		return false
+		log.Errorf("Received message %+v from rabbitmq without message body! Ignoring and not processing it.", d)
+		return true
 	}
-	log.Debugf("Message from rabbitmq %+v", d.Body)
+	log.Tracef("Received Message from rabbitmq %v", d.Body)
 
 	var payloadCommit PayloadCommit
 
@@ -86,23 +104,34 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 		return true
 	}
 
-	log.Debugf("Unmarshalled PayloadCommit %+v, payload %+v", payloadCommit, payloadCommit.Payload)
 	if payloadCommit.Payload != nil {
-		//TODO: Add retry with backoff.
-		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload))
+		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Adding payload to IPFS.",
+			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
+
+		for retryCount := 0; ; {
+			snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload))
+			if err != nil {
+				if retryCount == MAX_RETRY_COUNT {
+					log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, MAX_RETRY_COUNT, err)
+					return false
+				}
+				retryCount++
+				log.Errorf("Failed to add payload to IPFS %v, with err %v..retryCount %d .", d.Body, err, retryCount)
+				continue
+			}
+			log.Debugf("IPFS add Successful. Snapshot CID is %s for payloadCommit %+v", snapshotCid, payloadCommit)
+			payloadCommit.SnapshotCID = snapshotCid
+			break
+		}
+		err = StorePayloadCidInRedis(&payloadCommit)
 		if err != nil {
-			log.Errorf("Failed to add to ipfs %v, with err %v", d.Body, err)
 			return false
 		}
-		log.Debugf("Snapshot CID is %s for payloadCommit %+v", snapshotCid, payloadCommit)
-		payloadCommit.SnapshotCID = snapshotCid
-		//TODO: Capture processing logs in redis for success/error.
-		err = StorePayloadCidInRedis(payloadCommit)
-		if err != nil {
-			return false
-		}
+	} else {
+		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %s from rabbitmq.",
+			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 	}
-	err = PrepareAndSubmitTxnToChain(payloadCommit)
+	err = PrepareAndSubmitTxnToChain(&payloadCommit)
 	if err != nil {
 		return false
 	}
@@ -110,23 +139,30 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	return true
 }
 
-func StorePayloadCidInRedis(payload PayloadCommit) error {
-	//TODO: Add retry in case of failure
-	key := fmt.Sprintf(REDIS_KEY_PAYLOAD_CIDS, payload.ProjectId)
-	res := redisClient.ZAdd(ctx, key,
-		&redis.Z{
-			Score:  float64(payload.TentativeBlockHeight),
-			Member: payload.SnapshotCID,
-		})
-	if res.Err() != nil {
-		log.Errorf("Failed to Add payload %s to redis Zset with key %s", payload.SnapshotCID, key)
-		return res.Err()
+func StorePayloadCidInRedis(payload *PayloadCommit) error {
+	for retryCount := 0; ; {
+		key := fmt.Sprintf(REDIS_KEY_PAYLOAD_CIDS, payload.ProjectId)
+		res := redisClient.ZAdd(ctx, key,
+			&redis.Z{
+				Score:  float64(payload.TentativeBlockHeight),
+				Member: payload.SnapshotCID,
+			})
+		if res.Err() != nil {
+			if retryCount == MAX_RETRY_COUNT {
+				log.Errorf("Failed to Add payload %s to redis Zset with key %s after max-retries of %d", payload.SnapshotCID, key, MAX_RETRY_COUNT)
+				return res.Err()
+			}
+			retryCount++
+			log.Errorf("Failed to Add payload %s to redis Zset with key %s..retryCount %d", payload.SnapshotCID, key, retryCount)
+			continue
+		}
+		log.Debugf("Added payload %s to redis Zset with key %s successfully", payload.SnapshotCID, key)
+		break
 	}
-	log.Debugf("Added payload %s to redis Zset with key %s successfully", payload.SnapshotCID, key)
 	return nil
 }
 
-func AddToPendingTxnsInRedis(payload PayloadCommit, tokenHash string, txHash string) error {
+func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash string) error {
 	key := fmt.Sprintf(REDIS_KEY_PENDING_TXNS, payload.ProjectId)
 	var pendingtxn PendingTransaction
 	pendingtxn.EventData.ProjectId = payload.ProjectId
@@ -143,26 +179,40 @@ func AddToPendingTxnsInRedis(payload PayloadCommit, tokenHash string, txHash str
 		log.Errorf("Failed to marshal pendingTxn %+v", pendingtxn)
 		return err
 	}
-	res := redisClient.ZAdd(ctx, key,
-		&redis.Z{
-			Score:  float64(payload.TentativeBlockHeight),
-			Member: pendingtxnBytes,
-		})
-	if res.Err() != nil {
-		log.Errorf("Failed to add to pendingTxns in redis with err %+v", res.Err())
-		return res.Err()
+	for retryCount := 0; ; {
+
+		res := redisClient.ZAdd(ctx, key,
+			&redis.Z{
+				Score:  float64(payload.TentativeBlockHeight),
+				Member: pendingtxnBytes,
+			})
+		if res.Err() != nil {
+			if retryCount == MAX_RETRY_COUNT {
+				log.Errorf("Failed to add payloadCid %s for project %s with commitID %s to pendingTxns in redis with err %+v after max retries of %d",
+					payload.SnapshotCID, payload.ProjectId, payload.CommitId, res.Err(), MAX_RETRY_COUNT)
+				return res.Err()
+			}
+			retryCount++
+			log.Errorf("Failed to add payloadCid %s for project %s with commitID %s to pendingTxns in redis with err %+v ..retryCount %d",
+				payload.SnapshotCID, payload.ProjectId, payload.CommitId, res.Err(), retryCount)
+			continue
+		}
+		log.Debugf("Added payloadCid %s for project %s with commitID %s to pendingTxns redis Zset with key %s successfully",
+			payload.SnapshotCID, payload.ProjectId, payload.CommitId, key)
+		break
 	}
 	return nil
 }
 
-func PrepareAndSubmitTxnToChain(payload PayloadCommit) error {
+func PrepareAndSubmitTxnToChain(payload *PayloadCommit) error {
 	var snapshot Snapshot
 	var tokenHash string
 	snapshot.Type = "HOT_IPFS"
 	snapshot.Cid = payload.SnapshotCID
 	snapshotBytes, err := json.Marshal(snapshot)
 	if err != nil {
-		log.Errorf("Failed to Json-Marshall snapshot %v, with err %v", snapshot, err)
+		log.Errorf("CRITICAL. Failed to Json-Marshall snapshot %v for project %s with commitID %s , with err %v",
+			snapshot, payload.ProjectId, payload.CommitId, err)
 		return err
 	}
 	log.Trace("SnapshotBytes: ", snapshotBytes)
@@ -178,35 +228,143 @@ func PrepareAndSubmitTxnToChain(payload PayloadCommit) error {
 	} else {
 		tokenHash = payload.ApiKeyHash
 	}
-	log.Debug("Token hash is", tokenHash)
-	txHash, err := SubmitTxnToChain(payload, tokenHash)
+	log.Tracef("Token hash generated for payload %+v for project %s with commitID %s  is : ",
+		*payload, payload.ProjectId, payload.CommitId, tokenHash)
+	var txHash string
+	for retryCount := 0; ; {
+		txHash, err = SubmitTxnToChain(payload, tokenHash)
+		if err != nil {
+			if retryCount == MAX_RETRY_COUNT {
+				log.Errorf("Failed to send txn %s for project %s with commitID %s and snapshotCID %s to Prost-Vigil with err %+v after max retries of %d",
+					txHash, payload.ProjectId, payload.CommitId, payload.SnapshotCID, err, MAX_RETRY_COUNT)
+				return err
+			}
+			retryCount++
+			log.Errorf("Failed to send txn %s for project %s with commitID %s to pendingTxns to Prost-Vigil with err %+v ..retryCount %d",
+				txHash, payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
+			continue
+		}
+		break
+	}
 	/*Add to redis pendingTransactions*/
-
 	err = AddToPendingTxnsInRedis(payload, tokenHash, txHash)
 	if err != nil {
-		log.Errorf("Failed to add to pendingTxns in redis with error %v, hence sending this for re-processing.", err)
 		return err
 	}
 	return nil
 }
 
-func SubmitTxnToChain(payload PayloadCommit, tokenHash string) (string, error) {
+func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) {
 	log.Debugf("Sim: Submitted txn %s for payload %+v to ProstVigil-GW.", tokenHash, payload)
-	//TODO: Invoke MaticVigil API.
+	// Directly calling ProstVigil LB via http://172.31.24.131:8888
+	//reqURL = "http://172.31.24.131:8888/writer"
+	reqURL := settingsObj.ContractCallBackend
+	var reqParams AuditContractCommitParams
+	reqParams.ApiKeyHash = tokenHash
+	reqParams.PayloadCommitId = payload.CommitId
+	reqParams.ProjectId = payload.ProjectId
+	reqParams.SnapshotCid = payload.SnapshotCID
+	reqParams.TentativeBlockHeight = payload.TentativeBlockHeight
+	var err error
+	commonVigilParams.Params, err = json.Marshal(reqParams)
+	if err != nil {
+		log.Errorf("Failed to marshal AuditContractCommitParams %+v towards Vigil GW with error %+v", reqParams, err)
+		return "", err
+	}
+	body, err := json.Marshal(commonVigilParams)
+	if err != nil {
+		log.Errorf("Failed to marshal request %+v towards Vigil GW with error %+v", commonVigilParams, err)
+		return "", err
+	}
+	log.Debugf("Sending Req %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s .",
+		commonVigilParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
+	if err != nil {
+		log.Errorf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
+			reqURL, commonVigilParams, err)
+		return "", err
+	}
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("accept", "application/json")
+	//req.Header.Add("X-API-KEY", "baf3b91a-bc68-484d-a377-741f8bf8de43") //TODO: Change to read from settings.
+	res, err := httpClient.Do(req)
+	if err != nil {
+		log.Errorf("Failed to send request %+v towards Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
+			req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
+		return "", err
+	}
+	defer res.Body.Close()
+	var resp AuditContractCommitResp
+	respBody, _ := ioutil.ReadAll(res.Body)
+	if res.StatusCode == http.StatusOK {
+		err = json.Unmarshal(respBody, &resp)
+		if err != nil {
+			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards Prost-Vigil wirh error %+v",
+				respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
+			return "", err
+		}
+		if resp.Success {
+			return resp.Data[0].TxHash, nil
+		} else {
+			var tmpRsp map[string]string
+			_ = json.Unmarshal(respBody, &tmpRsp)
+			log.Errorf("Received 200 OK with Error response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s resp bytes %+v ",
+				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tmpRsp)
+			return "", errors.New("Received Error response from Prost-Vigil : " + fmt.Sprintf("%+v", resp))
+		}
+	} else {
+		log.Errorf("Received Error response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s with statusCode %d and status : %s ",
+			resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, res.StatusCode, res.Status)
+		return "", errors.New("Received Error response from Prost-Vigil" + fmt.Sprint(respBody))
+	}
+}
 
-	return "dummyHash" + fmt.Sprint(rand.Int()), nil
+func InitVigilClient() {
+	/*kl, err := os.OpenFile("ssl-keylog.txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		log.Error("Could not open keylog file due to error ", err)
+	}*/
+	t := http.Transport{
+		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+		MaxIdleConns:       10,
+		IdleConnTimeout:    30 * time.Second,
+		DisableCompression: true,
+	}
+	//TODO: Move these to settings
+	t.MaxIdleConns = 100
+	t.MaxConnsPerHost = 100
+	t.MaxIdleConnsPerHost = 100
+
+	httpClient = http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &t,
+	}
+
+	/* 	clientTrace := &httptrace.ClientTrace{
+	   		GotConn: func(info httptrace.GotConnInfo) { log.Printf("conn was reused: %t", info.Reused) },
+	   	}
+	   	httpTraceCtx = httptrace.WithClientTrace(context.Background(), clientTrace)
+	*/
+	//commonVigilParams.Contract = "0xc8fe622716e7e2ab64a9c9595dd3b8df77477a9d"
+	//commonVigilParams.Contract = "0xcd4fb4b7bb24cc0f623f6c5e9fd9b115360c2d66" //Staging PV
+	commonVigilParams.Contract = strings.ToLower(settingsObj.AuditContract)
+	commonVigilParams.Method = "commitRecord"
+	commonVigilParams.NetworkId = 137
+	commonVigilParams.HackerMan = false
+	commonVigilParams.IgnoreGasEstimate = false
 }
 
 func InitRedisClient() {
-	redisURL := "powerloom-main1.op9vva.ng.0001.use2.cache.amazonaws.com" + ":" + strconv.Itoa(6379)
-	redisDb := 13
-	//TODO: Change post testing to fetch from settings.
-	redisURL = "localhost:6379"
-	redisDb = 0
+	//redisURL := "powerloom-main1.op9vva.ng.0001.use2.cache.amazonaws.com" + ":" + strconv.Itoa(6379)
+	//redisDb := 13
+	//redisURL = "localhost:6379"
+	//redisDb = 0
+	redisURL := fmt.Sprintf("%s:%d", settingsObj.Redis.Host, settingsObj.Redis.Port)
+	redisDb := settingsObj.Redis.Db
 	log.Infof("Connecting to redis DB %d at %s", redisDb, redisURL)
 	redisClient = redis.NewClient(&redis.Options{
 		Addr:     redisURL,
-		Password: "",
+		Password: settingsObj.Redis.Password,
 		DB:       redisDb,
 	})
 	pong, err := redisClient.Ping(ctx).Result()
@@ -217,7 +375,10 @@ func InitRedisClient() {
 }
 
 func InitIPFSClient() {
-	url := "/ip4/localhost/tcp/5001"
+	//url := "/ip4/localhost/tcp/5001"
+	//url = "/ip4/172.31.16.206/tcp/5001" //Old IPFS 0.7
+	url := settingsObj.IpfsURL
+	//url = "/ip4/172.31.31.46/tcp/5001" // new 0.13 IPFS
 	// Convert the URL from /ip4/172.31.16.206/tcp/5001 to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
 	timeout := time.Duration(5 * 1000000000)
