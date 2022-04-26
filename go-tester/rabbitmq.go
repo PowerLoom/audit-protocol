@@ -30,7 +30,7 @@ func GetConn(rabbitURL string) (Conn, error) {
 func (conn Conn) Publish(routingKey string, data []byte) error {
 	return conn.Channel.Publish(
 		// exchange - yours may be different
-		"powerloom-backend",
+		"audit-protocol-backend",
 		routingKey,
 		// mandatory - we don't care if there I no queue
 		false,
