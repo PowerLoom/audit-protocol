@@ -235,13 +235,13 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) error {
 		txHash, err = SubmitTxnToChain(payload, tokenHash)
 		if err != nil {
 			if retryCount == MAX_RETRY_COUNT {
-				log.Errorf("Failed to send txn %s for project %s with commitID %s and snapshotCID %s to Prost-Vigil with err %+v after max retries of %d",
-					txHash, payload.ProjectId, payload.CommitId, payload.SnapshotCID, err, MAX_RETRY_COUNT)
+				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s and snapshotCID %s to Prost-Vigil with err %+v after max retries of %d",
+					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
 				return err
 			}
 			retryCount++
-			log.Errorf("Failed to send txn %s for project %s with commitID %s to pendingTxns to Prost-Vigil with err %+v ..retryCount %d",
-				txHash, payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
+			log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Prost-Vigil with err %+v ..retryCount %d",
+				payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
 			continue
 		}
 		break
@@ -332,16 +332,16 @@ func InitVigilClient() {
 	if err != nil {
 		log.Error("Could not open keylog file due to error ", err)
 	}*/
+	//TODO: Move these to settings
+
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:       10,
-		IdleConnTimeout:    30 * time.Second,
-		DisableCompression: true,
+		MaxIdleConns:        100,
+		MaxConnsPerHost:     100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     0,
+		DisableCompression:  true,
 	}
-	//TODO: Move these to settings
-	t.MaxIdleConns = 100
-	t.MaxConnsPerHost = 100
-	t.MaxIdleConnsPerHost = 100
 
 	httpClient = http.Client{
 		Timeout:   10 * time.Second,
@@ -389,9 +389,22 @@ func InitIPFSClient() {
 	//url = "/ip4/172.31.31.46/tcp/5001" // new 0.13 IPFS
 	// Convert the URL from /ip4/172.31.16.206/tcp/5001 to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
-	timeout := time.Duration(5 * 1000000000)
 
-	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s with timeout of %f seconds", connectUrl, timeout.Seconds())
-	ipfsClient = shell.NewShell(connectUrl)
-	ipfsClient.SetTimeout(timeout)
+	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
+	//TODO: Move these to settings
+	t := http.Transport{
+		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+		MaxIdleConns:        50,
+		MaxConnsPerHost:     50,
+		MaxIdleConnsPerHost: 50,
+		IdleConnTimeout:     0,
+		DisableCompression:  true,
+	}
+
+	ipfsHttpClient := http.Client{
+		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000), //TODO: Read from settings.
+		Transport: &t,
+	}
+	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
+	ipfsClient = shell.NewShellWithClient(connectUrl, &ipfsHttpClient)
 }
