@@ -7,6 +7,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+//TODO: Move settings into a common package to be used by all go services under audit-protocol.
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`

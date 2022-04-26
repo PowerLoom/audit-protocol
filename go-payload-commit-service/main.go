@@ -255,7 +255,7 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) error {
 }
 
 func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) {
-	log.Debugf("Sim: Submitted txn %s for payload %+v to ProstVigil-GW.", tokenHash, payload)
+	//log.Debugf("Sim: Submitted txn %s for payload %+v to ProstVigil-GW.", tokenHash, payload)
 	// Directly calling ProstVigil LB via http://172.31.24.131:8888
 	//reqURL = "http://172.31.24.131:8888/writer"
 	reqURL := settingsObj.ContractCallBackend
@@ -276,8 +276,7 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) 
 		log.Errorf("Failed to marshal request %+v towards Vigil GW with error %+v", commonVigilParams, err)
 		return "", err
 	}
-	log.Debugf("Sending Req %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s .",
-		commonVigilParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
+
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
 	if err != nil {
 		log.Errorf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
@@ -287,6 +286,8 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("accept", "application/json")
 	//req.Header.Add("X-API-KEY", "baf3b91a-bc68-484d-a377-741f8bf8de43") //TODO: Change to read from settings.
+	log.Debugf("Sending Req %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
+		commonVigilParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tokenHash)
 	res, err := httpClient.Do(req)
 	if err != nil {
 		log.Errorf("Failed to send request %+v towards Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
@@ -295,15 +296,22 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) 
 	}
 	defer res.Body.Close()
 	var resp AuditContractCommitResp
-	respBody, _ := ioutil.ReadAll(res.Body)
+	respBody, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from Prost-Vigil with error %+v",
+			payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
+		return "", err
+	}
 	if res.StatusCode == http.StatusOK {
 		err = json.Unmarshal(respBody, &resp)
 		if err != nil {
-			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards Prost-Vigil wirh error %+v",
+			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards Prost-Vigil with error %+v",
 				respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
 			return "", err
 		}
 		if resp.Success {
+			log.Debugf("Received Success response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s.",
+				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
 			return resp.Data[0].TxHash, nil
 		} else {
 			var tmpRsp map[string]string
