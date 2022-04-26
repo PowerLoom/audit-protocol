@@ -13,6 +13,7 @@ module.exports = {
       min_uptime: MIN_UPTIME,
       env: {
         NODE_ENV: NODE_ENV,
+        PY_IPFS_HTTP_CLIENT_PREFER_HTTPX: "yes"
       }
     },
     {
