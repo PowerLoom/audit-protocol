@@ -128,7 +128,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			return false
 		}
 	} else {
-		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %s from rabbitmq.",
+		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq.",
 			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 	}
 	err = PrepareAndSubmitTxnToChain(&payloadCommit)
@@ -171,7 +171,11 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 	pendingtxn.EventData.Timestamp = float64(time.Now().Unix())
 	pendingtxn.EventData.TentativeBlockHeight = payload.TentativeBlockHeight
 	pendingtxn.EventData.ApiKeyHash = tokenHash
-	pendingtxn.LastTouchedBlock = -1
+	if payload.Resubmitted {
+		pendingtxn.LastTouchedBlock = payload.ResubmissionBlock
+	} else {
+		pendingtxn.LastTouchedBlock = -1
+	}
 	pendingtxn.TxHash = txHash
 	pendingtxn.EventData.TxHash = txHash
 	pendingtxnBytes, err := json.Marshal(pendingtxn)
