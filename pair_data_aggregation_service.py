@@ -180,122 +180,307 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
             'symbol': f'{token0_symbol}-{token1_symbol}'
         }
     }
-        
+
+async def get_pair_metadata_and_tokens_price(writer_redis_conn: aioredis.Redis, pair_contract_address):
+    pair_contract_obj = w3.eth.contract(
+        address=Web3.toChecksumAddress(pair_contract_address),
+        abi=pair_contract_abi
+    )
+
+    pair_token_metadata = await get_pair_tokens_metadata(
+        pair_contract_obj=pair_contract_obj,
+        pair_address=Web3.toChecksumAddress(pair_contract_address),
+        loop=asyncio.get_event_loop(),
+        writer_redis_conn=writer_redis_conn
+    )
+
+    # get tokens prices:
+    token0Price = await writer_redis_conn.get(
+        redis_keys.get_uniswap_pair_cached_token_price(f"{pair_token_metadata['token0']['symbol']}-USDT"))
+    if (token0Price):
+        token0Price = float(token0Price.decode('utf-8'))
+    else:
+        token0Price = 0
+        logger.error(
+            f"Error: can't find {pair_token_metadata['token0']['symbol']}-USDT Price and setting it 0 | {pair_token_metadata['token0']['address']}")
+
+    token1Price = await writer_redis_conn.get(
+        redis_keys.get_uniswap_pair_cached_token_price(f"{pair_token_metadata['token1']['symbol']}-USDT"))
+    if (token1Price):
+        token1Price = float(token1Price.decode('utf-8'))
+    else:
+        token1Price = 0
+        logger.error(
+            f"Error: can't find {pair_token_metadata['token1']['symbol']}-USDT Price and setting it 0 | {pair_token_metadata['token1']['address']}")        
+    
+    return [pair_token_metadata, token0Price, token1Price]
+
+def calculate_pair_trade_volume(dag_chain):
+    # calculate / sum trade volume
+    total_volume = sum(map(lambda x: x['data']['payload']['totalTrade'], dag_chain))
+
+    # calculate / sum fee
+    fees = sum(map(lambda x: x['data']['payload'].get('totalFee', 0), dag_chain))
+
+    # get volume for individual tokens (in native token decimals):
+    token0_volume = sum(map(lambda x: x['data']['payload']['token0TradeVolume'], dag_chain))
+    token1_volume = sum(map(lambda x: x['data']['payload']['token1TradeVolume'], dag_chain))
+
+    return [total_volume, fees, token0_volume, token1_volume]
+
+async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contract_address, token0Price, token1Price):
+    project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_UNISWAPV2'
+
+    # liquidty data
+    liquidity_head_marker = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '24h'))
+    liquidity_head_marker = int(liquidity_head_marker.decode('utf-8')) if liquidity_head_marker else 0
+    liquidity_data = await get_dag_block_by_height(
+        project_id_token_reserve,
+        liquidity_head_marker,
+        writer_redis_conn
+    )
+    
+    if not liquidity_data:
+        return [None, None, None, None]
+    
+    token0_liquidity = float(list(liquidity_data['data']['payload']['token0Reserves'].values())[-1])
+    token1_liquidity = float(list(liquidity_data['data']['payload']['token1Reserves'].values())[-1])
+    total_liquidity = token0_liquidity * token0Price + token1_liquidity * token1Price
+    block_height_total_reserve = int(liquidity_data['data']['payload']['chainHeightRange']['end'])
+
+    return [total_liquidity, token0_liquidity, token1_liquidity, block_height_total_reserve]
+
+def patch_cids_obj(dag_chain, patch_type, patch):
+    cid_list = []
+    if patch_type == "parse_cids":
+        # parse dagCid and payloadCid from dag chain
+        cid_list = [{ 'dagCid': obj['dagCid'], 'payloadCid': obj['data']['cid']} for obj in dag_chain]
+    elif patch_type == "add_front_patch":
+        # add sliding window front cids to existing cid obj list
+        cid_list = patch + dag_chain
+    elif patch_type == "remove_back_patch":
+        # remove sliding window back cids from existing cid obj list
+        cid_list = dag_chain[:]
+        for dag_obj in cid_list:
+            for patch_obj in patch:
+                if dag_obj["dagCid"] == patch_obj["dagCid"]:
+                    dag_chain.remove(dag_obj)
+        cid_list = dag_chain[:]
+
+    return cid_list
+
+
+async def store_recent_transactions_logs(writer_redis_conn: aioredis.Redis, dag_chain, pair_contract_address):
+    recent_logs = []
+    for log in dag_chain:
+        recent_logs.extend(log['data']['payload']['recent_logs'])
+    recent_logs = sorted(recent_logs, key=lambda log: log['timestamp'], reverse=True)
+
+    oldLogs = await writer_redis_conn.get(redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"))
+    if oldLogs:
+        oldLogs = json.loads(oldLogs.decode('utf-8'))
+        recent_logs = recent_logs + oldLogs 
+    
+    # trime logs to be max 75 each pair
+    if len(recent_logs) > 75:
+        recent_logs = recent_logs[:75]
+
+    logger.debug(f"Storing recent logs for pair: {redis_keys.get_uniswap_pair_cached_recent_logs(f'{Web3.toChecksumAddress(pair_contract_address)}')}, of len:{len(recent_logs)}")
+    await writer_redis_conn.set(redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"), json.dumps(recent_logs))
+    return recent_logs
+
+async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contract_address, snapshot):
+    now = int(time())
+    await writer_redis_conn.zadd(
+        name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+        mapping={json.dumps(snapshot.json()): now}
+    )
+    await writer_redis_conn.zremrangebyscore(
+        name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+        min=float('-inf'),
+        max=float(now - 60 * 60 * 25)
+    )
+
+
 
 async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Redis, pair_contract_address):
     try:
         project_id_trade_volume = f'uniswap_pairContract_trade_volume_{pair_contract_address}_UNISWAPV2'
         project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_UNISWAPV2'
 
-        pair_contract_obj = w3.eth.contract(
-            address=Web3.toChecksumAddress(pair_contract_address),
-            abi=pair_contract_abi
-        )
+        # get head, tail and sliding window data from redis
+        [
+            cached_trade_volume_data, 
+            tail_marker_24h, 
+            head_marker_24h
+        ] = await writer_redis_conn.mget([
+            redis_keys.get_uniswap_pair_cache_sliding_window_data(f"{Web3.toChecksumAddress(pair_contract_address)}"),
+            redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '24h'),
+            redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '24h')
+        ])
 
-        pair_token_metadata = await get_pair_tokens_metadata(
-            pair_contract_obj=pair_contract_obj,
-            pair_address=Web3.toChecksumAddress(pair_contract_address),
-            loop=asyncio.get_event_loop(),
-            writer_redis_conn=writer_redis_conn
-        )
-
-        # trade volume dag chain
-        tail_marker_24h = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '24h'))
-        head_marker_24h = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '24h'))
+        cached_trade_volume_data = json.loads(cached_trade_volume_data.decode('utf-8')) if cached_trade_volume_data else {}
         tail_marker_24h = int(tail_marker_24h.decode('utf-8')) if tail_marker_24h else 0
-        head_marker_24h = int(head_marker_24h.decode('utf-8')) if head_marker_24h else 0
-        # tail_marker_7d = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '7d'))
-        # head_marker_7d = await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '7d'))
+        head_marker_24h = int(head_marker_24h.decode('utf-8')) if head_marker_24h else 0        
+
         if not tail_marker_24h or not head_marker_24h:
-            logger.error(f"head or tail is empty for pair:{pair_contract_address}, tail:{tail_marker_24h}, head:{head_marker_24h}")
+            logger.error(f"Avoding pair data calculations as head or tail is empty for pair:{pair_contract_address}, tail:{tail_marker_24h}, head:{head_marker_24h}")
             return
 
-        dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h, writer_redis_conn)
-        if not dag_chain_24h:
-            logger.error(f"dag_chain_24h array is empty for pair:{pair_contract_address}, avoiding trade volume calculations")
+        # initialize returning variables
+        total_liquidity = 0
+        token0_liquidity = 0
+        token1_liquidity = 0
+        total_volume_24h = 0
+        token0_volume_24h = 0
+        token1_volume_24h = 0
+        fees_24h = 0
+        cids_volume_24h = ''
+        recent_logs = list()
+        block_height_total_reserve = 0
+        block_heigh_trade_volume = 0
+        pair_token_metadata = {}
+
+        [
+            pair_token_metadata, 
+            token0Price, 
+            token1Price
+        ] = await get_pair_metadata_and_tokens_price(writer_redis_conn, pair_contract_address)
+
+        [
+            total_liquidity, 
+            token0_liquidity, 
+            token1_liquidity, 
+            block_height_total_reserve
+        ] = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address, token0Price, token1Price)
+        if not total_liquidity:
+            logger.error(f"Avoiding pair data calculation as liquidity data is not available - projectId:{project_id_token_reserve}")
             return
 
-        # get tokens prices:
-        token0Price = await writer_redis_conn.get(
-            redis_keys.get_uniswap_pair_cached_token_price(f"{pair_token_metadata['token0']['symbol']}-USDT"))
-        if (token0Price):
-            token0Price = float(token0Price.decode('utf-8'))
-        else:
-            token0Price = 0
-            logger.error(
-                f"Error: can't find {pair_token_metadata['token0']['symbol']}-USDT Price and setting it 0 | {pair_token_metadata['token0']['address']}")
+        if not cached_trade_volume_data:
+            dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h, writer_redis_conn)
+            if not dag_chain_24h:
+                logger.error(f"dag_chain_24h array is empty for pair:{pair_contract_address}, avoiding trade volume calculations")
+                return
 
-        token1Price = await writer_redis_conn.get(
-            redis_keys.get_uniswap_pair_cached_token_price(f"{pair_token_metadata['token1']['symbol']}-USDT"))
-        if (token1Price):
-            token1Price = float(token1Price.decode('utf-8'))
-        else:
-            token1Price = 0
-            logger.error(
-                f"Error: can't find {pair_token_metadata['token1']['symbol']}-USDT Price and setting it 0 | {pair_token_metadata['token1']['address']}")
-        
-        # liquidty data
-        liquidity_head_marker = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '24h'))
-        liquidity_head_marker = int(liquidity_head_marker.decode('utf-8')) if liquidity_head_marker else 0
-        liquidity_data = await get_dag_block_by_height(
-            project_id_token_reserve,
-            liquidity_head_marker,
-            writer_redis_conn
-        )
-        
-        if not liquidity_data:
-            logger.error(f"No liquidity data avaiable for - projectId:{project_id_token_reserve} and liquidity head marker:{liquidity_head_marker}")
-            return
-        
-        token0_liquidity = float(list(liquidity_data['data']['payload']['token0Reserves'].values())[-1])
-        token1_liquidity = float(list(liquidity_data['data']['payload']['token1Reserves'].values())[-1])
-        total_liquidity = token0_liquidity * token0Price + token1_liquidity * token1Price
-
-        # get data for last 24hour
-        total_volume_24h = sum(map(lambda x: x['data']['payload']['totalTrade'], dag_chain_24h))
-
-        # calculate / sum last 24h fee
-        fees_24h = sum(map(lambda x: x['data']['payload'].get('totalFee', 0), dag_chain_24h))
-
-        # get volume for individual tokens (in native token decimals):
-        token0_volume_24h = sum(map(lambda x: x['data']['payload']['token0TradeVolume'], dag_chain_24h))
-        token1_volume_24h = sum(map(lambda x: x['data']['payload']['token1TradeVolume'], dag_chain_24h))
-
-
-        # get data for last 7d
-        # volume_7d = sum(map(lambda x: x['data']['payload']['totalTrade'], volume_7d_data))
-
-        
-        
-        volume_24h_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in dag_chain_24h]
-        # volume_7d_cids = [{ 'dagCid': obj_7d['dagCid'], 'payloadCid': obj_7d['data']['cid']} for obj_7d in volume_7d_data]
-        
-        cids_volume_24h = await asyncio.gather(
-            ipfs_client.add_json({ 
-                'resultant':{
-                    "cids": volume_24h_cids,
-                    'latestTimestamp_volume_24h': dag_chain_24h[0]['timestamp'],
-                    'earliestTimestamp_volume_24h': dag_chain_24h[-1]['timestamp']
-                }
-            })
-        )
-        print(f"HERE ### CID: {cids_volume_24h}")
-        # data = await ipfs_client.cat(cids_volume_24h[0])
-        # print(f"cid get: {data}")
+            # calculate trade volume 24h
+            [total_volume_24h, fees_24h, token0_volume_24h, token1_volume_24h] = calculate_pair_trade_volume(dag_chain_24h)
             
 
-        # store last 24h recent logs, these will be used to show recent transaction for perticular contract
-        recent_logs = list()
-        for log in dag_chain_24h:
-            recent_logs.extend(log['data']['payload']['recent_logs'])
+            # parse and store dag chain cids on IPFS
+            volume_24h_cids = patch_cids_obj(dag_chain_24h, 'parse_cids', [])
+            cids_volume_24h = await asyncio.gather(
+                ipfs_client.add_json({ 
+                    'resultant':{
+                        "cids": volume_24h_cids,
+                        'latestTimestamp_volume_24h': dag_chain_24h[0]['timestamp']
+                    }
+                })
+            )
+            # data = await ipfs_client.cat(cids_volume_24h[0])
+            # print(f"cid get: {data}")
+                
 
-        recent_logs = sorted(recent_logs, key=lambda log: log['timestamp'], reverse=True)
+            # store last 24h recent logs, these will be used to show recent transaction for perticular contract
+            recent_logs = await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h, pair_contract_address)
 
-        if len(recent_logs) > 70:
-            recent_logs = recent_logs[:70]
+            cids_volume_24h = cids_volume_24h[0]
+            block_heigh_trade_volume = int(dag_chain_24h[0]['data']['payload']['chainHeightRange']['end'])
+        else:
+            
+            sliding_window_front = []
+            sliding_window_back = []
 
-        logger.debug(f"Stored recent logs for pair: {redis_keys.get_uniswap_pair_cached_recent_logs(f'{Web3.toChecksumAddress(pair_contract_address)}')}, of len:{len(recent_logs)}")
-        logger.debug('Calculated 24h, 7d and fees_24h vol: %s, %s | contract: %s', total_volume_24h, fees_24h, pair_contract_address)
+            # if head moved ahead
+            if head_marker_24h > cached_trade_volume_data["processed_head_marker_24h"]:
+                # front of the chain where head=current_head and tail=last_head
+                sliding_window_front = await get_dag_blocks_in_range(
+                    project_id_trade_volume, 
+                    cached_trade_volume_data["processed_head_marker_24h"],
+                    head_marker_24h, 
+                    writer_redis_conn
+                )
+            
+            # if tail moved ahead
+            if tail_marker_24h > cached_trade_volume_data["processed_tail_marker_24h"]:
+                # back of the chain where head=current_tail and tail=last_tail
+                sliding_window_back = await get_dag_blocks_in_range(
+                    project_id_trade_volume, 
+                    cached_trade_volume_data["processed_tail_marker_24h"],
+                    tail_marker_24h,
+                    writer_redis_conn
+                )
+            
+            if not sliding_window_front and not sliding_window_back:
+                logger.error(f"Avoiding calculation as new sliding window has not been created:{pair_contract_address} | sliding_window_front:{sliding_window_front} | sliding_window_back:{sliding_window_back}")
+                return
+
+            sliding_window_front_cids = []
+            sliding_window_back_cids = []
+
+            # parse and patch CID for 24h trade volume
+            trade_volume_cids_24h = await ipfs_client.cat(cached_trade_volume_data["aggregated_volume_cid_24h"])
+            if trade_volume_cids_24h:
+                trade_volume_cids_24h = json.loads(trade_volume_cids_24h.decode('utf-8'))
+
+            if sliding_window_back:
+                [back_total_volume, back_fees, back_token0_volume, back_token1_volume] = calculate_pair_trade_volume(sliding_window_back)
+                cached_trade_volume_data["aggregated_volume_24h"] -= back_total_volume
+                cached_trade_volume_data["aggregated_fees_24h"] -= back_fees
+                cached_trade_volume_data["aggregated_token0_volume_24h"] -= back_token0_volume
+                cached_trade_volume_data["aggregated_token1_volume_24h"] -= back_token1_volume
+                # cids for front of the chain
+                sliding_window_back_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in sliding_window_back]
+                trade_volume_cids_24h["resultant"]["cids"] = patch_cids_obj(trade_volume_cids_24h["resultant"]["cids"], 'remove_back_patch', sliding_window_back_cids)
+
+            if sliding_window_front:
+                [front_total_volume, front_fees, front_token0_volume, front_token1_volume] = calculate_pair_trade_volume(sliding_window_front)
+                cached_trade_volume_data["aggregated_volume_24h"] += front_total_volume
+                cached_trade_volume_data["aggregated_fees_24h"] += front_fees
+                cached_trade_volume_data["aggregated_token0_volume_24h"] += front_token0_volume
+                cached_trade_volume_data["aggregated_token1_volume_24h"] += front_token1_volume
+                # block height of trade volume
+                block_heigh_trade_volume = int(sliding_window_front[0]['data']['payload']['chainHeightRange']['end'])
+                # cids for front of the chain
+                sliding_window_front_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in sliding_window_front]
+                trade_volume_cids_24h["resultant"]["cids"] = patch_cids_obj(trade_volume_cids_24h["resultant"]["cids"], 'add_front_patch', sliding_window_front_cids)
+                # store recent logs
+                recent_logs = await store_recent_transactions_logs(writer_redis_conn, sliding_window_front, pair_contract_address)
+            else:
+                block_heigh_trade_volume = cached_trade_volume_data["processed_block_height_trade_volume"]
+
+            # store dag chain cids on IPFS
+            latestTimestamp_volume_24h = sliding_window_front[0]['timestamp'] if sliding_window_front else trade_volume_cids_24h['resultant']['latestTimestamp_volume_24h']
+            cids_volume_24h = await asyncio.gather(
+            ipfs_client.add_json({ 
+                    'resultant':{
+                        "cids": trade_volume_cids_24h["resultant"]["cids"],
+                        'latestTimestamp_volume_24h': latestTimestamp_volume_24h,
+                    }
+                })
+            )
+
+            # if liquidity reserve block height is not found
+            if not block_height_total_reserve:
+                block_height_total_reserve = cached_trade_volume_data["processed_block_height_total_reserve"]
+
+            total_volume_24h = cached_trade_volume_data['aggregated_volume_24h']
+            cids_volume_24h = cids_volume_24h[0]
+            fees_24h = cached_trade_volume_data['aggregated_fees_24h']
+            token0_volume_24h = cached_trade_volume_data['aggregated_token0_volume_24h']
+            token1_volume_24h = cached_trade_volume_data['aggregated_token1_volume_24h']
+        
+        sliding_window_data = {
+            "processed_tail_marker_24h": tail_marker_24h,
+            "processed_head_marker_24h": head_marker_24h,
+            "aggregated_volume_cid_24h": cids_volume_24h,
+            "aggregated_volume_24h": total_volume_24h,
+            "aggregated_fees_24h": fees_24h,
+            "aggregated_token0_volume_24h": token0_volume_24h,
+            "aggregated_token1_volume_24h": token1_volume_24h,
+            "processed_block_height_total_reserve": block_height_total_reserve,
+            "processed_block_height_trade_volume": block_heigh_trade_volume
+        }
         prepared_snapshot = liquidityProcessedData(
             contractAddress=pair_contract_address,
             name=pair_token_metadata['pair']['symbol'],
@@ -303,10 +488,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             volume_24h=f"US${round(abs(total_volume_24h)):,}",
             volume_7d=f"",
             fees_24h=f"US${round(abs(fees_24h)):,}",
-            cid_volume_24h=cids_volume_24h[0], 
+            cid_volume_24h=cids_volume_24h, 
             cid_volume_7d="",
-            block_height_total_reserve=int(liquidity_data['data']['payload']['chainHeightRange']['end']),
-            block_heigh_trade_volume=int(dag_chain_24h[0]['data']['payload']['chainHeightRange']['end']),
+            block_height_total_reserve=block_height_total_reserve,
+            block_height_trade_volume=block_heigh_trade_volume,
             token0Liquidity=token0_liquidity,
             token1Liquidity=token1_liquidity,
             token0TradeVolume_24h=token0_volume_24h,
@@ -314,33 +499,21 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             token0TradeVolume_7d=0.0,
             token1TradeVolume_7d=0.0
         )
-        logger.debug('Prepared trades, token reserves snapshot and storing it in redis: %s', prepared_snapshot)
-        logger.debug(f"Storing recent logs for pair: {redis_keys.get_uniswap_pair_cached_recent_logs(f'{Web3.toChecksumAddress(pair_contract_address)}')}, of len:{len(recent_logs)}")
+        
+        await store_pair_daily_stats(writer_redis_conn, pair_contract_address, prepared_snapshot)
+
+        logger.debug('Storing prepared trades, token reserves snapshot: %s', prepared_snapshot)
         logger.debug('Adding calculated snapshot to daily stats zset and pruning it for just 24h data')
-        now = int(time())
-        await asyncio.gather(
-            writer_redis_conn.mset({
-                redis_keys.get_uniswap_pair_contract_V2_pair_data(f"{Web3.toChecksumAddress(pair_contract_address)}"): prepared_snapshot.json(),
-                redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"): json.dumps(recent_logs)
-            }),
-            writer_redis_conn.zadd(
-                name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
-                mapping={json.dumps(prepared_snapshot.json()): now}
-            )
-        )
-        # excluded below redis call from asyncio.gather becuase 
-        # above redis call are on different key and below one write on same key
-        await writer_redis_conn.zremrangebyscore(
-            name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
-            min=float('-inf'),
-            max=float(now - 60 * 60 * 25)
-        )
+        await writer_redis_conn.mset({
+            redis_keys.get_uniswap_pair_contract_V2_pair_data(f"{Web3.toChecksumAddress(pair_contract_address)}"): prepared_snapshot.json(),
+            redis_keys.get_uniswap_pair_cache_sliding_window_data(f"{Web3.toChecksumAddress(pair_contract_address)}"): json.dumps(sliding_window_data)
+        })
+
     except Exception as e:
         logger.error('Error in process_pairs_trade_volume_and_reserves: %s', e, exc_info=True)
         raise(e)
 
     logger.debug(f"Calculated v2 pair data for contract: {pair_contract_address} | symbol:{pair_token_metadata['token0']['symbol']}-{pair_token_metadata['token1']['symbol']}")
-
     return json.loads(prepared_snapshot.json())
 
 
@@ -359,6 +532,9 @@ async def v2_pairs_data():
         aioredis_pool = RedisPool()
         await aioredis_pool.populate()
 
+        # test function on single pair_contract
+        pairs = ["0xd3d2e2692501a5c9ca623199d38826e513033a17"]
+
         logger.debug("Create threads to process trade volume data")
         process_data_list = []
         for pair_contract_address in pairs:
@@ -376,7 +552,7 @@ async def v2_pairs_data():
 
 if __name__ == '__main__':
     print("", "")
-    # loop = asyncio.get_event_loop()
-    # data = loop.run_until_complete(v2_pairs_data())
-    # print("", "")
-    # print(data)
+    loop = asyncio.get_event_loop()
+    data = loop.run_until_complete(v2_pairs_data())
+    print("", "")
+    print(data)
