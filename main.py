@@ -156,12 +156,7 @@ async def commit_payload(
     try:
         payload = req_args['payload']
         project_id = req_args['projectId']
-        rest_logger.debug("Extracted payload and projectId from the request: ")
-        rest_logger.debug(payload)
-        rest_logger.debug("Payload data type: ")
-        rest_logger.debug(type(payload))
-        rest_logger.debug("ProjectId: ")
-        rest_logger.debug(project_id)
+        rest_logger.debug(f"Extracted payload and projectId from the request: {payload} , Payload data type: {type(payload)} ProjectId: {project_id}")
     except Exception as e:
         return {'error': "Either payload or projectId"}
 
@@ -174,11 +169,8 @@ async def commit_payload(
     prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid = \
         await get_max_block_height(project_id, reader_redis_conn=reader_redis_conn)
 
-    rest_logger.debug("Got last tentative block height: ")
-    rest_logger.debug(last_tentative_block_height)
+    rest_logger.debug(f"Got last tentative block height: {last_tentative_block_height}. Previous IPLD CID in the DAG: {prev_dag_cid}")
 
-    rest_logger.debug('Previous IPLD CID in the DAG: ')
-    rest_logger.debug(prev_dag_cid)
     last_tentative_block_height = last_tentative_block_height + 1
 
     """ Create a unique identifier for this payload """
@@ -189,8 +181,7 @@ async def commit_payload(
     }
     # salt with commit time
     payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
-    rest_logger.debug("Created the unique payload commit id: ")
-    rest_logger.debug(payload_commit_id)
+    rest_logger.debug(f"Created the unique payload commit id: {payload_commit_id}")
 
     payload_for_commit = PayloadCommit(**{
         'projectId': project_id,
@@ -268,9 +259,7 @@ async def configure_project(
     """
     rules = req_args['rules']
     await writer_redis_conn.set(redis_keys.get_diff_rules_key(projectId), json.dumps(rules))
-    rest_logger.debug('Set diff rules for project ID')
-    rest_logger.debug(projectId)
-    rest_logger.debug(rules)
+    rest_logger.debug(f'Set diff rules {rules} for project ID {projectId}')
 
 
 @app.post('/{projectId:str}/confirmations/callback')
@@ -442,8 +431,7 @@ async def get_payloads_diffs(
 
     if to_height == -1:
         to_height = max_block_height
-        rest_logger.debug("Max Block Height: ")
-        rest_logger.debug(max_block_height)
+        rest_logger.debug("Max Block Height: %d",max_block_height)
     if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
         return {'error': 'Invalid Height'}
     extracted_count = 0
@@ -535,8 +523,7 @@ async def get_payloads(
     last_pruned_height = await helper_functions.get_last_pruned_height(
         project_id=projectId, reader_redis_conn=reader_redis_conn
     )
-    rest_logger.debug('Last pruned height: %s', last_pruned_height)
-    rest_logger.debug("Checking max overlap...")
+    rest_logger.debug('Last pruned height: %s. Checking max overlap...', last_pruned_height)
 
     # TODO: review logic around span, overlap, cached blocks etc. It's a complete shitpile at the moment.
     # for eg: check_overlap() is called once more from fetch_blocks(). Why?
@@ -573,8 +560,7 @@ async def get_payloads(
         reader_redis_conn=reader_redis_conn
     )
 
-    rest_logger.debug("Containers Required: ")
-    rest_logger.debug(containers)
+    rest_logger.debug(f"Containers Required: {containers}")
 
     if len(containers) > 0:
         rest_logger.debug("Creating a retrieval request")
@@ -681,8 +667,7 @@ async def get_payloads(
                                 }
 
                         if len(diff_map):
-                            rest_logger.debug('Found diff in first time calculation')
-                            rest_logger.debug(diff_map)
+                            rest_logger.debug(f'Found diff in first time calculation{diff_map}')
                         # cache in redis
                         await writer_redis_conn.set(diff_key, json.dumps(diff_map))
                     else:
@@ -754,8 +739,7 @@ async def get_block(
     )
 
     if block_height < last_pruned_height:
-        rest_logger.debug("Block being fetched at height: ")
-        rest_logger.debug(block_height)
+        rest_logger.debug("Block being fetched at height: %d", block_height)
 
         from_height = block_height
         to_height = block_height
@@ -857,8 +841,7 @@ async def get_container_data(
         - return containerData
     """
 
-    rest_logger.debug("Retrieving containerData for container_id: ")
-    rest_logger.debug(container_id)
+    rest_logger.debug("Retrieving containerData for container_id: %s",container_id)
     container_data_key = f"containerData:{container_id}"
     reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
     out = await reader_redis_conn.hgetall(container_data_key)
@@ -868,9 +851,7 @@ async def get_container_data(
     try:
         container_data = ContainerData(**out)
     except ValidationError as verr:
-        rest_logger.debug("The containerData retrieved from redis is invalid")
-        rest_logger.debug(out)
-        rest_logger.error(verr, exc_info=True)
+        rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
         return {}
 
     return container_data.dict()
@@ -915,9 +896,7 @@ async def get_executing_containers(
                 try:
                     container_data = ContainerData(**out)
                 except ValidationError as verr:
-                    rest_logger.debug("The containerData retrieved from redis is invalid")
-                    rest_logger.debug(out)
-                    rest_logger.error(verr, exc_info=True)
+                    rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
                     _container = {
                         'containerId': container_id,
                         'containerData': dict()
