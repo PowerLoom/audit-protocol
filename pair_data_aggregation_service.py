@@ -59,6 +59,8 @@ async def get_dag_blocks_in_range(project_id, from_block, to_block, reader_redis
     for i in range(from_block, to_block + 1):
         t = await get_dag_block_by_height(project_id, i, reader_redis_conn)
         dag_chain.append(t)
+    
+    dag_chain.reverse()
 
     return dag_chain
 
@@ -338,7 +340,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         cids_volume_24h = ''
         recent_logs = list()
         block_height_total_reserve = 0
-        block_heigh_trade_volume = 0
+        block_height_trade_volume = 0
         pair_token_metadata = {}
 
         [
@@ -365,7 +367,6 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
 
             # calculate trade volume 24h
             [total_volume_24h, fees_24h, token0_volume_24h, token1_volume_24h] = calculate_pair_trade_volume(dag_chain_24h)
-            
 
             # parse and store dag chain cids on IPFS
             volume_24h_cids = patch_cids_obj(dag_chain_24h, 'parse_cids', [])
@@ -385,7 +386,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             recent_logs = await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h, pair_contract_address)
 
             cids_volume_24h = cids_volume_24h[0]
-            block_heigh_trade_volume = int(dag_chain_24h[0]['data']['payload']['chainHeightRange']['end'])
+            block_height_trade_volume = int(dag_chain_24h[0]['data']['payload']['chainHeightRange']['end'])
         else:
             
             sliding_window_front = []
@@ -440,14 +441,14 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 cached_trade_volume_data["aggregated_token0_volume_24h"] += front_token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_24h"] += front_token1_volume
                 # block height of trade volume
-                block_heigh_trade_volume = int(sliding_window_front[0]['data']['payload']['chainHeightRange']['end'])
+                block_height_trade_volume = int(sliding_window_front[0]['data']['payload']['chainHeightRange']['end'])
                 # cids for front of the chain
                 sliding_window_front_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in sliding_window_front]
                 trade_volume_cids_24h["resultant"]["cids"] = patch_cids_obj(trade_volume_cids_24h["resultant"]["cids"], 'add_front_patch', sliding_window_front_cids)
                 # store recent logs
                 recent_logs = await store_recent_transactions_logs(writer_redis_conn, sliding_window_front, pair_contract_address)
             else:
-                block_heigh_trade_volume = cached_trade_volume_data["processed_block_height_trade_volume"]
+                block_height_trade_volume = cached_trade_volume_data["processed_block_height_trade_volume"]
 
             # store dag chain cids on IPFS
             latestTimestamp_volume_24h = sliding_window_front[0]['timestamp'] if sliding_window_front else trade_volume_cids_24h['resultant']['latestTimestamp_volume_24h']
@@ -479,7 +480,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             "aggregated_token0_volume_24h": token0_volume_24h,
             "aggregated_token1_volume_24h": token1_volume_24h,
             "processed_block_height_total_reserve": block_height_total_reserve,
-            "processed_block_height_trade_volume": block_heigh_trade_volume
+            "processed_block_height_trade_volume": block_height_trade_volume
         }
         prepared_snapshot = liquidityProcessedData(
             contractAddress=pair_contract_address,
@@ -491,7 +492,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             cid_volume_24h=cids_volume_24h, 
             cid_volume_7d="",
             block_height_total_reserve=block_height_total_reserve,
-            block_height_trade_volume=block_heigh_trade_volume,
+            block_height_trade_volume=block_height_trade_volume,
             token0Liquidity=token0_liquidity,
             token1Liquidity=token1_liquidity,
             token0TradeVolume_24h=token0_volume_24h,
@@ -532,9 +533,6 @@ async def v2_pairs_data():
         aioredis_pool = RedisPool()
         await aioredis_pool.populate()
 
-        # test function on single pair_contract
-        pairs = ["0xd3d2e2692501a5c9ca623199d38826e513033a17"]
-
         logger.debug("Create threads to process trade volume data")
         process_data_list = []
         for pair_contract_address in pairs:
@@ -552,7 +550,7 @@ async def v2_pairs_data():
 
 if __name__ == '__main__':
     print("", "")
-    loop = asyncio.get_event_loop()
-    data = loop.run_until_complete(v2_pairs_data())
-    print("", "")
-    print(data)
+    # loop = asyncio.get_event_loop()
+    # data = loop.run_until_complete(v2_pairs_data())
+    # print("", "")
+    # print(data)
