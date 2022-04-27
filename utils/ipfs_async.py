@@ -1,4 +1,4 @@
-import ipfshttpclient
+from IPFS_API import ipfshttpclient
 import asyncio
 from greenletio import async_
 from config import settings

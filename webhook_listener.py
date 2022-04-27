@@ -382,9 +382,9 @@ async def create_dag(
                 is_pending = False
                 for k in all_pending_tx_entries:
                     pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(k)
-                    rest_logger.debug('Comparing event data tx hash %s with pending tx obj tx hash %s '
-                                      '| tx obj itself: %s',
-                                      event_data['txHash'], pending_tx_obj.txHash, pending_tx_obj)
+                    # rest_logger.debug('Comparing event data tx hash %s with pending tx obj tx hash %s '
+                    #                   '| tx obj itself: %s',
+                    #                   event_data['txHash'], pending_tx_obj.txHash, pending_tx_obj)
                     if pending_tx_obj.txHash == event_data['txHash']:
                         is_pending = True
                         pending_tx_set_entry = k
@@ -424,27 +424,26 @@ async def create_dag(
                                      tentative_block_height_event_data)
 
                     # clear payload commit ID log on success
-                    _ = await dag_utils.clear_payload_commit_processing_logs(
+                    await dag_utils.clear_payload_commit_processing_logs(
                         project_id=project_id,
                         payload_commit_id=event_data['event_data']['payloadCommitId'],
                         writer_redis_conn=writer_redis_conn
                     )
 
                     # clear from pending set
-                    await writer_redis_conn.zrem(
-                        pending_tx_set_entry, *[redis_keys.get_pending_transactions_key(project_id)]
+                    _ = await writer_redis_conn.zrem(
+                        redis_keys.get_pending_transactions_key(project_id), pending_tx_set_entry
                     )
                     if _:
                         rest_logger.debug(
-                            'Cleared processing logs for payload commit ID: %s',
-                            event_data['event_data']['payloadCommitId']
+                            'Cleared tx entry for tx %s from pending set at block height %s | project ID %s',
+                            event_data['txHash'], tentative_block_height_event_data, project_id
                         )
                     else:
                         rest_logger.debug(
-                            'Not sure if processing logs cleared or nonexistent for payload commit ID: %s | '
-                            'Redis return: %s',
-                            event_data['event_data']['payloadCommitId'],
-                            _
+                            'Not sure if tx entry cleared for tx %s from pending set at block height %s | '
+                            'Redis return: %s | Project ID : %s',
+                            event_data['txHash'], tentative_block_height_event_data, _, project_id
                         )
 
                     response_body = {
@@ -534,28 +533,27 @@ async def create_dag(
                             else:
                                 rest_logger.debug("The diff map retrieved: %s", diff_map)
 
-                            _ = await dag_utils.clear_payload_commit_processing_logs(
+                            await dag_utils.clear_payload_commit_processing_logs(
                                 project_id=project_id,
                                 payload_commit_id=pending_tx_obj.event_data.payloadCommitId,
                                 writer_redis_conn=writer_redis_conn
                             )
+                            # clear from pending set
+                            _ = await writer_redis_conn.zrem(
+                                redis_keys.get_pending_transactions_key(project_id),
+                                pending_tx_entry
+                            )
                             if _:
                                 rest_logger.debug(
-                                    'Cleared processing logs for payload commit ID: %s',
-                                    pending_tx_obj.event_data.payloadCommitId
+                                    'Cleared tx entry for tx %s from pending set at block height %s | project ID %s',
+                                    pending_tx_obj.txHash, _tt_block_height, project_id
                                 )
                             else:
                                 rest_logger.debug(
-                                    'Not sure if processing logs cleared or nonexistent for payload commit ID: %s | '
-                                    'Redis return: %s',
-                                    pending_tx_obj.event_data.payloadCommitId,
-                                    _
+                                    'Not sure if tx entry cleared for tx %s from pending set at block height %s | '
+                                    'Redis return: %s | Project ID : %s',
+                                    pending_tx_obj.txHash, _tt_block_height, _, project_id
                                 )
-
-                            # clear from pending set
-                            await writer_redis_conn.zrem(
-                                pending_tx_entry, redis_keys.get_pending_transactions_key(project_id)
-                            )
                             # send commit ID confirmation callback
                             if cb_url:
                                 await send_commit_callback(

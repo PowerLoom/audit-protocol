@@ -55,17 +55,12 @@ class Settings(BaseModel):
     ipfs_url: str
     rabbitmq: RabbitMQConfig
     snapshot_interval: int
-    dag_table_name: str
     seed: str
-    dag_structure: dict
     audit_contract: str
     contract_call_backend: str
-    app_name: str
     powergate_client_addr: str
     max_ipfs_blocks: int
     max_pending_payload_commits: int
-    block_storage: str
-    payload_storage: str
     container_height: int
     payload_commit_interval: int
     pruning_service_interval: int

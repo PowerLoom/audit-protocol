@@ -135,3 +135,9 @@ class liquidityProcessedData(BaseModel):
     token1TradeVolume_7d: float
 
 
+class DAGBlock(BaseModel):
+    height: int
+    prevCid: str
+    data: dict
+    txHash: str
+    timestamp: int

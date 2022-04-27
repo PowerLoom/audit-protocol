@@ -3,7 +3,7 @@ from maticvigil.EVCore import EVCore
 from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
 from utils import helper_functions
-from data_models import PendingTransaction
+from data_models import PendingTransaction, DAGBlock
 import async_timeout
 import asyncio
 import json
@@ -108,15 +108,8 @@ async def get_dag_block(dag_cid: str):
     return dag.as_json()
 
 
-async def put_dag_block(dag_data: dict):
-    try:
-        dag_json = json.dumps(dag_data)
-    except TypeError as terr:
-        logger.debug(terr)
-        return -1
-    else:
-        dag_json = dag_json.encode('utf-8')
-
+async def put_dag_block(dag_json: str):
+    dag_json = dag_json.encode('utf-8')
     out = await ipfs_client.dag.put(io.BytesIO(dag_json))
     dag_cid = out.as_json()['Cid']['/']
 
@@ -163,23 +156,22 @@ async def create_dag_block(
     )
 
     """ Fill up the dag """
-    dag = settings.dag_structure
-    dag['height'] = tentative_block_height
-    dag['prevCid'] = last_dag_cid
-    dag['data'] = {
-        'cid': payload_cid,
-        'type': 'HOT_IPFS',
-    }
-    dag['txHash'] = tx_hash
-    dag['timestamp'] = timestamp
+    dag = DAGBlock(
+        height=tentative_block_height,
+        prevCid=last_dag_cid,
+        data=dict(cid=payload_cid, type='HOT_IPFS'),
+        txHash=tx_hash,
+        timestamp=timestamp
+    )
 
     logger.debug("DAG created: ")
     logger.debug(dag)
 
     """ Convert dag structure to json and put it on ipfs dag """
-    dag_cid = await put_dag_block(dag)
-    if dag_cid == -1:
-        logger.debug("Failed to put dag block on ipfs.")
+    try:
+        dag_cid = await put_dag_block(dag.json())
+    except Exception as e:
+        logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         return -1
 
     """ Update redis keys """

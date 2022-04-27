@@ -29,18 +29,7 @@
 	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
 	"snapshot_interval": 4,
 	"contract_call_backend": "http://127.0.0.1:8888/writer",
-	"dag_table_name": "DAG_CID",
 	"seed": "THISISRANDOMSEED",
-	"dag_structure" : {
-		"height":-1,
-		"prevCid":"",
-		"data": {
-				"cid":"",
-				"type":""
-			},
-		"txHash":"",
-		"timestamp":""
-	},
 	"REDIS": {
 		"HOST": "127.0.0.1",
 		"PORT": 6379,
@@ -62,8 +51,7 @@
 		"retreivals_single":"retreivals_single",
 		"retreivals_bulk":"retreivals_bulk"
 	},
-    "audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
-	"app_name" : "auditrecords",
+	"audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
 	"powergate_client_addr"	: "127.0.0.1:5002",
 	"max_ipfs_blocks" : 30,
 	"max_pending_payload_commits": 5,
