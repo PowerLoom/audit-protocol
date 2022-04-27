@@ -9,8 +9,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -24,8 +26,10 @@ var ctx = context.Background()
 
 var redisClient *redis.Client
 var ipfsClient *shell.Shell
-var httpClient http.Client
+var vigilHttpClient http.Client
 var settingsObj SettingsObj
+var rmqConnection *Conn
+var exitChan chan bool
 
 //var httpTraceCtx context.Context
 
@@ -53,7 +57,56 @@ func InitLogger() {
 	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
 }
 
+func RegisterSignalHandles() {
+	signalChanel := make(chan os.Signal, 1)
+	signal.Notify(signalChanel,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
+
+	go func() {
+		for {
+			s := <-signalChanel
+			switch s {
+			// kill -SIGHUP XXXX [XXXX - PID for your program]
+			case syscall.SIGHUP:
+				fmt.Println("Signal hang up triggered.")
+
+				// kill -SIGINT XXXX or Ctrl+c  [XXXX - PID for your program]
+			case syscall.SIGINT:
+				fmt.Println("Signal interrupt triggered.")
+				GracefulShutDown()
+
+				// kill -SIGTERM XXXX [XXXX - PID for your program]
+			case syscall.SIGTERM:
+				fmt.Println("Signal terminte triggered.")
+				GracefulShutDown()
+
+				// kill -SIGQUIT XXXX [XXXX - PID for your program]
+			case syscall.SIGQUIT:
+				fmt.Println("Signal quit triggered.")
+				GracefulShutDown()
+
+			default:
+				fmt.Println("Unknown signal.")
+				GracefulShutDown()
+			}
+		}
+	}()
+
+}
+
+func GracefulShutDown() {
+	rmqConnection.StopConsumer()
+	time.Sleep(2 * time.Second)
+	redisClient.Close()
+	exitChan <- true
+}
+
 func main() {
+
+	RegisterSignalHandles()
 	InitLogger()
 	settingsObj = ParseSettings("../settings.json")
 	InitIPFSClient()
@@ -64,12 +117,13 @@ func main() {
 }
 
 func InitRabbitmqConsumer() {
+	var err error
 	//conn, err := GetConn("amqp://powerloom:powerloom@172.31.23.45:5672/")
 	concurrency := 50
 	//rabbitMqURL := "amqp://guest:guest@localhost:5672/"
 	//rabbitMqURL := "amqp://powerloom:powerloom@172.31.23.45:5672/" //Staging
 	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
-	conn, err := GetConn(rabbitMqURL)
+	rmqConnection, err = GetConn(rabbitMqURL)
 	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, concurrency)
 	if err != nil {
 		panic(err)
@@ -80,13 +134,13 @@ func InitRabbitmqConsumer() {
 	rmqQueueName := "audit-protocol-commit-payloads"
 	rmqRoutingKey := "commit-payloads"
 
-	err = conn.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, concurrency)
+	err = rmqConnection.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, concurrency)
 	if err != nil {
 		panic(err)
 	}
 
-	forever := make(chan bool)
-	<-forever
+	exitChan = make(chan bool)
+	<-exitChan
 }
 
 func RabbitmqMsgHandler(d amqp.Delivery) bool {
@@ -293,7 +347,7 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) 
 	//req.Header.Add("X-API-KEY", "baf3b91a-bc68-484d-a377-741f8bf8de43") //TODO: Change to read from settings.
 	log.Debugf("Sending Req with params %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
 		reqParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tokenHash)
-	res, err := httpClient.Do(req)
+	res, err := vigilHttpClient.Do(req)
 	if err != nil {
 		log.Errorf("Failed to send request %+v towards Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
 			req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
@@ -348,7 +402,7 @@ func InitVigilClient() {
 		DisableCompression:  true,
 	}
 
-	httpClient = http.Client{
+	vigilHttpClient = http.Client{
 		Timeout:   10 * time.Second,
 		Transport: &t,
 	}

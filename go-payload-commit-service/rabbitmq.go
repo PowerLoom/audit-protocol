@@ -1,36 +1,37 @@
 package main
 
 import (
-	"os"
-
 	log "github.com/sirupsen/logrus"
 
 	"github.com/streadway/amqp"
 )
 
-// Conn -
 type Conn struct {
 	Channel *amqp.Channel
 }
 
 // GetConn -
-func GetConn(rabbitURL string) (Conn, error) {
+func GetConn(rabbitURL string) (*Conn, error) {
 	conn, err := amqp.Dial(rabbitURL)
 	if err != nil {
-		return Conn{}, err
+		return &Conn{}, err
 	}
 
 	ch, err := conn.Channel()
-	return Conn{
+	return &Conn{
 		Channel: ch,
 	}, err
 }
 
-// Publish -
-func (conn Conn) Publish(routingKey string, data []byte) error {
+func (conn *Conn) StopConsumer() {
+	conn.Channel.Cancel("payloadCommitConsumer", false)
+}
+
+// Publish - TODO: This is not production ready
+func (conn *Conn) Publish(exchange string, routingKey string, data []byte) error {
 	return conn.Channel.Publish(
 		// exchange - yours may be different
-		"events",
+		exchange,
 		routingKey,
 		// mandatory - we don't care if there I no queue
 		false,
@@ -44,7 +45,7 @@ func (conn Conn) Publish(routingKey string, data []byte) error {
 }
 
 // StartConsumer -
-func (conn Conn) StartConsumer(
+func (conn *Conn) StartConsumer(
 	queueName,
 	exchange,
 	routingKey string,
@@ -62,7 +63,6 @@ func (conn Conn) StartConsumer(
 	if err != nil {
 		return err
 	}
-
 	// prefetch 4x as many messages as we can handle at once
 	prefetchCount := concurrency
 	err = conn.Channel.Qos(prefetchCount, 0, false)
@@ -71,20 +71,20 @@ func (conn Conn) StartConsumer(
 	}
 
 	msgs, err := conn.Channel.Consume(
-		queueName, // queue
-		"",        // consumer
-		false,     // auto-ack
-		false,     // exclusive
-		false,     // no-local
-		false,     // no-wait
-		nil,       // args
+		queueName,               // queue
+		"payloadCommitConsumer", // consumer
+		false,                   // auto-ack
+		false,                   // exclusive
+		false,                   // no-local
+		false,                   // no-wait
+		nil,                     // args
 	)
 	if err != nil {
 		return err
 	}
-
 	// create a goroutine for the number of concurrent threads requested
 	for i := 0; i < concurrency; i++ {
+
 		log.Infof("Processing messages on go-routine %v\n", i)
 		go func() {
 			for msg := range msgs {
@@ -103,8 +103,7 @@ func (conn Conn) StartConsumer(
 					}
 				}
 			}
-			log.Fatalf("Rabbit consumer closed - critical Error")
-			os.Exit(1)
+			log.Infof("RabbitMq consumer closed.")
 		}()
 	}
 	return nil
