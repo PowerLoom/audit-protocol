@@ -85,19 +85,25 @@ func (conn Conn) StartConsumer(
 
 	// create a goroutine for the number of concurrent threads requested
 	for i := 0; i < concurrency; i++ {
-		log.Infof("Processing messages on thread %v...\n", i)
+		log.Infof("Processing messages on go-routine %v\n", i)
 		go func() {
 			for msg := range msgs {
 				// if tha handler returns true then ACK, else NACK
 				// the message back into the rabbit queue for
 				// another round of processing
 				if handler(msg) {
-					msg.Ack(false)
+					err := msg.Ack(false)
+					if err != nil {
+						log.Fatalf("CRITICAL! Ack failed for message %+v with error %+v", msg, err)
+					}
 				} else {
-					msg.Nack(false, true)
+					err := msg.Nack(false, true)
+					if err != nil {
+						log.Fatalf("CRITICAL!Ack failed for message %+v with error %+v", msg, err)
+					}
 				}
 			}
-			log.Error("Rabbit consumer closed - critical Error")
+			log.Fatalf("Rabbit consumer closed - critical Error")
 			os.Exit(1)
 		}()
 	}

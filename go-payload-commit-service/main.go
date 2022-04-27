@@ -116,10 +116,11 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 					return false
 				}
 				retryCount++
-				log.Errorf("Failed to add payload to IPFS %v, with err %v..retryCount %d .", d.Body, err, retryCount)
+				log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", d.Body, err, retryCount)
 				continue
 			}
-			log.Debugf("IPFS add Successful. Snapshot CID is %s for payloadCommit %+v", snapshotCid, payloadCommit)
+			log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
+				snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
 			payloadCommit.SnapshotCID = snapshotCid
 			break
 		}
@@ -290,8 +291,8 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("accept", "application/json")
 	//req.Header.Add("X-API-KEY", "baf3b91a-bc68-484d-a377-741f8bf8de43") //TODO: Change to read from settings.
-	log.Debugf("Sending Req %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
-		commonVigilParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tokenHash)
+	log.Debugf("Sending Req with params %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
+		reqParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tokenHash)
 	res, err := httpClient.Do(req)
 	if err != nil {
 		log.Errorf("Failed to send request %+v towards Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
@@ -406,7 +407,7 @@ func InitIPFSClient() {
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000), //TODO: Read from settings.
+		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
 		Transport: &t,
 	}
 	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
