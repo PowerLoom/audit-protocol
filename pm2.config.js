@@ -13,6 +13,7 @@ module.exports = {
       cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV
       },
@@ -23,6 +24,7 @@ module.exports = {
       cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV
       },
@@ -34,6 +36,7 @@ module.exports = {
       cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV,
       }
@@ -44,6 +47,7 @@ module.exports = {
       cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV,
       },
