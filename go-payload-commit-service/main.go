@@ -28,6 +28,7 @@ var redisClient *redis.Client
 var ipfsClient *shell.Shell
 var vigilHttpClient http.Client
 var settingsObj SettingsObj
+var consts ConstsObj
 var rmqConnection *Conn
 var exitChan chan bool
 
@@ -104,16 +105,41 @@ func GracefulShutDown() {
 	exitChan <- true
 }
 
+type SubmittedTransactionStates struct {
+	CallbackPending  int `json:"callbackPending"`
+	CallbackReceived int `json:"callbackReceived"`
+}
+type ConstsObj struct {
+	SubmittedTxnStates SubmittedTransactionStates `json:"submittedTxnStates"`
+}
+
 func main() {
 
 	RegisterSignalHandles()
 	InitLogger()
 	settingsObj = ParseSettings("../settings.json")
+	ParseConsts("../dev_consts.json")
 	InitIPFSClient()
 	InitRedisClient()
 	InitVigilClient()
 	log.Info("Starting RabbitMq Consumer")
 	InitRabbitmqConsumer()
+}
+
+func ParseConsts(constsFile string) {
+	log.Info("Reading Consts File:", constsFile)
+	data, err := os.ReadFile(constsFile)
+	if err != nil {
+		log.Error("Cannot read the file:", err)
+		panic(err)
+	}
+
+	log.Debug("Consts json data is", string(data))
+	err = json.Unmarshal(data, &consts)
+	if err != nil {
+		log.Error("Cannot unmarshal the Consts json ", err)
+		panic(err)
+	}
 }
 
 func InitRabbitmqConsumer() {
@@ -229,7 +255,7 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 	if payload.Resubmitted {
 		pendingtxn.LastTouchedBlock = payload.ResubmissionBlock
 	} else {
-		pendingtxn.LastTouchedBlock = -1
+		pendingtxn.LastTouchedBlock = consts.SubmittedTxnStates.CallbackPending
 	}
 	pendingtxn.TxHash = txHash
 	pendingtxn.EventData.TxHash = txHash
