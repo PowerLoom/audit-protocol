@@ -8,6 +8,17 @@ const CWD = "/home/ubuntu/audit-protocol-private/"
 module.exports = {
   apps : [
     {
+      name   : "audit-protocol-webhooks",
+      script : "python3 ./gunicorn_webhook_launcher.py",
+      cwd : CWD,
+      max_restarts: MAX_RESTART,
+      min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
+      env: {
+        NODE_ENV: NODE_ENV,
+      }
+    },
+    {
       name   : "audit-protocol-backend",
       script : "python3 ./gunicorn_main_launcher.py",
       cwd : CWD,
@@ -20,8 +31,8 @@ module.exports = {
     },
     {
       name   : "audit-protocol-payload-commit",
-      script : "./go-payload-commit-service/payloadCommitService",
-      cwd : CWD,
+      script : "./payloadCommitService",
+      cwd : CWD+"go-payload-commit-service",
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
@@ -31,20 +42,20 @@ module.exports = {
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
     {
-      name   : "audit-protocol-webhooks",
-      script : "python3 ./gunicorn_webhook_launcher.py",
+      name   : "audit-protocol-proto-indexer",
+      script : "python proto_sliding_window_cacher_service.py",
       cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
       env: {
-        NODE_ENV: NODE_ENV,
+        NODE_ENV: NODE_ENV
       }
     },
     {
       name   : "audit-protocol-dag-verifier",
-      script : "./dag_verifier/dagChainVerifier",
-      cwd : CWD,
+      script : "./dagChainVerifier",
+      cwd : CWD+"dag_verifier",
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
