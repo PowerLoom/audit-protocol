@@ -397,7 +397,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 # front of the chain where head=current_head and tail=last_head
                 sliding_window_front = await get_dag_blocks_in_range(
                     project_id_trade_volume, 
-                    cached_trade_volume_data["processed_head_marker_24h"],
+                    cached_trade_volume_data["processed_head_marker_24h"] + 1,
                     head_marker_24h, 
                     writer_redis_conn
                 )
@@ -408,7 +408,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 sliding_window_back = await get_dag_blocks_in_range(
                     project_id_trade_volume, 
                     cached_trade_volume_data["processed_tail_marker_24h"],
-                    tail_marker_24h,
+                    tail_marker_24h - 1,
                     writer_redis_conn
                 )
             
