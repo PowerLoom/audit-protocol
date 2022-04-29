@@ -2,6 +2,7 @@ from utils import dag_utils
 from utils import redis_keys
 from config import settings
 from copy import deepcopy
+from data_models import DAGBlock
 import aioredis
 import json
 import logging.handlers
@@ -222,16 +223,16 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
 
 async def calculate_diff(
         dag_cid: str,
-        dag: dict,
+        dag: DAGBlock,
         project_id: str,
         ipfs_client,
         writer_redis_conn: aioredis.Redis
 ):
     # cache last seen diffs
-    dag_height = dag['height']
-    if dag['prevCid']:
-        payload_cid = dag['data']['cid']
-        prev_dag = await dag_utils.get_dag_block(dag['prevCid'])
+    dag_height = dag.height
+    if dag.prevCid:
+        payload_cid = dag.data['cid']
+        prev_dag = await dag_utils.get_dag_block(dag.prevCid)
         prev_payload_cid = prev_dag['data']['cid']
         if prev_payload_cid != payload_cid:
             diff_map = dict()
@@ -266,13 +267,13 @@ async def calculate_diff(
                         'height': dag_height,
                         'payloadCid': payload_cid,
                         'dagCid': dag_cid,
-                        'txHash': dag['txHash'],
-                        'timestamp': dag['timestamp']
+                        'txHash': dag.txHash,
+                        'timestamp': dag.timestamp
                     },
                     'prev': {
                         'height': prev_dag['height'],
                         'payloadCid': prev_payload_cid,
-                        'dagCid': dag['prevCid']
+                        'dagCid': dag.prevCid
                         # this will be used to fetch the previous block timestamp from the DAG
                     },
                     'diff': diff_map
@@ -280,7 +281,7 @@ async def calculate_diff(
                 diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
                 await writer_redis_conn.zadd(
                     name=diff_snapshots_cache_zset,
-                    mapping={json.dumps(diff_data): int(dag['height'])}
+                    mapping={json.dumps(diff_data): int(dag.height)}
                 )
                 latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
                 await writer_redis_conn.hset(
