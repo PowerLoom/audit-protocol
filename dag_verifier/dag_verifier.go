@@ -19,7 +19,7 @@ type DagVerifier struct {
 	projects                         []string
 	periodicRetrievalInterval        time.Duration
 	lastVerifiedDagBlockHeights      map[string]string
-	lastVerifiedDagBlockHeightsMutex *sync.Mutex
+	lastVerifiedDagBlockHeightsMutex *sync.RWMutex
 }
 
 //TODO: Migrate to env or settings.
@@ -39,7 +39,7 @@ func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddres
 	verifier.periodicRetrievalInterval = 300 * time.Second
 	//Fetch DagChain verification status from redis for all projects.
 	verifier.FetchLastVerificationStatusFromRedis()
-	verifier.lastVerifiedDagBlockHeightsMutex = &sync.Mutex{}
+	verifier.lastVerifiedDagBlockHeightsMutex = &sync.RWMutex{}
 }
 
 func (verifier *DagVerifier) PopulateProjects(pairContractAddresses *[]string) {
@@ -141,7 +141,10 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	// For now only the Chain that is stored in redis is used as a reference to verify.
 	//TODO: Need to validate the original dag chain from what is stored in IPFS. Is this required??
 	var dagChain []DagChainBlock
-	dagChain, err := verifier.GetDagChainCidsFromRedis(projectId, verifier.lastVerifiedDagBlockHeights[projectId])
+	verifier.lastVerifiedDagBlockHeightsMutex.RLock()
+	startScore := verifier.lastVerifiedDagBlockHeights[projectId]
+	verifier.lastVerifiedDagBlockHeightsMutex.RUnlock()
+	dagChain, err := verifier.GetDagChainCidsFromRedis(projectId, startScore)
 	if err != nil {
 		//Raise an alarm in future for this
 		log.Error("Failed to fetch DAG Chain CIDS for projectID from redis:", projectId)
@@ -152,7 +155,7 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 		return nil
 	}
 	//Get ZSet from redis for payloadCids and start verifying if there are any gaps.
-	dagChain, err = verifier.GetPayloadCidsFromRedis(projectId, verifier.lastVerifiedDagBlockHeights[projectId], dagChain)
+	dagChain, err = verifier.GetPayloadCidsFromRedis(projectId, startScore, dagChain)
 	if err != nil {
 		//Raise an alarm in future for this
 		log.Error("Failed to fetch payload CIDS for projectID from redis:", projectId)
