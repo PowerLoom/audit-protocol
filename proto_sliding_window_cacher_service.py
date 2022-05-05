@@ -1,3 +1,4 @@
+from typing import final
 from utils import redis_keys
 from utils.redis_conn import RedisPool
 from utils import helper_functions, dag_utils
@@ -30,12 +31,14 @@ def acquire_bounded_semaphore(fn):
     async def wrapped(*args, **kwargs):
         sem: asyncio.BoundedSemaphore = kwargs['semaphore']
         await sem.acquire()
+        result = None
         try:
-            await fn(*args, **kwargs)
+            result = await fn(*args, **kwargs)
         except:
             pass
         finally:
             sem.release()
+            return result
     return wrapped
 
 
@@ -98,26 +101,19 @@ async def find_tail(head: int, project_id: str, time_period_ts: int, redis_conn:
 async def build_primary_index(
         project_id: str,
         time_period: str,
+        common_minimum_height: int,
         semaphore: asyncio.BoundedSemaphore,
         writer_redis_conn: aioredis.Redis
 ):
     """
         :param time_period: supported time_period strings as of now:  ['24h', '7d']
     """
-    # project_cids_key = redis_keys.get_dag_cids_key(project_id)
-    project_height_key = redis_keys.get_block_height_key(project_id)
-    max_height = await writer_redis_conn.get(project_height_key)
     # find markers
     # NOTE: every periodic run, the head although is always chosen to be the max height
     #  1. maybe don't store it? 2. or, might be useful state information?
     idx_head_key = redis_keys.get_sliding_window_cache_head_marker(project_id, time_period)
     idx_tail_key = redis_keys.get_sliding_window_cache_tail_marker(project_id, time_period)
-    try:
-        max_height = int(max_height)
-    except:
-        sliding_cacher_logger.error('Did not find max block height against project ID: %s', project_id)
-        return
-    head_marker = max_height
+    head_marker = common_minimum_height
     tail_marker = None
     time_period_ts = convert_time_period_str_to_timestamp(time_period)
     markers = [await writer_redis_conn.get(k) for k in [idx_head_key, idx_tail_key]]
@@ -159,6 +155,22 @@ async def build_primary_index(
                 head_marker, tail_ahead, time_period, project_id
             )
 
+@acquire_bounded_semaphore
+async def get_max_height_pair_project(
+    project_id: str,
+    semaphore: asyncio.BoundedSemaphore,
+    writer_redis_conn: aioredis.Redis
+):
+    project_height_key = redis_keys.get_block_height_key(project_id)
+    max_height = await writer_redis_conn.get(project_height_key)
+    try:
+        max_height = int(max_height.decode('utf-8'))
+    except Exception as err:
+        sliding_cacher_logger.error('Can\'t fetch max block height against project ID: %s | error_msg: %s', project_id, err)
+        max_height = -1
+    finally:
+        return max_height
+
 
 async def build_primary_indexes():
     aioredis_pool = RedisPool()
@@ -170,19 +182,45 @@ async def build_primary_indexes():
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
     project_id_to_register_series = dict(zip(registered_project_ids, registered_projects_ts))
+    
+    
     tasks = list()
     semaphore = asyncio.BoundedSemaphore(20)
+    for project_id, ts_arr in project_id_to_register_series.items():
+        fn = get_max_height_pair_project(**{
+            'project_id': project_id,
+            'semaphore': semaphore,
+            'writer_redis_conn': writer_redis_conn
+        })
+        tasks.append(fn)
+    max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # set common min height to max of all projects
+    common_minimum_height = max(max_height_array)
+
+    # now find the lowest common value which is not an error(-1)
+    for pair_max_height in max_height_array:
+        # if there was a error fetching max height then
+        # exit complete process because we need a common minimum height to proceed
+        if pair_max_height == -1:
+            sliding_cacher_logger.error('Not enough blocks against one of projectId')
+            sliding_cacher_logger.error('Exiting head&tail indexing process as we can\'t evaluate common minimum height...')
+            return
+        else:
+            common_minimum_height = pair_max_height if common_minimum_height >= pair_max_height else common_minimum_height
+
+    tasks = list()
     for project_id, ts_arr in project_id_to_register_series.items():
         for time_period in ts_arr:
             fn = build_primary_index(**{
                 'project_id': project_id,
                 'time_period': time_period,
+                'common_minimum_height': common_minimum_height,
                 'semaphore': semaphore,
                 'writer_redis_conn': writer_redis_conn
             })
             tasks.append(fn)
     await asyncio.gather(*tasks)
-
 
 async def periodic_retrieval():
     while True:
