@@ -110,6 +110,20 @@ async def create_dag(
             project_id = event_data['event_data']['projectId']
             tentative_block_height_event_data = int(event_data['event_data']['tentativeBlockHeight'])
 
+            # acquire project ID processing lock
+            lock = aioredisLock(
+                redis=request.app.writer_redis_pool,
+                name=project_id,
+                blocking_timeout=5,  # should not need more than 5 seconds of waiting on acquiring a lock
+                timeout=10  # entire operation should not take more than 10 seconds
+            )
+            ret = await lock.acquire()
+            if not ret:
+                response_status_code = 500
+                response_body = dict()
+                response.status_code = response_status_code
+                return response_body
+
             # Get the max block height(finalized after all error corrections and reorgs) for the project_id
             finalized_block_height_project = await helper_functions.get_block_height(
                 project_id=project_id,
@@ -125,19 +139,7 @@ async def create_dag(
             #     project_id=project_id,
             #     reader_redis_conn=reader_redis_conn
             # )
-            # acquire project ID processing lock
-            lock = aioredisLock(
-                redis=request.app.writer_redis_pool,
-                name=project_id,
-                blocking_timeout=5,  # should not need more than 5 seconds of waiting on acquiring a lock
-                timeout=10  # entire operation should not take more than 10 seconds
-            )
-            ret = await lock.acquire()
-            if not ret:
-                response_status_code = 500
-                response_body = dict()
-                response.status_code = response_status_code
-                return response_body
+
             # retrieve callback URL for project ID
             cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
             if tentative_block_height_event_data <= finalized_block_height_project:
