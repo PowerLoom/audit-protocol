@@ -129,10 +129,16 @@ class liquidityProcessedData(BaseModel):
     block_height_trade_volume: int
     token0Liquidity: float
     token1Liquidity: float
+    token0LiquidityUSD: str
+    token1LiquidityUSD: str
     token0TradeVolume_24h: float
     token1TradeVolume_24h: float
+    token0TradeVolumeUSD_24h: float
+    token1TradeVolumeUSD_24h: float
     token0TradeVolume_7d: float
     token1TradeVolume_7d: float
+    token0TradeVolumeUSD_7d: float
+    token1TradeVolumeUSD_7d: float
 
 
 class DAGBlock(BaseModel):

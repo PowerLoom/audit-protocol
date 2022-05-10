@@ -228,7 +228,10 @@ def calculate_pair_trade_volume(dag_chain):
     token0_volume = sum(map(lambda x: x['data']['payload']['token0TradeVolume'], dag_chain))
     token1_volume = sum(map(lambda x: x['data']['payload']['token1TradeVolume'], dag_chain))
 
-    return [total_volume, fees, token0_volume, token1_volume]
+    token0_volume_usd = sum(map(lambda x: x['data']['payload']['token0TradeVolumeUSD'], dag_chain))
+    token1_volume_usd = sum(map(lambda x: x['data']['payload']['token1TradeVolumeUSD'], dag_chain))
+
+    return [total_volume, fees, token0_volume, token1_volume, token0_volume_usd, token1_volume_usd]
 
 async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contract_address, token0Price, token1Price):
     project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_UNISWAPV2'
@@ -247,10 +250,19 @@ async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contr
     
     token0_liquidity = float(list(liquidity_data['data']['payload']['token0Reserves'].values())[-1])
     token1_liquidity = float(list(liquidity_data['data']['payload']['token1Reserves'].values())[-1])
-    total_liquidity = token0_liquidity * token0Price + token1_liquidity * token1Price
+    token0_liquidity_usd = float(list(liquidity_data['data']['payload']['token0ReservesUSD'].values())[-1])
+    token1_liquidity_usd = float(list(liquidity_data['data']['payload']['token1ReservesUSD'].values())[-1])
+    total_liquidity = token0_liquidity_usd + token1_liquidity_usd
     block_height_total_reserve = int(liquidity_data['data']['payload']['chainHeightRange']['end'])
 
-    return [total_liquidity, token0_liquidity, token1_liquidity, block_height_total_reserve]
+    return [
+        total_liquidity, 
+        token0_liquidity, 
+        token1_liquidity,
+        token0_liquidity_usd,
+        token1_liquidity_usd,
+        block_height_total_reserve
+    ]
 
 def patch_cids_obj(dag_chain, patch_type, patch):
     cid_list = []
@@ -358,6 +370,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         total_volume_24h = 0
         token0_volume_24h = 0
         token1_volume_24h = 0
+        token0_volume_usd_24h = 0
+        token1_volume_usd_24h = 0
         fees_24h = 0
         cids_volume_24h = ''
         
@@ -365,6 +379,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         total_volume_7d = 0
         token0_volume_7d = 0
         token1_volume_7d = 0
+        token0_volume_usd_7d = 0
+        token1_volume_usd_7d = 0
         fees_7d = 0
         cids_volume_7d = ''
 
@@ -379,6 +395,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             total_liquidity, 
             token0_liquidity, 
             token1_liquidity, 
+            token0_liquidity_usd,
+            token1_liquidity_usd,
             block_height_total_reserve
         ] = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address, token0Price, token1Price)
         if not total_liquidity:
@@ -397,10 +415,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 return
 
             # calculate trade volume 24h
-            [total_volume_24h, fees_24h, token0_volume_24h, token1_volume_24h] = calculate_pair_trade_volume(dag_chain_24h)
+            [total_volume_24h, fees_24h, token0_volume_24h, token1_volume_24h, token0_volume_usd_24h, token1_volume_usd_24h] = calculate_pair_trade_volume(dag_chain_24h)
 
             # calculate trade volume 7d
-            [total_volume_7d, fees_7d, token0_volume_7d, token1_volume_7d] = calculate_pair_trade_volume(dag_chain_7d)
+            [total_volume_7d, fees_7d, token0_volume_7d, token1_volume_7d, token0_volume_usd_7d, token1_volume_usd_7d] = calculate_pair_trade_volume(dag_chain_7d)
 
             # parse and store dag chain cids on IPFS
             volume_24h_cids = patch_cids_obj(dag_chain_24h, 'parse_cids', [])
@@ -431,6 +449,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             cids_volume_7d = volume_cids[1]
             block_height_trade_volume = int(dag_chain_24h[0]['data']['payload']['chainHeightRange']['end'])
         else:
+            logger.debug(f"Applying sliding window for trade volume on pair: {pair_contract_address}")
             
             sliding_window_front_24h = []
             sliding_window_back_24h = []
@@ -503,11 +522,13 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             
 
             if sliding_window_back_24h:
-                [back_total_volume, back_fees, back_token0_volume, back_token1_volume] = calculate_pair_trade_volume(sliding_window_back_24h)
+                [back_total_volume, back_fees, back_token0_volume, back_token1_volume, back_token0_volume_usd, back_token1_volume_usd] = calculate_pair_trade_volume(sliding_window_back_24h)
                 cached_trade_volume_data["aggregated_volume_24h"] -= back_total_volume
                 cached_trade_volume_data["aggregated_fees_24h"] -= back_fees
                 cached_trade_volume_data["aggregated_token0_volume_24h"] -= back_token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_24h"] -= back_token1_volume
+                cached_trade_volume_data["aggregated_token0_volume_usd_24h"] -= back_token0_volume_usd
+                cached_trade_volume_data["aggregated_token1_volume_usd_24h"] -= back_token1_volume_usd
                 
                 # Patch 24h cids for back of the chain
                 sliding_window_back_24h_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in sliding_window_back_24h]
@@ -517,11 +538,13 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                     trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"] += sliding_window_back_24h_cids
 
             if sliding_window_front_24h:
-                [front_total_volume, front_fees, front_token0_volume, front_token1_volume] = calculate_pair_trade_volume(sliding_window_front_24h)
+                [front_total_volume, front_fees, front_token0_volume, front_token1_volume, front_token0_volume_usd, front_token1_volume_usd] = calculate_pair_trade_volume(sliding_window_front_24h)
                 cached_trade_volume_data["aggregated_volume_24h"] += front_total_volume
                 cached_trade_volume_data["aggregated_fees_24h"] += front_fees
                 cached_trade_volume_data["aggregated_token0_volume_24h"] += front_token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_24h"] += front_token1_volume
+                cached_trade_volume_data["aggregated_token0_volume_usd_24h"] += front_token0_volume_usd
+                cached_trade_volume_data["aggregated_token1_volume_usd_24h"] += front_token1_volume_usd
                 # block height of trade volume
                 block_height_trade_volume = int(sliding_window_front_24h[0]['data']['payload']['chainHeightRange']['end'])
 
@@ -538,10 +561,12 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 block_height_trade_volume = cached_trade_volume_data["processed_block_height_trade_volume"]
 
             if sliding_window_back_7d:
-                [back_total_volume, back_fees, back_token0_volume, back_token1_volume] = calculate_pair_trade_volume(sliding_window_back_7d)
+                [back_total_volume, back_fees, back_token0_volume, back_token1_volume, back_token0_volume_usd, back_token1_volume_usd] = calculate_pair_trade_volume(sliding_window_back_7d)
                 cached_trade_volume_data["aggregated_volume_7d"] -= back_total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] -= back_token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_7d"] -= back_token1_volume
+                cached_trade_volume_data["aggregated_token0_volume_usd_7d"] -= back_token0_volume_usd
+                cached_trade_volume_data["aggregated_token1_volume_usd_7d"] -= back_token1_volume_usd
 
                 # Patch 7d cids for back of the chain
                 sliding_window_back_7d_cids = [{ 'dagCid': obj_7d['dagCid'], 'payloadCid': obj_7d['data']['cid']} for obj_7d in sliding_window_back_7d]
@@ -552,10 +577,12 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
 
             
             if sliding_window_front_7d:
-                [front_total_volume, front_fees, front_token0_volume, front_token1_volume] = calculate_pair_trade_volume(sliding_window_front_7d)
+                [front_total_volume, front_fees, front_token0_volume, front_token1_volume, front_token0_volume_usd, front_token1_volume_usd] = calculate_pair_trade_volume(sliding_window_front_7d)
                 cached_trade_volume_data["aggregated_volume_7d"] += front_total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] += front_token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_7d"] += front_token1_volume
+                cached_trade_volume_data["aggregated_token0_volume_usd_7d"] += front_token0_volume_usd
+                cached_trade_volume_data["aggregated_token1_volume_usd_7d"] += front_token1_volume_usd
 
                 # Patch 7d cids for front of the chain
                 sliding_window_front_7d_cids = [{ 'dagCid': obj_7d['dagCid'], 'payloadCid': obj_7d['data']['cid']} for obj_7d in sliding_window_front_7d]
@@ -597,6 +624,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             token1_volume_24h = cached_trade_volume_data['aggregated_token1_volume_24h']
             token0_volume_7d = cached_trade_volume_data['aggregated_token0_volume_7d']
             token1_volume_7d = cached_trade_volume_data['aggregated_token1_volume_7d']
+            token0_volume_usd_24h = cached_trade_volume_data['aggregated_token0_volume_usd_24h']
+            token1_volume_usd_24h = cached_trade_volume_data['aggregated_token1_volume_usd_24h']
+            token0_volume_usd_7d = cached_trade_volume_data['aggregated_token0_volume_usd_7d']
+            token1_volume_usd_7d = cached_trade_volume_data['aggregated_token1_volume_usd_7d']
         
         sliding_window_data = {
             "processed_tail_marker_24h": tail_marker_24h,
@@ -609,9 +640,13 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             "aggregated_fees_24h": fees_24h,
             "aggregated_token0_volume_24h": token0_volume_24h,
             "aggregated_token1_volume_24h": token1_volume_24h,
+            "aggregated_token0_volume_usd_24h": token0_volume_usd_24h,
+            "aggregated_token1_volume_usd_24h": token1_volume_usd_24h,
             "aggregated_volume_7d": total_volume_7d,
             "aggregated_token0_volume_7d": token0_volume_7d,
             "aggregated_token1_volume_7d": token1_volume_7d,
+            "aggregated_token0_volume_usd_7d": token0_volume_usd_7d,
+            "aggregated_token1_volume_usd_7d": token1_volume_usd_7d,
             "processed_block_height_total_reserve": block_height_total_reserve,
             "processed_block_height_trade_volume": block_height_trade_volume
         }
@@ -628,10 +663,16 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             block_height_trade_volume=block_height_trade_volume,
             token0Liquidity=token0_liquidity,
             token1Liquidity=token1_liquidity,
+            token0LiquidityUSD=f"{abs(token0_liquidity_usd)}",
+            token1LiquidityUSD=f"{abs(token1_liquidity_usd)}",
             token0TradeVolume_24h=token0_volume_24h,
             token1TradeVolume_24h=token1_volume_24h,
+            token0TradeVolumeUSD_24h=token0_volume_usd_24h,
+            token1TradeVolumeUSD_24h=token1_volume_usd_24h,
             token0TradeVolume_7d=token0_volume_7d,
-            token1TradeVolume_7d=token1_volume_7d
+            token1TradeVolume_7d=token1_volume_7d,
+            token0TradeVolumeUSD_7d=token0_volume_usd_7d,
+            token1TradeVolumeUSD_7d=token1_volume_usd_7d
         )
         
         await store_pair_daily_stats(writer_redis_conn, pair_contract_address, prepared_snapshot)
@@ -685,5 +726,5 @@ if __name__ == '__main__':
     print("", "")
     # loop = asyncio.get_event_loop()
     # data = loop.run_until_complete(v2_pairs_data())
-    # print("", "")
+    # print("## ##", "")
     # print(data)
