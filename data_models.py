@@ -129,8 +129,8 @@ class liquidityProcessedData(BaseModel):
     block_height_trade_volume: int
     token0Liquidity: float
     token1Liquidity: float
-    token0LiquidityUSD: str
-    token1LiquidityUSD: str
+    token0LiquidityUSD: float
+    token1LiquidityUSD: float
     token0TradeVolume_24h: float
     token1TradeVolume_24h: float
     token0TradeVolumeUSD_24h: float
