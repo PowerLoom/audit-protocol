@@ -154,7 +154,7 @@ async def check_containers(
         to_height,
         project_id: str,
         reader_redis_conn: aioredis.Redis,
-        each_height_spans: dict = dict()
+        each_height_spans: dict
 
 ):
     """
@@ -267,6 +267,7 @@ async def fetch_blocks(
             project_id=project_id,
             from_height=from_height,
             to_height=to_height,
+            reader_redis_conn=reader_redis_conn
     )
 
     current_height = to_height
