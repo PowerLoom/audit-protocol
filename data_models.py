@@ -125,8 +125,7 @@ class liquidityProcessedData(BaseModel):
     cid_volume_24h: str
     cid_volume_7d: str
     fees_24h: str
-    block_height_total_reserve: int
-    block_height_trade_volume: int
+    block_height: int
     token0Liquidity: float
     token1Liquidity: float
     token0LiquidityUSD: float
