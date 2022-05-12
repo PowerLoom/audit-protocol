@@ -1,0 +1,72 @@
+@startuml "Data preparation service and aggregated snapshots list flow"
+autonumber
+
+participant "Consumer(UI/3rd Party)" as client
+participant "core-api" as api
+participant "data-preparation" as dp
+database redis 
+participant "audit-protocol" as ap
+
+group init 
+dp -> dp : Read settings.json and connect to redis and audit-protocol using connection pool.
+
+note over dp: Parse all contracts \n(static/cached_addresses.json) to load into project list (projects). 
+
+end
+
+group periodically(60 secs) run and do the following
+
+    loop over projects 
+        dp <-> redis : Fetch lastest aggregated snapshot from \n "uniswap:pairContract:UNISWAPV2:<contractAddress>:contractV2PairCachedData"
+        note over dp: Get current BlockHeight of the snapshot and compare with prevBlockHeight.
+
+        alt if BlockHeight moved ahead 
+            note over dp: Aggregate data for all projects to form a single snapshot. 
+        else
+            note over dp: sleep for 60 secs.
+        end 
+    end 
+
+    note over dp : Aggregated snapshot data to be committed to Audit-protocol.
+    dp -> ap : commit-payload { payload:{}, projectId: \n"uniswap_v2_pairs_aggregated_snapshots_<Namespace>" } to audit-protocol 
+    ap -> dp : {CommitId, tentativeBlockHeight}
+    dp -> ap : Get IPFS Payload CID (By querying Payload at tentativeBlockHeight for this new project until we get result.)
+    dp <-> redis : Store PayloadCID under key \n  (uniswap::<namespace>::v2_pairs::snapshots Zset against BlockHeight \n (not of this new project, but as per original snapshot) as score)
+    dp <-> redis: Store payload against key \n uniswap::<namespace>::v2_pairs::snapshot::<BlockHeight> with a TTL value \n https://redis.io/commands/expire/)
+    note over dp: Prune the Zset if more than n snapshots are crossed (n is configurable).
+    note over dp: sleep for 60 secs
+end
+
+
+group API(v2-pairs/snapshots)
+    client -> api : Request /v2-pairs/snapshots
+    api <-> redis : Fetch snapshots Zset for project (last n snapshots)
+    api -> client : List of blockHeights at which snapshots are available.\n  {"snapshots":[145567, 145577,..]}
+end
+
+group API(/v2-pairs/<blockheight>) with projectId as optional argument
+    client -> api : Request /v2-pairs/<blockHeight>
+    api <-> redis: Check reqBlockHeight is present in redis Zset (uniswap::<namespace>::v2_pairs::snapshots)
+    api <-> redis : Check if reqBlockHeight payload is present.
+    alt  #orange if reqBlockHeight is not present in cache
+        note over api: Calculate diff between currentBlockHeight and reqBlockHeight from zSet.
+        api -> ap: Get latestDAGHeight of uniswap_v2_pairs_aggregated_snapshots_<Namespace> 
+        note over api: Roughly estimate where the blockHeight is going to be based on epochsize, blockHeightDiff and DAGHeight.
+        api -> ap: Get Payloads between fromBlock and toBlock for uniswap_v2_pairs_aggregated_snapshots_<Namespace> project.
+        api <-> redis: Create payload Key in redis at blockHeight with expiry.
+    else 
+        api <-> redis : Fetch payload at uniswap::v2_pairs::<namespace>::snapshot::<blockHeight>
+        api <-> redis: Update expiry for payload Key.
+    end 
+
+    alt if no snapshot found at reqBlockHeight
+        api -> Client : 404. 
+    end 
+
+    alt if projectId
+         note over api: Filter snapshot for specific projectId and return only that part.
+         api -> client : Project specific List of blockHeights at which snapshots are available.\n  {projectID1:{"payload":{}}}
+    else 
+        api -> client : Project specific List of blockHeights at which snapshots are available.\n  {projectID1:{"payload":{}},projectID2:...}
+    end 
+end
