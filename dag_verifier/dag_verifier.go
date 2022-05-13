@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -158,7 +159,7 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	dagChain, err = verifier.GetPayloadCidsFromRedis(projectId, startScore, dagChain)
 	if err != nil {
 		//Raise an alarm in future for this
-		log.Error("Failed to fetch payload CIDS for projectID from redis:", projectId)
+		log.Errorf("Failed to fetch payload CIDS for projectID %s from redis with error %s.", projectId, err)
 		return err
 	}
 
@@ -274,10 +275,15 @@ func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScor
 	//dagPayloadsInfo = make([]DagPayload, len(res))
 	log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
 	for i := range res {
-		if dagChain[i].Height != int64(res[i].Score) {
-			return dagChain, fmt.Errorf("CRITICAL:Inconsistency between DAG Chain and Payloads stored in redis for Project:%s", projectId)
+		if len(dagChain) > i {
+			if dagChain[i].Height != int64(res[i].Score) {
+				return dagChain, fmt.Errorf("CRITICAL:Inconsistency between DAG Chain and Payloads stored in redis for Project:%s", projectId)
+			}
+			dagChain[i].Payload.PayloadCid = fmt.Sprintf("%v", res[i].Member)
+		} else {
+			log.Debugf("DAGChain for project %s is little behind payloadCids chainHeight.", projectId, len(dagChain))
+			return nil, errors.New("chain construction seems to be in progress. Have to retry next time")
 		}
-		dagChain[i].Payload.PayloadCid = fmt.Sprintf("%v", res[i].Member)
 	}
 	return dagChain, nil
 }
