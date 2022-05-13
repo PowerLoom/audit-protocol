@@ -123,5 +123,4 @@ func ParseSettings(settingsFile string) SettingsObj {
 		panic(err)
 	}
 	return settingsObj
-	//log.Info("Settings for namespace", settingsObj.Development.Namespace)
 }

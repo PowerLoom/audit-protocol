@@ -10,7 +10,6 @@ type Conn struct {
 	Channel *amqp.Channel
 }
 
-// GetConn -
 func GetConn(rabbitURL string) (*Conn, error) {
 	conn, err := amqp.Dial(rabbitURL)
 	if err != nil {
@@ -44,7 +43,6 @@ func (conn *Conn) Publish(exchange string, routingKey string, data []byte) error
 		})
 }
 
-// StartConsumer -
 func (conn *Conn) StartConsumer(
 	queueName,
 	exchange,
@@ -63,7 +61,7 @@ func (conn *Conn) StartConsumer(
 	if err != nil {
 		return err
 	}
-	// prefetch 4x as many messages as we can handle at once
+	// prefetch as many messages as we spawn go-routines
 	prefetchCount := concurrency
 	err = conn.Channel.Qos(prefetchCount, 0, false)
 	if err != nil {
@@ -82,14 +80,14 @@ func (conn *Conn) StartConsumer(
 	if err != nil {
 		return err
 	}
-	// create a goroutine for the number of concurrent threads requested
+	// create goroutines for the concurrency requested
 	for i := 0; i < concurrency; i++ {
 
 		log.Infof("Processing messages on go-routine %v\n", i)
 		go func() {
 			for msg := range msgs {
-				// if tha handler returns true then ACK, else NACK
-				// the message back into the rabbit queue for
+				// if the handler returns true then ACK, else NACK
+				// the message back into the rabbitmq for
 				// another round of processing
 				if handler(msg) {
 					err := msg.Ack(false)

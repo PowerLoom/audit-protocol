@@ -32,14 +32,35 @@ var consts ConstsObj
 var rmqConnection *Conn
 var exitChan chan bool
 
-//var httpTraceCtx context.Context
-
 var REDIS_KEY_PAYLOAD_CIDS = "projectID:%s:payloadCids"
 var REDIS_KEY_PENDING_TXNS = "projectID:%s:pendingTransactions"
 
 const MAX_RETRY_COUNT = 3
 
 var commonVigilParams CommonVigilRequestParams
+
+type retryType int64
+
+const (
+	NO_RETRY_SUCCESS retryType = iota
+	RETRY_IMMEDIATE            //TOD be used in timeout scenarios or non server returned error scenarios.
+	RETRY_WITH_DELAY           //TO be used when immediate error is returned so that server is not overloaded.
+	NO_RETRY_FAILURE           //This is to be used for unexpected conditions which are not recoverable and hence no retry
+)
+
+func (r retryType) String() string {
+	switch r {
+	case NO_RETRY_SUCCESS:
+		return "NO Retry"
+	case RETRY_IMMEDIATE:
+		return "Retry Immediately"
+	case RETRY_WITH_DELAY:
+		return "Retry with a delay"
+	case NO_RETRY_FAILURE:
+		return "Non recoverable error, hence not retrying."
+	}
+	return "unknown"
+}
 
 func InitLogger() {
 	if len(os.Args) < 2 {
@@ -72,25 +93,25 @@ func RegisterSignalHandles() {
 			switch s {
 			// kill -SIGHUP XXXX [XXXX - PID for your program]
 			case syscall.SIGHUP:
-				fmt.Println("Signal hang up triggered.")
+				log.Info("Signal hang up triggered.")
 
 				// kill -SIGINT XXXX or Ctrl+c  [XXXX - PID for your program]
 			case syscall.SIGINT:
-				fmt.Println("Signal interrupt triggered.")
+				log.Info("Signal interrupt triggered.")
 				GracefulShutDown()
 
 				// kill -SIGTERM XXXX [XXXX - PID for your program]
 			case syscall.SIGTERM:
-				fmt.Println("Signal terminte triggered.")
+				log.Info("Signal terminte triggered.")
 				GracefulShutDown()
 
 				// kill -SIGQUIT XXXX [XXXX - PID for your program]
 			case syscall.SIGQUIT:
-				fmt.Println("Signal quit triggered.")
+				log.Info("Signal quit triggered.")
 				GracefulShutDown()
 
 			default:
-				fmt.Println("Unknown signal.")
+				log.Info("Unknown signal.", s)
 				GracefulShutDown()
 			}
 		}
@@ -144,10 +165,7 @@ func ParseConsts(constsFile string) {
 
 func InitRabbitmqConsumer() {
 	var err error
-	//conn, err := GetConn("amqp://powerloom:powerloom@172.31.23.45:5672/")
 	concurrency := 50
-	//rabbitMqURL := "amqp://guest:guest@localhost:5672/"
-	//rabbitMqURL := "amqp://powerloom:powerloom@172.31.23.45:5672/" //Staging
 	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
 	rmqConnection, err = GetConn(rabbitMqURL)
 	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, concurrency)
@@ -212,11 +230,12 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq.",
 			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 	}
-	err = PrepareAndSubmitTxnToChain(&payloadCommit)
-	if err != nil {
+	retryType := PrepareAndSubmitTxnToChain(&payloadCommit)
+	if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
 		return false
+	} else if retryType == NO_RETRY_SUCCESS {
+		log.Trace("Submitted txn to chain for %+v", payloadCommit)
 	}
-	log.Trace("Submitted txn to chain for %+v", payloadCommit)
 	return true
 }
 
@@ -289,7 +308,7 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 	return nil
 }
 
-func PrepareAndSubmitTxnToChain(payload *PayloadCommit) error {
+func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
 	var snapshot Snapshot
 	var tokenHash string
 	snapshot.Type = "HOT_IPFS"
@@ -298,7 +317,7 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) error {
 	if err != nil {
 		log.Errorf("CRITICAL. Failed to Json-Marshall snapshot %v for project %s with commitID %s , with err %v",
 			snapshot, payload.ProjectId, payload.CommitId, err)
-		return err
+		return NO_RETRY_FAILURE
 	}
 	log.Trace("SnapshotBytes: ", snapshotBytes)
 	if payload.ApiKeyHash == "" {
@@ -316,13 +335,20 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) error {
 	log.Tracef("Token hash generated for payload %+v for project %s with commitID %s  is : ",
 		*payload, payload.ProjectId, payload.CommitId, tokenHash)
 	var txHash string
+	var retryType retryType
 	for retryCount := 0; ; {
-		txHash, err = SubmitTxnToChain(payload, tokenHash)
+		txHash, retryType, err = SubmitTxnToChain(payload, tokenHash)
 		if err != nil {
+			if retryType == NO_RETRY_FAILURE {
+				return retryType
+			} else if retryType == RETRY_WITH_DELAY {
+				time.Sleep(5 * time.Second)
+			}
 			if retryCount == MAX_RETRY_COUNT {
 				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s and snapshotCID %s to Prost-Vigil with err %+v after max retries of %d",
 					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
-				return err
+				time.Sleep(5 * time.Second)
+				return RETRY_IMMEDIATE
 			}
 			retryCount++
 			log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Prost-Vigil with err %+v ..retryCount %d",
@@ -334,15 +360,12 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) error {
 	/*Add to redis pendingTransactions*/
 	err = AddToPendingTxnsInRedis(payload, tokenHash, txHash)
 	if err != nil {
-		return err
+		return RETRY_IMMEDIATE
 	}
-	return nil
+	return NO_RETRY_SUCCESS
 }
 
-func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) {
-	//log.Debugf("Sim: Submitted txn %s for payload %+v to ProstVigil-GW.", tokenHash, payload)
-	// Directly calling ProstVigil LB via http://172.31.24.131:8888
-	//reqURL = "http://172.31.24.131:8888/writer"
+func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, retry retryType, err error) {
 	reqURL := settingsObj.ContractCallBackend
 	var reqParams AuditContractCommitParams
 	reqParams.ApiKeyHash = tokenHash
@@ -350,34 +373,32 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) 
 	reqParams.ProjectId = payload.ProjectId
 	reqParams.SnapshotCid = payload.SnapshotCID
 	reqParams.TentativeBlockHeight = payload.TentativeBlockHeight
-	var err error
 	commonVigilParams.Params, err = json.Marshal(reqParams)
 	if err != nil {
-		log.Errorf("Failed to marshal AuditContractCommitParams %+v towards Vigil GW with error %+v", reqParams, err)
-		return "", err
+		log.Fatalf("Failed to marshal AuditContractCommitParams %+v towards Vigil GW with error %+v", reqParams, err)
+		return "", NO_RETRY_FAILURE, err
 	}
 	body, err := json.Marshal(commonVigilParams)
 	if err != nil {
-		log.Errorf("Failed to marshal request %+v towards Vigil GW with error %+v", commonVigilParams, err)
-		return "", err
+		log.Fatalf("Failed to marshal request %+v towards Vigil GW with error %+v", commonVigilParams, err)
+		return "", NO_RETRY_FAILURE, err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
 	if err != nil {
-		log.Errorf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
+		log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
 			reqURL, commonVigilParams, err)
-		return "", err
+		return "", NO_RETRY_FAILURE, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("accept", "application/json")
-	//req.Header.Add("X-API-KEY", "baf3b91a-bc68-484d-a377-741f8bf8de43") //TODO: Change to read from settings.
 	log.Debugf("Sending Req with params %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
 		reqParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tokenHash)
 	res, err := vigilHttpClient.Do(req)
 	if err != nil {
 		log.Errorf("Failed to send request %+v towards Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
 			req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-		return "", err
+		return "", RETRY_IMMEDIATE, err
 	}
 	defer res.Body.Close()
 	var resp AuditContractCommitResp
@@ -385,38 +406,34 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (string, error) 
 	if err != nil {
 		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from Prost-Vigil with error %+v",
 			payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-		return "", err
+		return "", RETRY_IMMEDIATE, err
 	}
 	if res.StatusCode == http.StatusOK {
 		err = json.Unmarshal(respBody, &resp)
 		if err != nil {
 			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards Prost-Vigil with error %+v",
 				respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-			return "", err
+			return "", RETRY_WITH_DELAY, err
 		}
 		if resp.Success {
 			log.Debugf("Received Success response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s.",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
-			return resp.Data[0].TxHash, nil
+			return resp.Data[0].TxHash, NO_RETRY_SUCCESS, nil
 		} else {
 			var tmpRsp map[string]string
 			_ = json.Unmarshal(respBody, &tmpRsp)
 			log.Errorf("Received 200 OK with Error response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s resp bytes %+v ",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tmpRsp)
-			return "", errors.New("Received Error response from Prost-Vigil : " + fmt.Sprintf("%+v", resp))
+			return "", RETRY_WITH_DELAY, errors.New("Received Error response from Prost-Vigil : " + fmt.Sprintf("%+v", resp))
 		}
 	} else {
 		log.Errorf("Received Error response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s with statusCode %d and status : %s ",
 			resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, res.StatusCode, res.Status)
-		return "", errors.New("Received Error response from Prost-Vigil" + fmt.Sprint(respBody))
+		return "", RETRY_WITH_DELAY, errors.New("Received Error response from Prost-Vigil" + fmt.Sprint(respBody))
 	}
 }
 
 func InitVigilClient() {
-	/*kl, err := os.OpenFile("ssl-keylog.txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		log.Error("Could not open keylog file due to error ", err)
-	}*/
 	//TODO: Move these to settings
 
 	t := http.Transport{
@@ -433,13 +450,6 @@ func InitVigilClient() {
 		Transport: &t,
 	}
 
-	/* 	clientTrace := &httptrace.ClientTrace{
-	   		GotConn: func(info httptrace.GotConnInfo) { log.Printf("conn was reused: %t", info.Reused) },
-	   	}
-	   	httpTraceCtx = httptrace.WithClientTrace(context.Background(), clientTrace)
-	*/
-	//commonVigilParams.Contract = "0xc8fe622716e7e2ab64a9c9595dd3b8df77477a9d"
-	//commonVigilParams.Contract = "0xcd4fb4b7bb24cc0f623f6c5e9fd9b115360c2d66" //Staging PV
 	commonVigilParams.Contract = strings.ToLower(settingsObj.AuditContract)
 	commonVigilParams.Method = "commitRecord"
 	commonVigilParams.NetworkId = 137
@@ -448,10 +458,6 @@ func InitVigilClient() {
 }
 
 func InitRedisClient() {
-	//redisURL := "powerloom-main1.op9vva.ng.0001.use2.cache.amazonaws.com" + ":" + strconv.Itoa(6379)
-	//redisDb := 13
-	//redisURL = "localhost:6379"
-	//redisDb = 0
 	redisURL := fmt.Sprintf("%s:%d", settingsObj.Redis.Host, settingsObj.Redis.Port)
 	redisDb := settingsObj.Redis.Db
 	log.Infof("Connecting to redis DB %d at %s", redisDb, redisURL)
@@ -468,11 +474,8 @@ func InitRedisClient() {
 }
 
 func InitIPFSClient() {
-	//url := "/ip4/localhost/tcp/5001"
-	//url = "/ip4/172.31.16.206/tcp/5001" //Old IPFS 0.7
 	url := settingsObj.IpfsURL
-	//url = "/ip4/172.31.31.46/tcp/5001" // new 0.13 IPFS
-	// Convert the URL from /ip4/172.31.16.206/tcp/5001 to IP:Port format.
+	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
 
 	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
