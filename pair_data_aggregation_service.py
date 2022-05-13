@@ -195,27 +195,8 @@ async def get_pair_metadata_and_tokens_price(writer_redis_conn: aioredis.Redis, 
         loop=asyncio.get_event_loop(),
         writer_redis_conn=writer_redis_conn
     )
-
-    # get tokens prices:
-    token0Price = await writer_redis_conn.get(
-        redis_keys.get_uniswap_pair_cached_token_price(f"{pair_token_metadata['token0']['symbol']}-USDT"))
-    if (token0Price):
-        token0Price = float(token0Price.decode('utf-8'))
-    else:
-        token0Price = 0
-        logger.error(
-            f"Error: can't find {pair_token_metadata['token0']['symbol']}-USDT Price and setting it 0 | {pair_token_metadata['token0']['address']}")
-
-    token1Price = await writer_redis_conn.get(
-        redis_keys.get_uniswap_pair_cached_token_price(f"{pair_token_metadata['token1']['symbol']}-USDT"))
-    if (token1Price):
-        token1Price = float(token1Price.decode('utf-8'))
-    else:
-        token1Price = 0
-        logger.error(
-            f"Error: can't find {pair_token_metadata['token1']['symbol']}-USDT Price and setting it 0 | {pair_token_metadata['token1']['address']}")        
     
-    return [pair_token_metadata, token0Price, token1Price]
+    return pair_token_metadata
 
 def calculate_pair_trade_volume(dag_chain):
     # calculate / sum trade volume
@@ -233,7 +214,7 @@ def calculate_pair_trade_volume(dag_chain):
 
     return [total_volume, fees, token0_volume, token1_volume, token0_volume_usd, token1_volume_usd]
 
-async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contract_address, token0Price, token1Price):
+async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contract_address):
     project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_UNISWAPV2'
 
     # liquidty data
@@ -385,11 +366,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         cids_volume_7d = ''
 
 
-        [
-            pair_token_metadata, 
-            token0Price, 
-            token1Price
-        ] = await get_pair_metadata_and_tokens_price(writer_redis_conn, pair_contract_address)
+        pair_token_metadata = await get_pair_metadata_and_tokens_price(writer_redis_conn, pair_contract_address)
 
         [
             total_liquidity, 
@@ -398,7 +375,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             token0_liquidity_usd,
             token1_liquidity_usd,
             block_height_total_reserve
-        ] = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address, token0Price, token1Price)
+        ] = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address)
         if not total_liquidity:
             logger.error(f"Avoiding pair data calculation as liquidity data is not available - projectId:{project_id_token_reserve}")
             return
