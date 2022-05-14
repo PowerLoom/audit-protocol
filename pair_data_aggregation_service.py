@@ -1,9 +1,8 @@
+from typing import Union, Tuple, Iterable
+from web3 import Web3
 from functools import partial
 from time import time
-
-import aioredis
-from web3 import Web3
-
+from httpx import AsyncClient, Timeout, Limits
 from config import settings
 from data_models import liquidityProcessedData
 from utils import helper_functions
@@ -11,6 +10,8 @@ from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
 from utils.redis_conn import RedisPool
 from utils.retrieval_utils import retrieve_block_data
+import cardinality
+import aioredis
 import asyncio
 import json
 import logging.config
@@ -77,6 +78,7 @@ def read_json_file(file_path: str):
         json_data = json.loads(f_.read())
     return json_data
     
+
 pair_contract_abi = read_json_file(f"abis/UniswapV2Pair.json")
 erc20_abi = read_json_file('abis/IERC20.json')
 
@@ -245,6 +247,7 @@ async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contr
         block_height_total_reserve
     ]
 
+
 def patch_cids_obj(dag_chain, patch_type, patch):
     cid_list = []
     if patch_type == "parse_cids":
@@ -284,6 +287,7 @@ async def store_recent_transactions_logs(writer_redis_conn: aioredis.Redis, dag_
     await writer_redis_conn.set(redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"), json.dumps(recent_logs))
     return recent_logs
 
+
 async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contract_address, snapshot):
     now = int(time())
     await writer_redis_conn.zadd(
@@ -295,7 +299,6 @@ async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contrac
         min=float('-inf'),
         max=float(now - 60 * 60 * 25)
     )
-
 
 
 async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Redis, pair_contract_address):
@@ -659,14 +662,11 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             redis_keys.get_uniswap_pair_contract_V2_pair_data(f"{Web3.toChecksumAddress(pair_contract_address)}"): prepared_snapshot.json(),
             redis_keys.get_uniswap_pair_cache_sliding_window_data(f"{Web3.toChecksumAddress(pair_contract_address)}"): json.dumps(sliding_window_data)
         })
-
+        logger.debug(f"Calculated v2 pair data for contract: {pair_contract_address} | symbol:{pair_token_metadata['token0']['symbol']}-{pair_token_metadata['token1']['symbol']}")
+        return prepared_snapshot
     except Exception as e:
         logger.error('Error in process_pairs_trade_volume_and_reserves: %s', e, exc_info=True)
-        raise(e)
-
-    logger.debug(f"Calculated v2 pair data for contract: {pair_contract_address} | symbol:{pair_token_metadata['token0']['symbol']}-{pair_token_metadata['token1']['symbol']}")
-    return json.loads(prepared_snapshot.json())
-
+        raise
 
 
 async def v2_pairs_data():
@@ -682,6 +682,7 @@ async def v2_pairs_data():
 
         aioredis_pool = RedisPool()
         await aioredis_pool.populate()
+        redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
 
         logger.debug("Create threads to process trade volume data")
         process_data_list = []
@@ -689,7 +690,128 @@ async def v2_pairs_data():
             t = process_pairs_trade_volume_and_reserves(aioredis_pool.writer_redis_pool, pair_contract_address)
             process_data_list.append(t)
 
-        final_results = await asyncio.gather(*process_data_list, return_exceptions=True)
+        final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(*process_data_list, return_exceptions=True)
+        common_blockheight_reached = False
+        collected_heights = list(map(lambda x: x.block_height, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
+        # logger.debug('Final results from running v2 pairs coroutines: %s', final_results)
+        # logger.debug('Filtered heights from running v2 pairs coroutines: %s', collected_heights)
+        if cardinality.count(final_results) != cardinality.count(collected_heights):
+            logger.error(
+                         'In V2 pairs overall summary snapshot creation: '
+                         'No common block height found among all summarized contracts. Some results returned exception.'
+                         'Block heights found: %s', list(collected_heights)
+            )
+            common_blockheight_reached = False
+        else:
+            if all(collected_heights[0] == y for y in collected_heights):
+                common_blockheight_reached = collected_heights[0]
+                logger.debug('Setting common blockheight reached to %s', collected_heights[0])
+            else:
+                logger.error(
+                    'In V2 pairs overall summary snapshot creation: '
+                    'No common block height found among all summarized contracts.'
+                    'Block heights found: %s', list(collected_heights)
+                )
+        wait_for_snapshot_project_new_commit = False
+        current_audit_project_block_height = 0
+        if common_blockheight_reached:
+            # TODO: make these configurable
+            async_httpx_client = AsyncClient(
+                timeout=Timeout(timeout=5.0),
+                follow_redirects=False,
+                limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
+            )
+            summarized_result_l = [x.dict() for x in final_results]
+            summarized_payload = {'data': summarized_result_l}
+            # get last processed v2 pairs snapshot height
+            l_ = await redis_conn.get(redis_keys.get_uniswap_pair_snapshot_last_block_height())
+            if l_:
+                last_common_block_height = int(l_)
+            else:
+                last_common_block_height = 0
+            if common_blockheight_reached > last_common_block_height:
+                logger.info(
+                    'Present common block height in V2 pairs summary snapshot is %s | Moved from %s',
+                    common_blockheight_reached, last_common_block_height
+                )
+                current_audit_project_block_height = await helper_functions.get_block_height(
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                    reader_redis_conn=redis_conn
+                )
+                logger.debug('Sending v2 pairs summary payload to audit protocol: %s', summarized_payload)
+                # send to audit protocol for snapshot to be committed
+                try:
+                    response = await helper_functions.commit_payload(
+                        project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                        report_payload=summarized_payload,
+                        session=async_httpx_client
+                    )
+                except Exception as e:
+                    logger.error(
+                        'Error while committing pairs summary snapshot at block height %s to audit protocol. '
+                        'Exception: %s',
+                        common_blockheight_reached, e, exc_info=True
+                    )
+                else:
+                    if 'message' in response.keys():
+                        logger.error(
+                            'Error while committing pairs summary snapshot at block height %s to audit protocol. '
+                            'Response status code and other information: %s',
+                            common_blockheight_reached, response
+                        )
+                    else:
+                        wait_for_snapshot_project_new_commit = True
+        if wait_for_snapshot_project_new_commit:
+            while True:
+                # TODO: introduce a break condition if something goes wrong and snapshot summary does not move ahead
+                logger.debug('Waiting for 5 seconds to check if latest v2 pairs summary snapshot was committed...')
+                await asyncio.sleep(5)
+                updated_audit_project_block_height = await helper_functions.get_block_height(
+                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                    reader_redis_conn=redis_conn
+                )
+                if updated_audit_project_block_height > current_audit_project_block_height:
+                    logger.info(
+                        'Audit project height against V2 pairs summary snapshot is %s | Moved from %s',
+                        updated_audit_project_block_height, current_audit_project_block_height
+                    )
+                    # get head DAG CID retrieve_block_data
+                    head_dag_cid = await helper_functions.get_dag_cid(
+                        project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                        block_height=updated_audit_project_block_height,
+                        reader_redis_conn=redis_conn
+                    )
+                    dag_block_payload_prefilled = await retrieve_block_data(
+                        block_dag_cid=head_dag_cid,
+                        writer_redis_conn=redis_conn,
+                        data_flag=1
+                    )
+                    # store in snapshots zset
+                    await redis_conn.zadd(
+                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                        mapping={dag_block_payload_prefilled['data']['cid']: common_blockheight_reached}
+                    )
+                    await redis_conn.set(
+                        name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(common_blockheight_reached),
+                        value=json.dumps(dag_block_payload_prefilled['data']['payload']),
+                        ex=1800  # TTL of 30 minutes?
+                    )
+                    await redis_conn.set(
+                        redis_keys.get_uniswap_pair_snapshot_last_block_height(),
+                        common_blockheight_reached
+                    )
+                    zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_snapshot_summary_zset())
+                    # TODO: snapshot history zset size limit configurable
+                    if zset_len > 20:
+                        _ = await redis_conn.zremrangebyrank(
+                            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                            min=0,
+                            max=-1 * (zset_len - 20) + 1
+                        )
+                        logger.debug('Pruned snapshot summary CID zset by %s elements', _)
+                    logger.info('V2 pairs summary snapshot updated...')
+                    break
+
         return final_results
 
     except Exception as e:

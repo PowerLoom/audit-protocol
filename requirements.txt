@@ -35,3 +35,5 @@ aio_pika==6.8.0
 pika==1.2.0
 psutil
 rich
+cardinality
+httpx==0.22.0

@@ -1,10 +1,11 @@
 from IPFS_API import ipfshttpclient
+from config import settings
 import io
 import json
 
 
-# ipfs_client = ipfshttpclient.connect(addr=settings.ipfs_url, session=True)
-ipfs_client = ipfshttpclient.connect(addr='/ip4/127.0.0.1/tcp/5001', session=False)
+ipfs_client = ipfshttpclient.connect(addr=settings.ipfs_url, session=False)
+# ipfs_client = ipfshttpclient.connect(addr='/ip4/127.0.0.1/tcp/5001', session=False)
 
 # raw payload upload
 

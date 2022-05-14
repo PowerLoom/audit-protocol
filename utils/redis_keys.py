@@ -191,23 +191,46 @@ def get_projects_registered_for_cache_indexing_key():
 #TODO: THIS IS REALLY BAD MAKE A REDIS KEY FILE like FpmmPooler and shift atleat below keys to it
 NAMESPACE = 'UNISWAPV2'
 
+
 def get_uniswap_pair_contract_tokens_addresses(pair_address):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensAddresses'.format(pair_address)
+
 
 def get_uniswap_pair_contract_tokens_data(pair_address):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensData'.format(pair_address)
 
+
 def get_uniswap_pair_contract_V2_pair_data(pair_address):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:contractV2PairCachedData'.format(pair_address)
-    
+
+
+def get_uniswap_pair_snapshot_last_block_height():
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':lastBlockHeight'
+
+
+def get_uniswap_pair_snapshot_summary_zset():
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':snapshotsZset'
+
+
+def get_uniswap_pair_snapshot_payload_at_blockheight(block_height):
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+f':snapshot:{block_height}'
+
+
+def get_uniswap_pairs_summary_snapshot_project_id():
+    return 'uniswap_V2PairsSummarySnapshot_'+NAMESPACE
+
+
 def get_uniswap_pair_cached_token_price(pair_symbol):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:cachedPairPrice'.format(pair_symbol)
+
 
 def get_uniswap_pair_cached_recent_logs(pair_address):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:recentLogs'.format(pair_address)
 
+
 def get_uniswap_pair_cache_daily_stats(pair_address):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:dailyCache'.format(pair_address)
+
 
 def get_uniswap_pair_cache_sliding_window_data(pair_address):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:slidingWindowData'.format(pair_address)
