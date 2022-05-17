@@ -202,7 +202,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 		return true
 	}
 
-	if payloadCommit.Payload != nil {
+	if !payloadCommit.Resubmitted {
 		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Adding payload to IPFS.",
 			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
 
@@ -227,8 +227,16 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			return false
 		}
 	} else {
-		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq.",
-			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
+		if payloadCommit.SnapshotCID == "" && payloadCommit.Payload == nil {
+			log.Fatalf("Received incoming Payload commit message without snapshotCID and empty payload at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq. Discarding this message without processing.",
+				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
+			return true
+		} else {
+			//TODO: What if payload is present and snapshotCID is empty?? Currently there is no scenario where this can happen, but need to handle in future.
+			//This would require soem kind of reorg of DAGChain if required as this is a resubmission of payload already submitted.
+			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq.",
+				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
+		}
 	}
 	retryType := PrepareAndSubmitTxnToChain(&payloadCommit)
 	if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
