@@ -6,7 +6,6 @@ settings.json
 .python-version
 __pycache__/
 *.db
-static/**
 *.swp
 files/
 .env
