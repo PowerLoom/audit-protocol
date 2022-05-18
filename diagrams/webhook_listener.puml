@@ -6,6 +6,10 @@ participant "WebHook-Listener" as whl
 database redis 
 participant "IPFS-Node" as ipfs
 
+group #green init 
+note over whl #white : Initialize internal queue(thread-safe).\n Spawn workers(along with configurable threadPool Size) \nthat can process requests from the queue.
+end
+
 pvgw -> whl : RecordAppended Request(sig,projID,tentativeBlockHeight)
 
 note over whl : Fetch JSON requestData.\nVerify Signature from header\n(X-Hook-Signature) by calculating the signature of event-data.
@@ -18,80 +22,89 @@ alt if event_name != "RecordAppended"
 whl -> pvgw: 400 ()
 end
 
-note over whl: acquire project specific lock in redis. \n This will ensure that 2 callbacks being executed in different threads don't interleave and cause sync issues.
+whl -[#green]> whl : Push request to internal queue.
 
-whl <-> redis:  MGET: Get finalized_block_height_project,tentativeBlockHeight from keys\n ["projectID:{}:blockHeight"],["projectID:{}:tentativeBlockHeight"]
-alt if couldn't get blockHeight (due to error other than key not found)
-note over whl: Retry fetch and after max retries. \nStop processing and respond with server error.\n This will make caller retry request.
-whl -> pvgw: 500
-end 
+whl -[#green]> pvgw : 200 
+group Worker-Processing 
+    whl -[#green]> whl : Worker(i) Acquire mutex, pop from queue and release mutex. \n Start processing 
+    note over whl: Acquire project specific lock in redis.\nThis will ensure that 2 callbacks being executed in different threads don't interleave and cause sync issues.
 
-whl <-> redis: Get callback URL for the project.
-alt if couldn't get URL
-note over whl: TBD
-end
-
-alt if tentative_block_height_event_data <= finalized_block_height_project
-    note over whl : Discard event as it is duplicate. \nTBD: No other action to be taken in this case??
-    whl -> redis: Add to discarded events.
-    whl -> pvgw: 200
-end //if tentative_block_height_event_data <= finalized_block_height_project
-
-alt else if tentative_block_height_event_data > finalized_block_height_project + 1
-    group Process out of order event 
-        note over whl: Out of order event processing.
-        group Process the out of order event
-            note over whl #orange: Change state and add event_data in pendingTxns.
-        end
-        group save_event_data
-            note over whl #orange: Optimization: can be stored it in pendingtxns Zset.\nThis is required when this entry is added to the DAG Chain. 
-        end
+    whl <-> redis:  MGET: Get finalized_block_height_project,tentativeBlockHeight from keys\n ["projectID:{}:blockHeight"],["projectID:{}:tentativeBlockHeight"]
+    alt if couldn't get blockHeight (due to error other than key not found)
+    note over whl #green: Retry fetch and after max retries.\nStop processing.
     end 
-    group check and resubmit any pending txns 
-        note over whl #orange: Optimization: No need for 2 ZSets pendingTxns,pendingBlocks,\nonly pendingTxns is sufficient as state of transaction is maintained there.
-        whl <-> redis: Fetch pendingTxns from \n finalized_block_height_project + 1 to tentative_block_height_event_data        
-        note over whl: Get PendingTxns_filtered for which callback is not received\n or lastTouchedBlock is older than 3 from currentEventBlock.
-        loop over PendingTxns_filtered
-            note over whl: Fetch eventData. \n Build and submit request to commit_payload.\n update lastTouchedBlock.
-        end
-    end
-end  // else if tentative_block_height_event_data > finalized_block_height_project + 1
 
-alt else if tentative_block_height_event_data == finalized_block_height_project + 1
-    group Process in order event 
-        note over whl: in order event has arrived.
-        whl <-> redis: Fetch all pendingTxns 
-        note over whl: look for current txn by checking the hash.
-        alt if not found 
-            note over whl: It means duplicate received,\nadd to discarded events.\n Invoke group clear_payload_commit_data.
-        end //not found    
-
-        group Create DAG Block
-            whl <-> redis: Fetch last DAG CID using tentativeBlockHeight-1 from "project:{}:Cids". (TBD - Optimize)
-            whl <-> ipfs : Create DAG Chain entry(DAG PUT)
-            whl <-> redis: Add DAG CID in "project:{}:Cids" ZSet at tentativeBlockHeight
-            whl <-> redis : Update finalized_block_height at "projectID:{}:blockHeight"
-        end
-        group clear_payload_commit_data
-            whl <-> redis: Delete "eventData:{}"".           
-            whl <-> redis: Remove from pending transactions.
-            whl <-> redis: Delete "payloadCommit:{}"."
-            whl <-> redis: Delete "txHash:{tx_hash}:inputData"
-        end
-        whl <-> redis: Delete "ProcessingLogs"
-        note over whl: Create diffMap and update in redis -\n Refer calculate_diff function (TBD)
-        note over whl: send confirmation callback.
+    whl <-> redis: Get callback URL for the project.
+    alt if couldn't get URL
+    note over whl: TBD
     end
-    group Process pendingBlocks to be added to DAG Chain
-        loop over pendingBlocks from tentative_block_height_event_data+1 till you find gap (confirmed_max_blockHeight)
-            alt if pendingBlock[i].height == cur_max_height_project + 1
-                whl <-> redis: get event Data
-                note over whl : Invoke Group Create DAG Block. \nCalculate Diff. \nGroup clear_payload_commit_data.\n Clear ProcessingLogs.
-                note over whl: Invoke Commit confirmation callback.
+
+    alt if tentative_block_height_event_data <= finalized_block_height_project
+        note over whl : Discard event as it is duplicate.
+        whl -> redis: Add to discarded events.
+    end //if tentative_block_height_event_data <= finalized_block_height_project
+
+    alt else if tentative_block_height_event_data > finalized_block_height_project + 1
+        group Process out of order event 
+            note over whl: Out of order event processing.
+            group Process the out of order event
+                note over whl : Change state and add event_data in pendingTxns.
             end
-        end //loop
-        whl <-> redis: Remove blockHeight from pendingBlocks. \n(ZRemRangeByScore,tentative_block_height_event_data,confirmed_max_blockHeight) 
-    end 
-end //else if tentative_block_height_event_data == finalized_block_height_project + 1
-note over whl: Release project specific lock from redis.
-whl -> pvgw : 200 
+            group save_event_data
+                note over whl : Optimization: can be stored it in pendingtxns Zset.\nThis is required when this entry is added to the DAG Chain. 
+            end
+        end 
+        ' group check and resubmit any pending txns 
+        '     note over whl #orange: Optimization: No need for 2 ZSets pendingTxns,pendingBlocks,\nonly pendingTxns is sufficient as state of transaction is maintained there.
+        '     whl <-> redis: Fetch pendingTxns from \n finalized_block_height_project + 1 to tentative_block_height_event_data        
+        '     note over whl: Get PendingTxns_filtered for which callback is not received\n or lastTouchedBlock is older than 3 from currentEventBlock.
+        '     loop over PendingTxns_filtered
+        '         note over whl: Fetch eventData. \n Build and submit request to commit_payload.\n update lastTouchedBlock.
+        '     end
+        ' end
+    end  // else if tentative_block_height_event_data > finalized_block_height_project + 1
+
+    alt else if tentative_block_height_event_data == finalized_block_height_project + 1
+        group Process in order event 
+            note over whl: in order event has arrived.
+            whl <-> redis: Fetch all pendingTxns 
+            note over whl: look for current txn by checking the hash.
+            alt if not found 
+                note over whl: It means duplicate received,\nadd to discarded events.\n Invoke group clear_payload_commit_data.
+            end //not found    
+
+            group Create DAG Block
+                whl <-> redis: Fetch last DAG CID using tentativeBlockHeight-1 from "project:{}:Cids". (TBD - Optimize)
+                whl <-> ipfs : Create DAG Chain entry(DAG PUT)
+                whl <-> redis: Add DAG CID in "project:{}:Cids" ZSet at tentativeBlockHeight
+                whl <-> redis : Update finalized_block_height at "projectID:{}:blockHeight"
+            end
+            group clear_payload_commit_data
+                whl <-> redis: Delete "eventData:{}"".           
+                whl <-> redis: Remove from pending transactions.
+                whl <-> redis: Delete "payloadCommit:{}"."
+                whl <-> redis: Delete "txHash:{tx_hash}:inputData"
+            end
+            whl <-> redis: Delete "ProcessingLogs"
+            note over whl: Create diffMap and update in redis -\n Refer calculate_diff function (TBD)
+            alt #green if calculate_diff_fails
+            note over whl #white: Catch exception/error..log it and continue.
+            end
+            note over whl: send confirmation callback.
+        end
+        group Process pendingBlocks to be added to DAG Chain
+            loop over pendingBlocks from tentative_block_height_event_data+1 till you find gap (confirmed_max_blockHeight)
+                alt if pendingBlock[i].height == cur_max_height_project + 1
+                    whl <-> redis: get event Data
+                    note over whl : Invoke Group Create DAG Block. \nCalculate Diff. \nGroup clear_payload_commit_data.\n Clear ProcessingLogs.
+                    alt #green if calculate_diff_fails
+                        note over whl #white: Catch exception/error..log it and continue.
+                    end
+                    note over whl: Invoke Commit confirmation callback.
+                end
+            end //loop
+            whl <-> redis: Remove blockHeight from pendingBlocks. \n(ZRemRangeByScore,tentative_block_height_event_data,confirmed_max_blockHeight) 
+        end 
+    end //else if tentative_block_height_event_data == finalized_block_height_project + 1
+    note over whl: Release project specific lock from redis.
+end 
