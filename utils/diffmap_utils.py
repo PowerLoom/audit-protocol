@@ -283,7 +283,7 @@ async def calculate_diff(
                     name=diff_snapshots_cache_zset,
                     mapping={json.dumps(diff_data): int(dag.height)}
                 )
-                latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
+                latest_seen_snapshots_htable = redis_keys.get_last_seen_snapshots_key()
                 await writer_redis_conn.hset(
                     latest_seen_snapshots_htable,
                     project_id,
