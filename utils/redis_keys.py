@@ -234,3 +234,6 @@ def get_uniswap_pair_cache_daily_stats(pair_address):
 
 def get_uniswap_pair_cache_sliding_window_data(pair_address):
     return 'uniswap:pairContract:'+NAMESPACE+':{}:slidingWindowData'.format(pair_address)
+
+def get_uniswap_projects_dag_verifier_status(current_namespace):
+    return "projects:"+current_namespace+":dagVerificationStatus"
