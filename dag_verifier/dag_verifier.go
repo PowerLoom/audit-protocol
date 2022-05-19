@@ -231,6 +231,7 @@ func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps 
 
 func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	var dagSummary DagChainSummary
+	dagSummary.Namespace = NAMESPACE
 	currentCycleDAGchainHeight := make(map[string]int64, len(verifier.projects))
 	var currentMinChainHeight int64
 	currentMinChainHeight, _ = strconv.ParseInt(verifier.lastVerifiedDagBlockHeights[verifier.projects[0]], 10, 64)

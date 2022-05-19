@@ -14,13 +14,14 @@ type SlackNotifyReq struct {
 }
 
 type DagChainSummary struct {
-	ProjectsTrackedCount        int   `json:"projectsTrackedCount"`
-	ProjectsWithIssuesCount     int   `json:"projectsWithIssuesCount"`
-	ProjectsWithStuckChainCount int   `json:"projectsWithStuckChainCount"`
-	CurrentMinChainHeight       int64 `json:"currentMinChainHeight"`
-	OverallIssueCount           int   `json:"overallIssueCount"`
-	OverallDAGChainGaps         int   `json:"overallDAGChainGaps"`
-	OverallDAGChainDuplicates   int   `json:"overallDAGChainDuplicates"`
+	Namespace                   string `json:"namespace"`
+	ProjectsTrackedCount        int    `json:"projectsTrackedCount"`
+	ProjectsWithIssuesCount     int    `json:"projectsWithIssuesCount"`
+	ProjectsWithStuckChainCount int    `json:"projectsWithStuckChainCount"`
+	CurrentMinChainHeight       int64  `json:"currentMinChainHeight"`
+	OverallIssueCount           int    `json:"overallIssueCount"`
+	OverallDAGChainGaps         int    `json:"overallDAGChainGaps"`
+	OverallDAGChainDuplicates   int    `json:"overallDAGChainDuplicates"`
 }
 
 type SlackResp struct {
