@@ -1,5 +1,36 @@
 package main
 
+type retryType int64
+
+const (
+	NO_RETRY_SUCCESS retryType = iota
+	RETRY_IMMEDIATE            //TOD be used in timeout scenarios or non server returned error scenarios.
+	RETRY_WITH_DELAY           //TO be used when immediate error is returned so that server is not overloaded.
+	NO_RETRY_FAILURE           //This is to be used for unexpected conditions which are not recoverable and hence no retry
+)
+
+type SlackNotifyReq struct {
+	DAGsummary string `json:"dagChainSummary"`
+}
+
+type DagChainSummary struct {
+	ProjectsTrackedCount        int   `json:"projectsTracked_Count"`
+	ProjectsWithIssuesCount     int   `json:"projectsWithIssues_Count"`
+	ProjectsWithStuckChainCount int   `json:"projectsWithStuckChain_Count"`
+	CurrentMinChainHeight       int64 `json:"currentMinChain_Height"`
+	OverallIssueCount           int   `json:"overallIssue_Count"`
+	OverallDAGChainGaps         int   `json:"overallDAGChainGaps"`
+	OverallDAGChainDuplicates   int   `json:"overallDAGChainDuplicates"`
+}
+
+type SlackResp struct {
+	Error            string `json:"error"`
+	Ok               bool   `json:"ok"`
+	ResponseMetadata struct {
+		Messages []string `json:"messages"`
+	} `json:"response_metadata"`
+}
+
 type DagChainIssue struct {
 	IssueType string `json:"issueType"`
 	//In case of missing blocks in chain or Gap
