@@ -29,6 +29,7 @@ type DagVerifier struct {
 	dagChainIssues                   map[string][]DagChainIssue
 	previousCycleDagChainHeight      map[string]int64
 	noOfCyclesSinceChainStuck        map[string]int
+	lastNotifyTime                   int64
 }
 
 //TODO: Migrate to env or settings.
@@ -277,10 +278,15 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 			}
 		}
 	}
-	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
+	//Do not notify if recently notification has been sent.
+	//TODO: Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
+	if (time.Now().Unix()-verifier.lastNotifyTime > 1800) && verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
 		for retryCount := 0; ; {
 			retryType := verifier.NotifySlackOfDAGSummary(dagSummary)
 			if retryType == NO_RETRY_FAILURE || retryType == NO_RETRY_SUCCESS {
+				if retryType == NO_RETRY_SUCCESS {
+					verifier.lastNotifyTime = time.Now().Unix()
+				}
 				break
 			}
 			if retryCount == 3 {
