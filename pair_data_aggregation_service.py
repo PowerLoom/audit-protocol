@@ -764,7 +764,7 @@ async def v2_pairs_data():
         if wait_for_snapshot_project_new_commit:
             waitCycles = 0
             while True:
-                # TODO: introduce a break condition if something goes wrong and snapshot summary does not move ahead
+                # introduce a break condition if something goes wrong and snapshot summary does not move ahead
                 waitCycles+=1
                 if waitCycles > 12: # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot summary submission
                     logger.info(f"Waited for {waitCycles} cycles, snapshot summary project has not moved ahead. Stopped waiting to retry in next cycle.")
