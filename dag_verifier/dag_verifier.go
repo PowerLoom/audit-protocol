@@ -233,6 +233,7 @@ func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps 
 func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	var dagSummary DagChainSummary
 	dagSummary.Namespace = NAMESPACE
+
 	currentCycleDAGchainHeight := make(map[string]int64, len(verifier.projects))
 	var currentMinChainHeight int64
 	currentMinChainHeight, _ = strconv.ParseInt(verifier.lastVerifiedDagBlockHeights[verifier.projects[0]], 10, 64)
@@ -258,12 +259,12 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 		}
 		if verifier.noOfCyclesSinceChainStuck[projectId] > 3 {
 			isDagchainStuckForAnyProject++
+			verifier.dagChainHasIssues = true
 		}
 	}
 	//Check if dagChain has issues for any project.
 	if verifier.dagChainHasIssues {
 		dagSummary.ProjectsWithIssuesCount = len(verifier.dagChainIssues)
-		dagSummary.ProjectsTrackedCount = len(verifier.projects)
 		dagSummary.CurrentMinChainHeight = currentMinChainHeight
 		dagSummary.ProjectsWithStuckChainCount = isDagchainStuckForAnyProject
 
@@ -279,7 +280,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 		}
 	}
 	//Do not notify if recently notification has been sent.
-	//TODO: Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
+	//TODO: Rough suppression logic, not very elegant.
+	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
 	if (time.Now().Unix()-verifier.lastNotifyTime > 1800) && verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
 		for retryCount := 0; ; {
 			retryType := verifier.NotifySlackOfDAGSummary(dagSummary)
@@ -299,6 +301,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 			}
 			log.Errorf("Slack Notify failed with error..retrying %d", retryCount)
 		}
+	} else {
+		verifier.dagChainHasIssues = false
 	}
 
 	for _, projectId := range verifier.projects {
