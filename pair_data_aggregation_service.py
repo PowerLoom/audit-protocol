@@ -762,8 +762,13 @@ async def v2_pairs_data():
                     else:
                         wait_for_snapshot_project_new_commit = True
         if wait_for_snapshot_project_new_commit:
+            waitCycles = 0
             while True:
                 # TODO: introduce a break condition if something goes wrong and snapshot summary does not move ahead
+                waitCycles+=1
+                if waitCycles > 12: # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot summary submission
+                    logger.info(f"Waited for {waitCycles} cycles, snapshot summary project has not moved ahead. Stopped waiting to retry in next cycle.")
+                    break
                 logger.debug('Waiting for 5 seconds to check if latest v2 pairs summary snapshot was committed...')
                 await asyncio.sleep(5)
                 updated_audit_project_block_height = await helper_functions.get_block_height(
