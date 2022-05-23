@@ -3,6 +3,8 @@ from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
+
+import utils.diffmap_utils
 from config import settings
 from uuid import uuid4
 from utils.redis_conn import RedisPool
@@ -646,12 +648,15 @@ async def get_payloads(
                                 blocks[idx-1]['data']['cid'],
                                 writer_redis_conn=writer_redis_conn
                             )
-
+                        diff_rules = await utils.diffmap_utils.get_diff_rules(
+                            project_id=projectId,
+                            reader_redis_conn=reader_redis_conn
+                        )
                         result = await process_payloads_for_diff(
                             project_id=projectId,
                             prev_data=prev_data,
                             cur_data=cur_data,
-                            redis_conn=reader_redis_conn
+                            diff_rules=diff_rules
                         )
                         # rest_logger.debug('After payload clean up and comparison if any')
                         # rest_logger.debug(result)

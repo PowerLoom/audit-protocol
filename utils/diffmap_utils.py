@@ -3,6 +3,7 @@ from utils import redis_keys
 from config import settings
 from copy import deepcopy
 from data_models import DAGBlock
+import redis
 import aioredis
 import json
 import logging.handlers
@@ -42,9 +43,7 @@ async def get_diff_rules(
     return diff_rules
 
 
-async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, redis_conn: aioredis.Redis):
-    # load diff rules
-    diff_rules = await get_diff_rules(project_id, redis_conn)
+def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, diff_rules):
     key_rules = dict()
     compare_rules = dict()
     # TODO: refactor logic into another helper that solely preprocesses key rules into an accepted structure
@@ -221,34 +220,47 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
     return comparison_results
 
 
-async def calculate_diff(
+def calculate_diff(
         dag_cid: str,
         dag: DAGBlock,
         project_id: str,
         ipfs_client,
-        writer_redis_conn: aioredis.Redis
+        writer_redis_conn: redis.Redis
 ):
     # cache last seen diffs
     dag_height = dag.height
     if dag.prevCid:
         payload_cid = dag.data['cid']
-        prev_dag = await dag_utils.get_dag_block(dag.prevCid)
+        prev_dag = ipfs_client.dag.get(dag_cid)
+        prev_dag = prev_dag.as_json()
         prev_payload_cid = prev_dag['data']['cid']
         if prev_payload_cid != payload_cid:
             diff_map = dict()
-            _prev_data = await ipfs_client.cat(prev_payload_cid)
+            _prev_data = ipfs_client.cat(prev_payload_cid)
             prev_data = _prev_data.decode('utf-8')
             prev_data = json.loads(prev_data)
-            _payload = await ipfs_client.cat(payload_cid)
+            _payload = ipfs_client.cat(payload_cid)
             payload = _payload.decode('utf-8')
             payload = json.loads(payload)
             utils_logger.debug('Before payload clean up')
             utils_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
-            result = await process_payloads_for_diff(
+            # load diff rules
+            diff_rules_key = redis_keys.get_diff_rules_key(project_id=project_id)
+            out: bytes = writer_redis_conn.get(diff_rules_key)
+            diff_rules = list()
+            if out:
+                diff_rules = out.decode('utf-8')
+                try:
+                    diff_rules = json.loads(diff_rules)
+                except json.JSONDecodeError as jerr:
+                    utils_logger.error(jerr, exc_info=True)
+                    diff_rules = list()
+            # pass diff rules
+            result = process_payloads_for_diff(
                 project_id,
                 prev_data,
                 payload,
-                writer_redis_conn
+                diff_rules
             )
             utils_logger.debug('After payload clean up and comparison if any')
             utils_logger.debug(result)
@@ -279,17 +291,16 @@ async def calculate_diff(
                     'diff': diff_map
                 }
                 diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
-                await writer_redis_conn.zadd(
+                writer_redis_conn.zadd(
                     name=diff_snapshots_cache_zset,
                     mapping={json.dumps(diff_data): int(dag.height)}
                 )
                 latest_seen_snapshots_htable = redis_keys.get_last_seen_snapshots_key()
-                await writer_redis_conn.hset(
+                writer_redis_conn.hset(
                     latest_seen_snapshots_htable,
                     project_id,
                     json.dumps(diff_data)
                 )
-
                 return diff_data
 
     return {}

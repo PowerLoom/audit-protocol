@@ -4,6 +4,7 @@ from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
 from utils import helper_functions
 from data_models import PendingTransaction, DAGBlock
+from typing import Tuple
 import async_timeout
 import asyncio
 import json
@@ -110,7 +111,7 @@ async def get_dag_block(dag_cid: str):
 
 async def put_dag_block(dag_json: str):
     dag_json = dag_json.encode('utf-8')
-    out = await ipfs_client.dag.put(io.BytesIO(dag_json))
+    out = await ipfs_client.dag.put(io.BytesIO(dag_json), pin=True)
     dag_cid = out.as_json()['Cid']['/']
 
     return dag_cid
@@ -147,7 +148,7 @@ async def create_dag_block(
         timestamp: int,
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
-):
+) -> Tuple[str, DAGBlock]:
     """ Get the last dag cid using the tentativeBlockHeight"""
     last_dag_cid = await helper_functions.get_dag_cid(
         project_id=project_id,

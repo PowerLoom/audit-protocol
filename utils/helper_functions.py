@@ -1,9 +1,10 @@
-import logging
-
+from functools import partial, wraps
 from utils import redis_keys
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
 from tenacity import AsyncRetrying, stop_after_attempt
+import logging
+import sys
 import aioredis
 
 
@@ -70,6 +71,27 @@ async def get_last_payload_cid(
         last_payload_cid = ""
 
     return last_payload_cid
+
+
+def cleanup_children_procs(fn):
+    @wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        try:
+            fn(self, *args, **kwargs)
+            logging.info('Finished running process core...')
+        except Exception as e:
+            logging.error('Received an exception on process core run(): %s', e, exc_info=True)
+            logging.error('Waiting on spawned callback workers to join...\n%s', self._spawned_processes_map)
+            for k, v in self._spawned_processes_map.items():
+                logging.error('spawned Process Pid to wait on %s', v.pid)
+                # internal state reporter might set proc_id_map[k] = -1
+                if v != -1:
+                    logging.error('Waiting on spawned core worker %s | PID %s  to join...', k, v.pid)
+                    v.join()
+            logging.error('Finished waiting for all children...now can exit.')
+        finally:
+            sys.exit(0)
+    return wrapper
 
 
 async def commit_payload(project_id, report_payload, session: AsyncClient):

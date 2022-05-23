@@ -146,3 +146,13 @@ class DAGBlock(BaseModel):
     data: dict
     txHash: str
     timestamp: int
+
+
+class DiffCalculationRequest(BaseModel):
+    project_id: str
+    dagCid: str
+    lastDagCid: str
+    payloadCid: str
+    txHash: str
+    tentative_block_height: int
+    timestamp: int
