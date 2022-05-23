@@ -36,6 +36,7 @@ var REDIS_KEY_PAYLOAD_CIDS = "projectID:%s:payloadCids"
 var REDIS_KEY_PENDING_TXNS = "projectID:%s:pendingTransactions"
 
 const MAX_RETRY_COUNT = 3
+const SECONDS_BETWEEN_RETRY = 5
 
 var commonVigilParams CommonVigilRequestParams
 
@@ -213,6 +214,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 					log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, MAX_RETRY_COUNT, err)
 					return false
 				}
+				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 				retryCount++
 				log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", d.Body, err, retryCount)
 				continue
@@ -260,6 +262,7 @@ func StorePayloadCidInRedis(payload *PayloadCommit) error {
 				log.Errorf("Failed to Add payload %s to redis Zset with key %s after max-retries of %d", payload.SnapshotCID, key, MAX_RETRY_COUNT)
 				return res.Err()
 			}
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 			retryCount++
 			log.Errorf("Failed to Add payload %s to redis Zset with key %s..retryCount %d", payload.SnapshotCID, key, retryCount)
 			continue
@@ -304,6 +307,7 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 					payload.SnapshotCID, payload.ProjectId, payload.CommitId, res.Err(), MAX_RETRY_COUNT)
 				return res.Err()
 			}
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 			retryCount++
 			log.Errorf("Failed to add payloadCid %s for project %s with commitID %s to pendingTxns in redis with err %+v ..retryCount %d",
 				payload.SnapshotCID, payload.ProjectId, payload.CommitId, res.Err(), retryCount)
@@ -355,7 +359,7 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
 			if retryCount == MAX_RETRY_COUNT {
 				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s and snapshotCID %s to Prost-Vigil with err %+v after max retries of %d",
 					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
-				time.Sleep(5 * time.Second)
+				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 				return RETRY_IMMEDIATE
 			}
 			retryCount++
