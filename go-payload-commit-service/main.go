@@ -173,8 +173,7 @@ func InitRabbitmqConsumer() {
 	if err != nil {
 		panic(err)
 	}
-	rmqExchangeName := "powerloom-backend"
-	rmqExchangeName = settingsObj.Rabbitmq.Setup.Core.Exchange
+	rmqExchangeName := settingsObj.Rabbitmq.Setup.Core.Exchange
 	//TODO: These settings need to be moved to json config.
 	rmqQueueName := "audit-protocol-commit-payloads"
 	rmqRoutingKey := "commit-payloads"
