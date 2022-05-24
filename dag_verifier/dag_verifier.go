@@ -48,7 +48,7 @@ func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddres
 	verifier.projects = make([]string, 0, noOfProjects)
 	verifier.noOfCyclesSinceChainStuck = make(map[string]int, noOfProjects)
 	verifier.previousCycleDagChainHeight = make(map[string]int64, noOfProjects)
-
+	verifier.dagChainIssues = make(map[string][]DagChainIssue)
 	verifier.PopulateProjects(pairContractAddresses)
 	verifier.periodicRetrievalInterval = 300 * time.Second
 	//Fetch DagChain verification status from redis for all projects.
