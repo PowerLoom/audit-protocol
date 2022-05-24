@@ -49,6 +49,7 @@ func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddres
 	verifier.noOfCyclesSinceChainStuck = make(map[string]int, noOfProjects)
 	verifier.previousCycleDagChainHeight = make(map[string]int64, noOfProjects)
 	verifier.dagChainIssues = make(map[string][]DagChainIssue)
+
 	verifier.PopulateProjects(pairContractAddresses)
 	verifier.periodicRetrievalInterval = 300 * time.Second
 	//Fetch DagChain verification status from redis for all projects.
@@ -264,6 +265,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	}
 	//Check if dagChain has issues for any project.
 	if verifier.dagChainHasIssues {
+		dagSummary.ProjectsTrackedCount = len(verifier.projects)
 		dagSummary.ProjectsWithIssuesCount = len(verifier.dagChainIssues)
 		dagSummary.CurrentMinChainHeight = currentMinChainHeight
 		dagSummary.ProjectsWithStuckChainCount = isDagchainStuckForAnyProject
@@ -282,24 +284,26 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	//Do not notify if recently notification has been sent.
 	//TODO: Rough suppression logic, not very elegant.
 	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
-	if (time.Now().Unix()-verifier.lastNotifyTime > 1800) && verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
-		for retryCount := 0; ; {
-			retryType := verifier.NotifySlackOfDAGSummary(dagSummary)
-			if retryType == NO_RETRY_FAILURE || retryType == NO_RETRY_SUCCESS {
-				if retryType == NO_RETRY_SUCCESS {
-					verifier.lastNotifyTime = time.Now().Unix()
+	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
+		if time.Now().Unix()-verifier.lastNotifyTime > 1800 {
+			for retryCount := 0; ; {
+				retryType := verifier.NotifySlackOfDAGSummary(dagSummary)
+				if retryType == NO_RETRY_FAILURE || retryType == NO_RETRY_SUCCESS {
+					if retryType == NO_RETRY_SUCCESS {
+						verifier.lastNotifyTime = time.Now().Unix()
+					}
+					break
 				}
-				break
+				if retryCount == 3 {
+					log.Errorf("Giving up notifying slack after retrying for %d times", retryCount)
+					return
+				}
+				retryCount++
+				if retryType == RETRY_WITH_DELAY {
+					time.Sleep(5 * time.Second)
+				}
+				log.Errorf("Slack Notify failed with error..retrying %d", retryCount)
 			}
-			if retryCount == 3 {
-				log.Errorf("Giving up notifying slack after retrying for %d times", retryCount)
-				return
-			}
-			retryCount++
-			if retryType == RETRY_WITH_DELAY {
-				time.Sleep(5 * time.Second)
-			}
-			log.Errorf("Slack Notify failed with error..retrying %d", retryCount)
 		}
 	} else {
 		verifier.dagChainHasIssues = false
@@ -348,7 +352,7 @@ func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainSummary)
 		return RETRY_IMMEDIATE
 	}
 	if res.StatusCode == http.StatusOK {
-		log.Debugf("Received success response from Slack Webhoon with statusCode %d", res.StatusCode)
+		log.Debugf("Received success response from Slack Webhook with statusCode %d", res.StatusCode)
 		return NO_RETRY_SUCCESS
 	} else {
 		err = json.Unmarshal(respBody, &resp)
