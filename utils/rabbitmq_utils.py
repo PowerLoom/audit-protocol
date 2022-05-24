@@ -93,16 +93,16 @@ class RabbitmqSelectLoopInteractor(object):
         """
         logger.info(
             '%s: RabbitMQ select loop interactor: Creating RabbitMQ select ioloop connection to %s',
-            self._consumer_worker_name, (settings.RABBITMQ.HOST, settings.RABBITMQ.PORT)
+            self._consumer_worker_name, (settings.rabbitmq.host, settings.rabbitmq.port)
         )
         return pika.SelectConnection(
             parameters=pika.ConnectionParameters(
-                host=settings.RABBITMQ.HOST,
-                port=settings.RABBITMQ.PORT,
+                host=settings.rabbitmq.host,
+                port=settings.rabbitmq.port,
                 virtual_host='/',
                 credentials=pika.PlainCredentials(
-                    username=settings.RABBITMQ.USER,
-                    password=settings.RABBITMQ.PASSWORD
+                    username=settings.rabbitmq.user,
+                    password=settings.rabbitmq.password
                 ),
                 heartbeat=30
             ),
