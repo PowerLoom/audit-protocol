@@ -19,6 +19,17 @@ module.exports = {
       }
     },
     {
+      name   : "audit-protocol-diff-service",
+      script : "python3 ./diff_calculation_service.py",
+      cwd : CWD,
+      max_restarts: MAX_RESTART,
+      min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
+      env: {
+        NODE_ENV: NODE_ENV,
+      }
+    },
+    {
       name   : "audit-protocol-backend",
       script : "python3 ./gunicorn_main_launcher.py",
       cwd : CWD,
