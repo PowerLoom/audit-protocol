@@ -173,7 +173,7 @@ async def create_dag_block(
         dag_cid = await put_dag_block(dag.json())
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
-        return -1
+        raise
 
     """ Update redis keys """
     last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id)

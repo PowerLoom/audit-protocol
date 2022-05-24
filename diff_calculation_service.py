@@ -40,7 +40,12 @@ class DiffCalculationCallbackWorker(Process):
 
     def callback(self, dont_use_ch, method, properties, body):
         self.rabbitmq_interactor._channel.basic_ack(delivery_tag=method.delivery_tag)
-        command: DiffCalculationRequest = DiffCalculationRequest.parse_raw(body)
+        try:
+            command: DiffCalculationRequest = DiffCalculationRequest.parse_raw(body)
+        except:
+            self._logger.info('Error converting incoming request into data model: %s', body)
+            return
+        self._logger.debug(body)
         dag_block = DAGBlock(
             height=command.tentative_block_height,
             prevCid=command.lastDagCid,

@@ -11,7 +11,7 @@ aiohttp
 redis>=4.2,<4.3
 coloredlogs
 #git+https://github.com/ipfs/py-ipfs-http-client.git
-git+https://github.com/anomit/IPFS-Toolkit-Python.git@323e44a719f706e9119db6b8bda643ce9b18f921
+git+https://github.com/anomit/IPFS-Toolkit-Python.git@5c4ebe4c385c96a8f122d7e380710d4e7baa711d
 dynaconf
 backports.pbkdf2
 certifi
