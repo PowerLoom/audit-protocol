@@ -194,7 +194,7 @@ async def commit_payload(
 
     # push payload for commit to rabbitmq queue
     async with request.app.rmq_channel_pool.acquire() as channel:
-        exchange = await channel.declare_exchange(
+        exchange = await channel.get_exchange(
             settings.rabbitmq.setup['core']['exchange'],
             ExchangeType.DIRECT
         )
