@@ -245,8 +245,11 @@ async def payload_to_dag_processor_task(event_data):
                 replaced_dummy_tx_entries_in_pending_set = list()
                 async with app.rmq_channel_pool.acquire() as channel:
                     # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
+                    # always ensure exchanges and queues are initialized as part of launch sequence,
+                    # not to be checked here
                     exchange = await channel.get_exchange(
-                        settings.rabbitmq.setup['core']['exchange']
+                        name=settings.rabbitmq.setup['core']['exchange'],
+                        ensure=False
                     )
                     for queued_tentative_height_ in pending_confirmation_callbacks_txs_filtered_map.keys():
                         # get the tx hash from the filtered set of qualified pending transactions
@@ -532,8 +535,11 @@ async def payload_to_dag_processor_task(event_data):
                     )
                     async with app.rmq_channel_pool.acquire() as channel:
                         # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
+                        # always ensure exchanges and queues are initialized as part of launch sequence,
+                        # not to be checked here
                         exchange = await channel.get_exchange(
-                            settings.rabbitmq.setup['core']['exchange']
+                            name=settings.rabbitmq.setup['core']['exchange'],
+                            ensure=False
                         )
                         message = Message(
                             diff_calculation_request.json().encode('utf-8'),
