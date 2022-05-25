@@ -5,10 +5,12 @@ import (
 
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/writer"
 )
 
 var ipfsClient IpfsClient
@@ -28,6 +30,25 @@ func main() {
 }
 
 func initLogger() {
+	log.SetOutput(ioutil.Discard) // Send all logs to nowhere by default
+
+	log.AddHook(&writer.Hook{ // Send logs with level higher than warning to stderr
+		Writer: os.Stderr,
+		LogLevels: []log.Level{
+			log.PanicLevel,
+			log.FatalLevel,
+			log.ErrorLevel,
+			log.WarnLevel,
+		},
+	})
+	log.AddHook(&writer.Hook{ // Send info and debug logs to stdout
+		Writer: os.Stdout,
+		LogLevels: []log.Level{
+			log.TraceLevel,
+			log.InfoLevel,
+			log.DebugLevel,
+		},
+	})
 	if len(os.Args) < 2 {
 		fmt.Println("Pass loglevel as an argument if you don't want default(INFO) to be set.")
 		fmt.Println("Values to be passed for logLevel: ERROR(2),INFO(4),DEBUG(5)")
