@@ -44,8 +44,11 @@ class StubbedGunicornLogger(Logger):
         self.error_logger.addHandler(handler)
         self.access_logger = logging.getLogger("gunicorn.access")
         self.access_logger.addHandler(handler)
+        self.aiormq__logger = logging.getLogger("aiormq.connection")
+        self.aiormq__logger.addHandler(handler)
         self.error_log.setLevel(LOG_LEVEL)
         self.access_log.setLevel(LOG_LEVEL)
+        self.aiormq__logger.setLevel(LOG_LEVEL)
 
 
 class StandaloneApplication(BaseApplication):
