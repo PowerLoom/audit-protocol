@@ -149,5 +149,19 @@ def dagChainStatus(namespace: str = typer.Argument('UNISWAPV2'), dag_chain_heigh
 
     print("\n")
 
+@app.command()
+def updateStoredProjectIds(namespace: str = typer.Argument('UNISWAPV2')):
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
+
+    all_contracts = read_json_file('static/cached_pair_addresses.json')
+    all_projectIds = []
+    for contract in all_contracts:    
+        pair_reserve_template = f"uniswap_pairContract_pair_total_reserves_{contract}_{namespace}"
+        pair_trade_volume_template = f"uniswap_pairContract_trade_volume_{contract}_{namespace}"
+        all_projectIds.append(pair_reserve_template)
+        all_projectIds.append(pair_trade_volume_template)
+
+    r.sadd('storedProjectIds', *all_projectIds)
+
 if __name__ == '__main__':
     app()

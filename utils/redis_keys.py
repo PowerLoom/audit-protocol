@@ -211,13 +211,24 @@ def get_uniswap_pair_snapshot_last_block_height():
 def get_uniswap_pair_snapshot_summary_zset():
     return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':snapshotsZset'
 
-
 def get_uniswap_pair_snapshot_payload_at_blockheight(block_height):
     return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+f':snapshot:{block_height}'
+
+def get_uniswap_pair_daily_stats_snapshot_zset():
+    return 'uniswap:V2DailyStatsSnapshot:'+NAMESPACE+':snapshotsZset'
+
+def get_uniswap_pair_daily_stats_payload_at_blockheight(block_height):
+    return 'uniswap:V2DailyStatsSnapshot:'+NAMESPACE+f':snapshot:{block_height}'
 
 
 def get_uniswap_pairs_summary_snapshot_project_id():
     return 'uniswap_V2PairsSummarySnapshot_'+NAMESPACE
+
+def get_uniswap_pairs_v2_daily_snapshot_project_id():
+    return 'uniswap_V2DailyStatsSnapshot_'+NAMESPACE
+
+def get_uniswap_pair_snapshot_timestamp_zset():
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':snapshotTimestampZset'
 
 
 def get_uniswap_pair_cached_token_price(pair_symbol):

@@ -1,4 +1,5 @@
 from typing import Union, Tuple, Iterable
+from psutil import net_io_counters
 from web3 import Web3
 from functools import partial
 from time import time
@@ -237,6 +238,9 @@ async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contr
     token1_liquidity_usd = float(list(liquidity_data['data']['payload']['token1ReservesUSD'].values())[-1])
     total_liquidity = token0_liquidity_usd + token1_liquidity_usd
     block_height_total_reserve = int(liquidity_data['data']['payload']['chainHeightRange']['end'])
+    block_timestamp_total_reserve = int(liquidity_data['data']['payload']['timestamp'])
+    if not block_timestamp_total_reserve:
+        block_timestamp_total_reserve = int(liquidity_data['timestamp'])
 
     return [
         total_liquidity, 
@@ -244,7 +248,8 @@ async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contr
         token1_liquidity,
         token0_liquidity_usd,
         token1_liquidity_usd,
-        block_height_total_reserve
+        block_height_total_reserve,
+        block_timestamp_total_reserve
     ]
 
 
@@ -348,6 +353,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         recent_logs = list()
         block_height_total_reserve = 0
         block_height_trade_volume = 0
+        block_timestamp_total_reserve = 0
         pair_token_metadata = {}
 
         # 24h variables
@@ -377,7 +383,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             token1_liquidity, 
             token0_liquidity_usd,
             token1_liquidity_usd,
-            block_height_total_reserve
+            block_height_total_reserve,
+            block_timestamp_total_reserve
         ] = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address)
         if not total_liquidity:
             logger.error(f"Avoiding pair data calculation as liquidity data is not available - projectId:{project_id_token_reserve}")
@@ -594,6 +601,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             # if liquidity reserve block height is not found
             if not block_height_total_reserve:
                 block_height_total_reserve = cached_trade_volume_data["processed_block_height_total_reserve"]
+            if not block_timestamp_total_reserve:
+                block_timestamp_total_reserve = cached_trade_volume_data["processed_block_timestamp_total_reserve"]
 
             total_volume_24h = cached_trade_volume_data['aggregated_volume_24h']
             total_volume_7d = cached_trade_volume_data['aggregated_volume_7d']
@@ -628,7 +637,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             "aggregated_token0_volume_usd_7d": token0_volume_usd_7d,
             "aggregated_token1_volume_usd_7d": token1_volume_usd_7d,
             "processed_block_height_total_reserve": block_height_total_reserve,
-            "processed_block_height_trade_volume": block_height_trade_volume
+            "processed_block_height_trade_volume": block_height_trade_volume,
+            "processed_block_timestamp_total_reserve": block_timestamp_total_reserve,
         }
         prepared_snapshot = liquidityProcessedData(
             contractAddress=pair_contract_address,
@@ -640,6 +650,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             cid_volume_24h=cids_volume_24h, 
             cid_volume_7d=cids_volume_7d,
             block_height=block_height_total_reserve,
+            block_timestamp=block_timestamp_total_reserve,
             token0Liquidity=token0_liquidity,
             token1Liquidity=token1_liquidity,
             token0LiquidityUSD=float(token0_liquidity_usd),
@@ -692,7 +703,9 @@ async def v2_pairs_data():
 
         final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(*process_data_list, return_exceptions=True)
         common_blockheight_reached = False
+        common_block_timestamp = False
         collected_heights = list(map(lambda x: x.block_height, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
+        collected_block_timestamp = list(map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
         # logger.debug('Final results from running v2 pairs coroutines: %s', final_results)
         # logger.debug('Filtered heights from running v2 pairs coroutines: %s', collected_heights)
         if cardinality.count(final_results) != cardinality.count(collected_heights):
@@ -705,6 +718,7 @@ async def v2_pairs_data():
         else:
             if all(collected_heights[0] == y for y in collected_heights):
                 common_blockheight_reached = collected_heights[0]
+                common_block_timestamp = collected_block_timestamp[0]
                 logger.debug('Setting common blockheight reached to %s', collected_heights[0])
             else:
                 logger.error(
@@ -738,7 +752,7 @@ async def v2_pairs_data():
                     project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
                     reader_redis_conn=redis_conn
                 )
-                logger.debug('Sending v2 pairs summary payload to audit protocol: %s', summarized_payload)
+                logger.debug('Sending v2 pairs summary payload to audit protocol')
                 # send to audit protocol for snapshot to be committed
                 try:
                     response = await helper_functions.commit_payload(
@@ -792,29 +806,45 @@ async def v2_pairs_data():
                         data_flag=1
                     )
                     # store in snapshots zset
-                    await redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
-                        mapping={dag_block_payload_prefilled['data']['cid']: common_blockheight_reached}
+                    await asyncio.gather(
+                        redis_conn.zadd(
+                            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                            mapping={dag_block_payload_prefilled['data']['cid']: common_blockheight_reached}),
+                        redis_conn.zadd(
+                            name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                            mapping={dag_block_payload_prefilled['data']['cid']: common_block_timestamp}),
+                        redis_conn.set(
+                            name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(common_blockheight_reached),
+                            value=json.dumps(dag_block_payload_prefilled['data']['payload']),
+                            ex=1800  # TTL of 30 minutes?
+                        ),
+                        redis_conn.set(
+                            redis_keys.get_uniswap_pair_snapshot_last_block_height(),
+                            common_blockheight_reached)
                     )
-                    await redis_conn.set(
-                        name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(common_blockheight_reached),
-                        value=json.dumps(dag_block_payload_prefilled['data']['payload']),
-                        ex=1800  # TTL of 30 minutes?
-                    )
-                    await redis_conn.set(
-                        redis_keys.get_uniswap_pair_snapshot_last_block_height(),
-                        common_blockheight_reached
-                    )
-                    zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_snapshot_summary_zset())
+
+                    #prune zset
+                    block_height_zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_snapshot_summary_zset())
+                    
                     # TODO: snapshot history zset size limit configurable
-                    if zset_len > 20:
+                    if block_height_zset_len > 20:
                         _ = await redis_conn.zremrangebyrank(
                             name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
                             min=0,
-                            max=-1 * (zset_len - 20) + 1
+                            max=-1 * (block_height_zset_len - 20) + 1
                         )
                         logger.debug('Pruned snapshot summary CID zset by %s elements', _)
+
+                    pruning_timestamp = int(time()) - (60 * 60 * 24 + 60 * 60 * 2) # now - 26 hours
+                    _ = await redis_conn.zremrangebyscore(
+                        name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                        min=0,
+                        max=pruning_timestamp
+                    )
+                    logger.debug('Pruned snapshot summary Timestamp zset by %s elements', _)
+
                     logger.info('V2 pairs summary snapshot updated...')
+
                     break
 
         return final_results

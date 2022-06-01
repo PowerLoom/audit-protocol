@@ -4,6 +4,7 @@ from utils.redis_conn import RedisPool
 from utils import helper_functions, dag_utils
 from functools import wraps
 from pair_data_aggregation_service import v2_pairs_data
+from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
 import aioredis
 import asyncio
 import json
@@ -227,6 +228,7 @@ async def periodic_retrieval():
         await asyncio.gather(
             build_primary_indexes(),
             v2_pairs_data(),
+            v2_pairs_daily_stats_snapshotter(),
             asyncio.sleep(120)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')
