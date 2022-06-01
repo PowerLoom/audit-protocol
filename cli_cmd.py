@@ -161,6 +161,10 @@ def updateStoredProjectIds(namespace: str = typer.Argument('UNISWAPV2')):
         all_projectIds.append(pair_reserve_template)
         all_projectIds.append(pair_trade_volume_template)
 
+    all_projectIds.append(f"uniswap_V2PairsSummarySnapshot_{namespace}")
+    all_projectIds.append(f"uniswap_V2TokensSummarySnapshot_{namespace}")
+    all_projectIds.append(f"uniswap_V2DailyStatsSnapshot_{namespace}")
+    
     r.sadd('storedProjectIds', *all_projectIds)
 
 if __name__ == '__main__':
