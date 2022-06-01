@@ -305,9 +305,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 				log.Errorf("Slack Notify failed with error..retrying %d", retryCount)
 			}
 		}
-	} else {
-		verifier.dagChainHasIssues = false
 	}
+	verifier.dagChainHasIssues = false
 
 	for _, projectId := range verifier.projects {
 		verifier.previousCycleDagChainHeight[projectId] = currentCycleDAGchainHeight[projectId]
