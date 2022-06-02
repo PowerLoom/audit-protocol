@@ -235,7 +235,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				}
 				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 				retryCount++
-				log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", d.Body, err, retryCount)
+				log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", payloadCommit, err, retryCount)
 				continue
 			}
 			log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
@@ -376,7 +376,7 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
 				time.Sleep(5 * time.Second)
 			}
 			if retryCount == MAX_RETRY_COUNT {
-				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s and snapshotCID %s to Prost-Vigil with err %+v after max retries of %d",
+				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Prost-Vigil with err %+v after max retries of %d",
 					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
 				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 				return RETRY_IMMEDIATE
