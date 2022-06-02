@@ -149,12 +149,18 @@ async def create_dag_block(
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
 ) -> Tuple[str, DAGBlock]:
-    """ Get the last dag cid using the tentativeBlockHeight"""
-    last_dag_cid = await helper_functions.get_dag_cid(
-        project_id=project_id,
-        block_height=tentative_block_height - 1,
-        reader_redis_conn=reader_redis_conn
-    )
+    """ Get the last dag cid using the tentativeBlockHeight"""   
+    try:
+        future_dag_cid = helper_functions.get_dag_cid(
+            project_id=project_id,
+            block_height=tentative_block_height - 1,
+            reader_redis_conn=reader_redis_conn
+        ) 
+        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=settings.ipfs_timeout)
+    except asyncio.TimeoutError:
+        logger.error("Timeout while get dag cid from ipfs, Exception: %s", e, exc_info=True)
+        raise
+        
 
     """ Fill up the dag """
     dag = DAGBlock(
@@ -170,7 +176,8 @@ async def create_dag_block(
 
     """ Convert dag structure to json and put it on ipfs dag """
     try:
-        dag_cid = await put_dag_block(dag.json())
+        future_dag = put_dag_block(dag.json())
+        dag_cid = await asyncio.wait_for(future_dag, timeout=settings.ipfs_timeout)
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise

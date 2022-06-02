@@ -97,6 +97,7 @@ async def startup_boilerplate():
 
 
 @retry(
+    reraise=True,
     wait=wait_random_exponential(multiplier=1, max=30),
     stop=stop_after_attempt(3),
     retry=retry_if_exception(RedisLockAcquisitionFailure)
@@ -626,7 +627,11 @@ async def create_dag(
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
             rest_logger.debug(event_data)
-            asyncio.ensure_future(payload_to_dag_processor_task(event_data))
+            try:
+                asyncio.ensure_future(payload_to_dag_processor_task(event_data))
+            except asyncio.TimeoutError:
+                response_status_code = 500
+
     response.status_code = response_status_code
     return response_body
 
