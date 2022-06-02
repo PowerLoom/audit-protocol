@@ -9,6 +9,7 @@ import logging
 import sys
 from config import settings
 from bloom_filter import BloomFilter
+from tenacity import wait_random_exponential, stop_after_attempt, retry
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
@@ -299,6 +300,11 @@ async def fetch_blocks(
 
 # TODO: refactor function or introduce an enum/pydantic model against data_flag param for readability/maintainability
 # passing ints against a flag is terrible coding practice
+@retry(
+    reraise=True,
+    wait=wait_random_exponential(multiplier=1, max=30),
+    stop=stop_after_attempt(3),
+)
 async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0):
     """
         A function which will get dag block from ipfs and also increment its hits
