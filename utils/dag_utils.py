@@ -156,7 +156,7 @@ async def create_dag_block(
             block_height=tentative_block_height - 1,
             reader_redis_conn=reader_redis_conn
         ) 
-        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=settings.ipfs_timeout)
+        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=5)
     except asyncio.TimeoutError:
         logger.error("Timeout while get dag cid from ipfs, Exception: %s", e, exc_info=True)
         raise
@@ -177,7 +177,7 @@ async def create_dag_block(
     """ Convert dag structure to json and put it on ipfs dag """
     try:
         future_dag = put_dag_block(dag.json())
-        dag_cid = await asyncio.wait_for(future_dag, timeout=settings.ipfs_timeout)
+        dag_cid = await asyncio.wait_for(future_dag, timeout=5)
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise
