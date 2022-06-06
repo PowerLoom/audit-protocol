@@ -13,6 +13,7 @@ import logging
 import aioredis
 import hmac
 import sys
+from utils.ipfs_async import IPFSOpException
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.DEBUG)
@@ -168,10 +169,10 @@ async def create_dag_block(
             block_height=tentative_block_height - 1,
             reader_redis_conn=reader_redis_conn
         ) 
-        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=5)
-    except asyncio.TimeoutError:
-        logger.error("Timeout while get dag cid from ipfs, Exception: %s", e, exc_info=True)
-        raise
+        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=10)
+    except asyncio.TimeoutError as err:
+        logger.error("Timeout while get dag cid from ipfs, Exception: %s", err, exc_info=True)
+        raise IPFSOpException from err 
         
 
     """ Fill up the dag """
@@ -189,10 +190,10 @@ async def create_dag_block(
     """ Convert dag structure to json and put it on ipfs dag """
     try:
         future_dag = put_dag_block(dag.json())
-        dag_cid = await asyncio.wait_for(future_dag, timeout=5)
+        dag_cid = await asyncio.wait_for(future_dag, timeout=10)
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
-        raise
+        raise IPFSOpException from e
 
     """ Update redis keys """
     last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id)

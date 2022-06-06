@@ -22,6 +22,7 @@ import logging
 import sys
 import json
 import os
+from utils.ipfs_async import IPFSOpException
 
 
 class RedisLockAcquisitionFailure(Exception):
@@ -101,7 +102,7 @@ async def startup_boilerplate():
     reraise=True,
     wait=wait_random_exponential(multiplier=1, max=30),
     stop=stop_after_attempt(3),
-    retry=retry_if_exception(RedisLockAcquisitionFailure)
+    retry=(retry_if_exception(RedisLockAcquisitionFailure) | retry_if_exception(IPFSOpException))
 )
 async def payload_to_dag_processor_task(event_data):
     """ Get data from the event """
@@ -630,7 +631,7 @@ async def create_dag(
             rest_logger.debug(event_data)
             try:
                 asyncio.ensure_future(payload_to_dag_processor_task(event_data))
-            except asyncio.TimeoutError:
+            except IPFSOpException:
                 response_status_code = 500
 
     response.status_code = response_status_code

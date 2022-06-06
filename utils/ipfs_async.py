@@ -5,6 +5,8 @@ from config import settings
 import io
 import json
 
+class IPFSOpException(Exception):
+    pass
 
 class AsyncIpfsClient:
     def __init__(self, get, put, add_json, add_str, cat):
