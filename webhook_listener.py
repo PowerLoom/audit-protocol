@@ -34,6 +34,7 @@ formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d
 
 stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setLevel(logging.DEBUG)
+# not setting formatter here since logs are intercepted by loguru in the gunicorn launcher script and further adapted
 # stdout_handler.setFormatter(formatter)
 
 stderr_handler = logging.StreamHandler(sys.stderr)
@@ -614,7 +615,7 @@ async def create_dag(
     response_body = dict()
     response_status_code = 200
     # Verify the payload that has arrived.
-    if x_hook_signature:
+    if x_hook_signature and settings.webhook_listener.validate_header_sig:
         is_safe = dag_utils.check_signature(event_data, x_hook_signature)
         if is_safe:
             rest_logger.debug("The arriving payload has been verified")

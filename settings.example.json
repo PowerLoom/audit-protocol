@@ -3,7 +3,8 @@
 	"port": 9000,
 	"webhook_listener": {
 		"host": "127.0.0.1",
-		"port": 9002
+		"port": 9002,
+		"validate_header_sig": false
 	},
 	"rabbitmq": {
 		"user": "guest",

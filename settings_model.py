@@ -18,6 +18,7 @@ class ContractAddresses(BaseModel):
 class WebhookListener(BaseModel):
     host: str
     port: int
+    validate_header_sig: bool = False
 
 
 class HTTPClientConnection(BaseModel):
