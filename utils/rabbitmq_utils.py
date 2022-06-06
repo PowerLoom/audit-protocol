@@ -9,7 +9,7 @@ import functools
 import uuid
 
 formatter = logging.Formatter('%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s')
-logger = logging.getLogger('AuditProtocol|RabbitmqHelpers')
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setLevel(logging.DEBUG)

@@ -10,7 +10,7 @@ from utils.retrieval_utils import retrieve_block_data
 import logging.config
 import sys
 
-logger = logging.getLogger('AuditProtocol|PairDailyStatsSnapshotter')
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s %(msecs)d %(module)s-%(funcName)s: %(message)s")
 stdout_handler = logging.StreamHandler(sys.stdout)

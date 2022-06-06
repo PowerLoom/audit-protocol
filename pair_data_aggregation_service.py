@@ -19,7 +19,7 @@ import logging.config
 import os
 import sys
 
-logger = logging.getLogger('AuditProtocol|PairDataAggregation')
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s %(msecs)d %(module)s-%(funcName)s: %(message)s")
 stdout_handler = logging.StreamHandler(sys.stdout)

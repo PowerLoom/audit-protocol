@@ -6,10 +6,23 @@ import redis
 import contextlib
 import redis.exceptions as redis_exc
 import logging
+import sys
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(level="DEBUG")
+logger.setLevel(level=logging.DEBUG)
+formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.setFormatter(formatter)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.ERROR)
+stderr_handler.setFormatter(formatter)
+
+logger.addHandler(stdout_handler)
+logger.addHandler(stderr_handler)
 
 REDIS_CONN_CONF = {
     "host": settings_conf.redis.host,

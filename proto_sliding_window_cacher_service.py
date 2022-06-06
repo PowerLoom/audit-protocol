@@ -11,7 +11,7 @@ import json
 import logging
 import sys
 
-sliding_cacher_logger = logging.getLogger('AuditProtocol|SlidingWindowCachingService')
+sliding_cacher_logger = logging.getLogger(__name__)
 sliding_cacher_logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s %(msecs)d %(module)s-%(funcName)s: %(message)s")
 stdout_handler = logging.StreamHandler(sys.stdout)
