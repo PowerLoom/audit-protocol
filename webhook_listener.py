@@ -436,8 +436,10 @@ async def payload_to_dag_processor_task(event_data):
             )
 
             # clear from pending set
-            _ = await writer_redis_conn.zrem(
-                redis_keys.get_pending_transactions_key(project_id), pending_tx_set_entry
+            _ = await writer_redis_conn.zremrangebyscore(
+                name=redis_keys.get_pending_transactions_key(project_id), 
+                min=tentative_block_height_event_data, 
+                max=tentative_block_height_event_data
             )
             if _:
                 custom_logger.debug(
