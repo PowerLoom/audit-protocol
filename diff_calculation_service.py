@@ -77,7 +77,7 @@ class DiffCalculationCallbackWorker(Process):
         else:
             diff_service_main_logger.debug(
                 "The diff map calculated and cached | Project %s | At Height %s: %s",
-                command.project_id, diff_map
+                command.project_id, command.tentative_block_height, diff_map
             )
 
     def run(self) -> None:
