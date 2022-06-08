@@ -227,7 +227,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
 
 		for retryCount := 0; ; {
-			snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
+			snapshotCid, err := ipfsClient.DagPut(bytes.NewReader(payloadCommit.Payload), "dag-json", "dag-cbor")
 			if err != nil {
 				if retryCount == MAX_RETRY_COUNT {
 					log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, MAX_RETRY_COUNT, err)
