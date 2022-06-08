@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/go-redis/redis/v8"
 	shell "github.com/ipfs/go-ipfs-api"
+	"github.com/ipfs/go-ipfs-api/options"
 	log "github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/writer"
 	"github.com/streadway/amqp"
@@ -227,7 +228,11 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
 
 		for retryCount := 0; ; {
-			snapshotCid, err := ipfsClient.DagPut(bytes.NewReader(payloadCommit.Payload), "dag-json", "dag-cbor")
+			options.DagPutOptions()
+			snapshotCid, err := ipfsClient.DagPutWithOpts(bytes.NewReader(payloadCommit.Payload),
+				options.Dag.InputCodec("dag-json"),
+				options.Dag.StoreCodec("dag-cbor"),
+				options.Dag.Pin("true"))
 			if err != nil {
 				if retryCount == MAX_RETRY_COUNT {
 					log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, MAX_RETRY_COUNT, err)
