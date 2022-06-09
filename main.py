@@ -635,7 +635,9 @@ async def get_payloads(
                 diff_map = {}
             formatted_block['diff'] = diff_map
         blocks.append(formatted_block)
-        cur_dag_cid = formatted_block['prevDagCid']['/']
+        if formatted_block['prevDagCid']:
+            cur_dag_cid = formatted_block['prevDagCid']['/']
+            # the decrement in current_height will ensure the loop ends here so we dont need to set cur_dag_cid
         current_height = current_height - 1
         idx += 1
     return blocks
