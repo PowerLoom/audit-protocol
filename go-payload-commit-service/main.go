@@ -229,10 +229,11 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 
 		for retryCount := 0; ; {
 			options.DagPutOptions()
-			snapshotCid, err := ipfsClient.DagPutWithOpts(bytes.NewReader(payloadCommit.Payload),
-				options.Dag.InputCodec("dag-json"),
-				options.Dag.StoreCodec("dag-cbor"),
-				options.Dag.Pin("true"))
+			snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
+			/*snapshotCid, err := ipfsClient.DagPutWithOpts(bytes.NewReader(payloadCommit.Payload),
+			options.Dag.InputCodec("dag-json"),
+			options.Dag.StoreCodec("dag-cbor"),
+			options.Dag.Pin("true"))*/
 			if err != nil {
 				if retryCount == MAX_RETRY_COUNT {
 					log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, MAX_RETRY_COUNT, err)
@@ -347,7 +348,7 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
 	var snapshot Snapshot
 	var tokenHash string
-	snapshot.Type = "HOT_IPFS_DAG"
+	snapshot.Type = "HOT_IPFS"
 	snapshot.Cid = payload.SnapshotCID
 	snapshotBytes, err := json.Marshal(snapshot)
 	if err != nil {
