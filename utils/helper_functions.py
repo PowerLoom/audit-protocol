@@ -54,7 +54,7 @@ async def get_dag_cid(
             out = out.pop()
         dag_cid = out.decode('utf-8')
     else:
-        dag_cid = ""
+        dag_cid = None
 
     return dag_cid
 

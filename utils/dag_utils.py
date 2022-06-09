@@ -165,7 +165,7 @@ async def create_dag_block(
     """ Fill up the dag """
     dag = DAGBlock(
         height=tentative_block_height,
-        prevCid={'/': last_dag_cid},
+        prevCid={'/': last_dag_cid} if last_dag_cid else None,
         data={'cid': {'/': payload_cid}, 'type': 'HOT_IPFS_DAG'},
         txHash=tx_hash,
         timestamp=timestamp
