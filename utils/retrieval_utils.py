@@ -320,13 +320,13 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     assert data_flag in range(0, 3), \
         f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
 
-    """ Increment the hits of that block """
-    block_dag_hits_key = redis_keys.get_hits_dag_block_key()
-    if writer_redis_conn:
-        r = await writer_redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag_cid)
-        retrieval_utils_logger.debug("Block hit for: ")
-        retrieval_utils_logger.debug(block_dag_cid)
-        retrieval_utils_logger.debug(r)
+    """ TODO: Increment hits on block, to be used for some caching purpose """
+    # block_dag_hits_key = redis_keys.get_hits_dag_block_key()
+    # if writer_redis_conn:
+    #     r = await writer_redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag_cid)
+    #     retrieval_utils_logger.debug("Block hit for: ")
+    #     retrieval_utils_logger.debug(block_dag_cid)
+    #     retrieval_utils_logger.debug(r)
 
     """ Retrieve the DAG block from ipfs """
     _block = await ipfs_client.dag.get(block_dag_cid)
@@ -335,14 +335,15 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     if data_flag == 0:
         return block
 
-    payload = block['data']
+    payload = dict()
 
     """ Get the payload Data """
-    payload_data = await retrieve_payload_data(
-        payload_cid=block['data']['cid'],
-        writer_redis_conn=writer_redis_conn
+    payload_data = await dag_utils.get_dag_block(
+        dag_cid=block['data']['cid']['/']
     )
-    payload['payload'] = json.loads(payload_data)
+    payload['payload'] = payload_data
+    payload['cid'] = block['data']['cid']['/']
+    payload['type'] = block['data']['type']
 
     if data_flag == 1:
         block['data'] = payload

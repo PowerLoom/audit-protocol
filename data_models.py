@@ -1,5 +1,5 @@
 from pydantic import BaseModel, validator
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Any, Dict
 import json
 
 
@@ -141,10 +141,15 @@ class liquidityProcessedData(BaseModel):
     token1TradeVolumeUSD_7d: float
 
 
+class DAGBlockPayloadLinkedPath(BaseModel):
+    cid: Dict[str, str]
+    type: str
+
+
 class DAGBlock(BaseModel):
     height: int
-    prevCid: str
-    data: dict
+    prevCid: Dict[str, str]
+    data: DAGBlockPayloadLinkedPath
     txHash: str
     timestamp: int
 

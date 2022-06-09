@@ -136,26 +136,8 @@ async def put_dag_block(dag_json: str):
 
 
 async def get_payload(payload_cid: str):
-    """ Given the payload cid, retrieve the payload. """
-    e_obj = None
-    payload = ""
-    try:
-        async with async_timeout.timeout(settings.ipfs_timeout) as cm:
-            try:
-                payload = await ipfs_client.cat(cid=payload_cid)
-            except Exception as e:
-                e_obj = e
-    except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
-        e_obj = err
-
-    if e_obj or cm.expired:
-        logger.error(e_obj, exc_info=True)
-        return ""
-
-    if isinstance(payload, bytes):
-        payload = payload.decode('utf-8')
-
-    return payload
+    """ Given the payload cid, retrieve the payload. Payloads are also DAG blocks """
+    return await get_dag_block(payload_cid)
 
 
 async def create_dag_block(
@@ -183,8 +165,8 @@ async def create_dag_block(
     """ Fill up the dag """
     dag = DAGBlock(
         height=tentative_block_height,
-        prevCid=last_dag_cid,
-        data=dict(cid=payload_cid, type='HOT_IPFS'),
+        prevCid={'/': last_dag_cid},
+        data={'cid': {'/': payload_cid}, 'type': 'HOT_IPFS_DAG'},
         txHash=tx_hash,
         timestamp=timestamp
     )

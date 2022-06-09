@@ -347,7 +347,7 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
 	var snapshot Snapshot
 	var tokenHash string
-	snapshot.Type = "HOT_IPFS"
+	snapshot.Type = "HOT_IPFS_DAG"
 	snapshot.Cid = payload.SnapshotCID
 	snapshotBytes, err := json.Marshal(snapshot)
 	if err != nil {
