@@ -339,10 +339,10 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
 
     """ Get the payload Data """
     payload_data = await dag_utils.get_dag_block(
-        dag_cid=block['data']['cid']['/']
+        dag_cid=block['data']['cid']
     )
     payload['payload'] = payload_data
-    payload['cid'] = block['data']['cid']['/']
+    payload['cid'] = block['data']['cid']
     payload['type'] = block['data']['type']
 
     if data_flag == 1:

@@ -234,16 +234,16 @@ def calculate_diff(
 ):
     # cache last seen diffs
     dag_height = dag.height
-    payload_cid = dag.data.cid['/']
+    payload_cid = dag.data.cid
     prev_dag = ipfs_client.dag.get(dag.prevCid['/'])
     prev_dag = prev_dag.as_json()
-    prev_payload_cid = prev_dag['data']['cid']['/']
+    prev_payload_cid = prev_dag['data']['cid']
     if prev_payload_cid != payload_cid:
         diff_map = dict()
-        _prev_data = ipfs_client.dag.get(prev_payload_cid)
-        prev_data = _prev_data.as_json()
-        _payload = ipfs_client.dag.get(payload_cid)
-        payload = _payload.as_json()
+        _prev_data = ipfs_client.cat(prev_payload_cid)
+        prev_data = json.loads(_prev_data)
+        _payload = ipfs_client.cat(payload_cid)
+        payload = json.loads(_payload)
         utils_logger.debug('Before payload clean up')
         utils_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
         # load diff rules
