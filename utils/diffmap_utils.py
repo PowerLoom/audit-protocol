@@ -3,8 +3,8 @@ from utils import redis_keys
 from config import settings
 from copy import deepcopy
 from data_models import DAGBlock
+from tenacity import retry, wait_random_exponential, stop_after_attempt
 import redis
-import aioredis
 import json
 import logging.handlers
 import sys
@@ -75,7 +75,6 @@ def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, 
 def clean_map_members(data, key_rules):
     data_copy = deepcopy(data)
     top_level_keys_to_be_deleted = set()
-    data_copy = json.loads(data_copy)
     for k in data_copy.keys():
         if k and k in key_rules.keys():
             # print(f'Processing key rule for {k}')
@@ -221,8 +220,13 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
     return comparison_results
 
 
+@retry(
+    reraise=True,
+    wait=wait_random_exponential(multiplier=1, max=30),
+    stop=stop_after_attempt(3)
+)
 def calculate_diff(
-        dag_cid: str,
+        dag_cid,
         dag: DAGBlock,
         project_id: str,
         ipfs_client,
@@ -230,79 +234,76 @@ def calculate_diff(
 ):
     # cache last seen diffs
     dag_height = dag.height
-    if dag.prevCid:
-        payload_cid = dag.data['cid']
-        prev_dag = ipfs_client.dag.get(dag_cid)
-        prev_dag = prev_dag.as_json()
-        prev_payload_cid = prev_dag['data']['cid']
-        if prev_payload_cid != payload_cid:
-            diff_map = dict()
-            _prev_data = ipfs_client.cat(prev_payload_cid)
-            prev_data = _prev_data.decode('utf-8')
-            prev_data = json.loads(prev_data)
-            _payload = ipfs_client.cat(payload_cid)
-            payload = _payload.decode('utf-8')
-            payload = json.loads(payload)
-            utils_logger.debug('Before payload clean up')
-            utils_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
-            # load diff rules
-            diff_rules_key = redis_keys.get_diff_rules_key(project_id=project_id)
-            out: bytes = writer_redis_conn.get(diff_rules_key)
-            diff_rules = list()
-            if out:
-                diff_rules = out.decode('utf-8')
-                try:
-                    diff_rules = json.loads(diff_rules)
-                except json.JSONDecodeError as jerr:
-                    utils_logger.error(jerr, exc_info=True)
-                    diff_rules = list()
-            # pass diff rules
-            result = process_payloads_for_diff(
-                project_id,
-                prev_data,
-                payload,
-                diff_rules
+    payload_cid = dag.data.cid['/']
+    prev_dag = ipfs_client.dag.get(dag.prevCid['/'])
+    prev_dag = prev_dag.as_json()
+    prev_payload_cid = prev_dag['data']['cid']['/']
+    if prev_payload_cid != payload_cid:
+        diff_map = dict()
+        _prev_data = ipfs_client.dag.get(prev_payload_cid)
+        prev_data = _prev_data.as_json()
+        _payload = ipfs_client.dag.get(payload_cid)
+        payload = _payload.as_json()
+        utils_logger.debug('Before payload clean up')
+        utils_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
+        # load diff rules
+        diff_rules_key = redis_keys.get_diff_rules_key(project_id=project_id)
+        out: bytes = writer_redis_conn.get(diff_rules_key)
+        diff_rules = list()
+        if out:
+            diff_rules = out.decode('utf-8')
+            try:
+                diff_rules = json.loads(diff_rules)
+            except json.JSONDecodeError as jerr:
+                utils_logger.error(jerr, exc_info=True)
+                diff_rules = list()
+        # pass diff rules
+        result = process_payloads_for_diff(
+            project_id,
+            prev_data,
+            payload,
+            diff_rules
+        )
+        utils_logger.debug('After payload clean up and comparison if any')
+        utils_logger.debug(result)
+        cur_data_copy = result['cur_copy']
+        prev_data_copy = result['prev_copy']
+
+        for k, v in cur_data_copy.items():
+            if k in result['payload_changed'] and result['payload_changed'][k]:
+                diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
+
+        if diff_map:
+            # rest_logger.debug("DAG at point B:")
+            # rest_logger.debug(dag)
+            diff_data = {
+                'cur': {
+                    'height': dag_height,
+                    'payloadCid': payload_cid,
+                    'dagCid': dag_cid,
+                    'txHash': dag.txHash,
+                    'timestamp': dag.timestamp
+                },
+                'prev': {
+                    'height': prev_dag['height'],
+                    'payloadCid': prev_payload_cid,
+                    'dagCid': dag.prevCid['/']
+                    # this will be used to fetch the previous block timestamp from the DAG
+                },
+                'diff': diff_map
+            }
+            diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(project_id)
+            writer_redis_conn.zadd(
+                name=diff_snapshots_cache_zset,
+                mapping={json.dumps(diff_data): int(dag.height)}
             )
-            utils_logger.debug('After payload clean up and comparison if any')
-            utils_logger.debug(result)
-            cur_data_copy = result['cur_copy']
-            prev_data_copy = result['prev_copy']
-
-            for k, v in cur_data_copy.items():
-                if k in result['payload_changed'] and result['payload_changed'][k]:
-                    diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
-
-            if diff_map:
-                # rest_logger.debug("DAG at point B:")
-                # rest_logger.debug(dag)
-                diff_data = {
-                    'cur': {
-                        'height': dag_height,
-                        'payloadCid': payload_cid,
-                        'dagCid': dag_cid,
-                        'txHash': dag.txHash,
-                        'timestamp': dag.timestamp
-                    },
-                    'prev': {
-                        'height': prev_dag['height'],
-                        'payloadCid': prev_payload_cid,
-                        'dagCid': dag.prevCid
-                        # this will be used to fetch the previous block timestamp from the DAG
-                    },
-                    'diff': diff_map
-                }
-                diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
-                writer_redis_conn.zadd(
-                    name=diff_snapshots_cache_zset,
-                    mapping={json.dumps(diff_data): int(dag.height)}
-                )
-                latest_seen_snapshots_htable = redis_keys.get_last_seen_snapshots_key()
-                writer_redis_conn.hset(
-                    latest_seen_snapshots_htable,
-                    project_id,
-                    json.dumps(diff_data)
-                )
-                return diff_data
+            latest_seen_snapshots_htable = redis_keys.get_last_seen_snapshots_key()
+            writer_redis_conn.hset(
+                latest_seen_snapshots_htable,
+                project_id,
+                json.dumps(diff_data)
+            )
+            return diff_data
 
     return {}
 

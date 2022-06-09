@@ -56,10 +56,11 @@ class DiffCalculationCallbackWorker(Process):
             diff_service_main_logger.info('Error converting incoming request into data model: %s', body)
             return
         diff_service_main_logger.debug(body)
+
         dag_block = DAGBlock(
             height=command.tentative_block_height,
-            prevCid=command.lastDagCid,
-            data=dict(cid=command.payloadCid, type='HOT_IPFS'),
+            prevCid={'/': command.lastDagCid},
+            data={'cid': {'/': command.payloadCid}, 'type': 'HOT_IPFS'},
             txHash=command.txHash,
             timestamp=command.timestamp
         )
@@ -74,6 +75,11 @@ class DiffCalculationCallbackWorker(Process):
             )
         except json.decoder.JSONDecodeError as jerr:
             diff_service_main_logger.debug("There was an error while decoding the JSON data: %s", jerr, exc_info=True)
+        except Exception as e:
+            diff_service_main_logger.debug(
+                "There was an exception while calculating diff at %s: %s",
+                command.tentative_block_height, e, exc_info=True
+            )
         else:
             diff_service_main_logger.debug(
                 "The diff map calculated and cached | Project %s | At Height %s: %s",

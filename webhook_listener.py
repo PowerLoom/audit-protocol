@@ -459,33 +459,38 @@ async def payload_to_dag_processor_task(event_data):
 
             # process diff at this new block height
             # send out to processing queue of diff calculation service
-            diff_calculation_request = DiffCalculationRequest(
-                project_id=project_id,
-                dagCid=_dag_cid,
-                lastDagCid=dag_block.prevCid,
-                payloadCid=event_data['event_data']['snapshotCid'],
-                txHash=event_data['txHash'],
-                timestamp=event_data['event_data']['timestamp'],
-                tentative_block_height=tentative_block_height_event_data
-            )
-            async with app.rmq_channel_pool.acquire() as channel:
-                # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
-                exchange = await channel.get_exchange(
-                    settings.rabbitmq.setup['core']['exchange']
+            if dag_block.prevCid:
+                diff_calculation_request = DiffCalculationRequest(
+                    project_id=project_id,
+                    dagCid=_dag_cid,
+                    lastDagCid=dag_block.prevCid['/'],
+                    payloadCid=event_data['event_data']['snapshotCid'],
+                    txHash=event_data['txHash'],
+                    timestamp=event_data['event_data']['timestamp'],
+                    tentative_block_height=tentative_block_height_event_data
                 )
-                message = Message(
-                    diff_calculation_request.json().encode('utf-8'),
-                    delivery_mode=DeliveryMode.PERSISTENT,
-                )
-                await exchange.publish(
-                    message=message,
-                    routing_key='diff-calculation'
-                )
+                async with app.rmq_channel_pool.acquire() as channel:
+                    # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
+                    exchange = await channel.get_exchange(
+                        settings.rabbitmq.setup['core']['exchange']
+                    )
+                    message = Message(
+                        diff_calculation_request.json().encode('utf-8'),
+                        delivery_mode=DeliveryMode.PERSISTENT,
+                    )
+                    await exchange.publish(
+                        message=message,
+                        routing_key='diff-calculation'
+                    )
+                    custom_logger.debug(
+                        'Published diff calculation request | At height %s | Project %s',
+                        tentative_block_height_event_data, project_id
+                    )
+            else:
                 custom_logger.debug(
-                    'Published diff calculation request | At height %s | Project %s',
+                    'No diff calculation request to publish for first block | At height %s | Project %s',
                     tentative_block_height_event_data, project_id
                 )
-
             # send commit ID confirmation callback
             if cb_url:
                 await send_commit_callback(
@@ -541,36 +546,41 @@ async def payload_to_dag_processor_task(event_data):
                     })
                     cur_max_height_project = _tt_block_height
                     # send out diff calculation request
-                    diff_calculation_request = DiffCalculationRequest(
-                        project_id=project_id,
-                        dagCid=_dag_cid,
-                        lastDagCid=dag_block.prevCid,
-                        payloadCid=pending_tx_obj.event_data.snapshotCid,
-                        txHash=pending_tx_obj.event_data.txHash,
-                        timestamp=pending_tx_obj.event_data.timestamp,
-                        tentative_block_height=_tt_block_height
-                    )
-                    async with app.rmq_channel_pool.acquire() as channel:
-                        # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
-                        # always ensure exchanges and queues are initialized as part of launch sequence,
-                        # not to be checked here
-                        exchange = await channel.get_exchange(
-                            name=settings.rabbitmq.setup['core']['exchange'],
-                            ensure=False
+                    if dag_block.prevCid:
+                        diff_calculation_request = DiffCalculationRequest(
+                            project_id=project_id,
+                            dagCid=_dag_cid,
+                            lastDagCid=dag_block.prevCid['/'],
+                            payloadCid=pending_tx_obj.event_data.snapshotCid,
+                            txHash=pending_tx_obj.event_data.txHash,
+                            timestamp=pending_tx_obj.event_data.timestamp,
+                            tentative_block_height=_tt_block_height
                         )
-                        message = Message(
-                            diff_calculation_request.json().encode('utf-8'),
-                            delivery_mode=DeliveryMode.PERSISTENT,
-                        )
-                        await exchange.publish(
-                            message=message,
-                            routing_key='diff-calculation'
-                        )
+                        async with app.rmq_channel_pool.acquire() as channel:
+                            # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
+                            # always ensure exchanges and queues are initialized as part of launch sequence,
+                            # not to be checked here
+                            exchange = await channel.get_exchange(
+                                name=settings.rabbitmq.setup['core']['exchange'],
+                                ensure=False
+                            )
+                            message = Message(
+                                diff_calculation_request.json().encode('utf-8'),
+                                delivery_mode=DeliveryMode.PERSISTENT,
+                            )
+                            await exchange.publish(
+                                message=message,
+                                routing_key='diff-calculation'
+                            )
+                            custom_logger.debug(
+                                'Published diff calculation request | At height %s | Project %s',
+                                _tt_block_height, project_id
+                            )
+                    else:
                         custom_logger.debug(
-                            'Published diff calculation request | At height %s | Project %s',
+                            'No diff calculation request to publish for first block | At height %s | Project %s',
                             _tt_block_height, project_id
                         )
-
                     await dag_utils.clear_payload_commit_processing_logs(
                         project_id=project_id,
                         payload_commit_id=pending_tx_obj.event_data.payloadCommitId,

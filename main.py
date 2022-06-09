@@ -586,13 +586,12 @@ async def get_payloads(
     )
 
     current_height = to_height
-    prev_dag_cid = ""
-    prev_payload_cid = None
+    cur_dag_cid = None
     idx = 0
     blocks = list()
     while current_height >= from_height:
         # rest_logger.debug("Fetching block at height: %s", current_height)
-        if not prev_dag_cid:
+        if not cur_dag_cid:
             project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
             r = await reader_redis_conn.zrangebyscore(
                 name=project_cids_key_zset,
@@ -601,99 +600,44 @@ async def get_payloads(
                 withscores=False
             )
             if r:
-                prev_dag_cid = r[0].decode('utf-8')
+                cur_dag_cid = r[0].decode('utf-8')
             else:
                 return {'error': 'NoRecordsFound'}
         data_flag = 1 if data else 0
         # NOTE: not yet clear why the earlier call to retrieval_utils.fetch_blocks() would not populate `dag_blocks` map
-        if dag_blocks.get(prev_dag_cid) is None:
+        if dag_blocks.get(cur_dag_cid) is None:
             # rest_logger.debug("Fetching block from IPFS")
-            block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
+            block = await retrieval_utils.retrieve_block_data(cur_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
         else:
             # rest_logger.debug("Block already fetched")
-            block = dag_blocks.get(prev_dag_cid)
+            block = dag_blocks.get(cur_dag_cid)
         # rest_logger.debug("Block Retrieved: ")
         # rest_logger.debug(block)
         formatted_block = dict()
-        formatted_block['dagCid'] = prev_dag_cid
+        formatted_block['dagCid'] = cur_dag_cid
         formatted_block.update({k: v for k, v in block.items()})
         formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
 
+        # NOTE: removed a duplicate diff generation logic.
         # Get the diff_map between the current and previous snapshot
         # rest_logger.debug('Diff flag set as: %s', diffs)
         if diffs:
-            if prev_payload_cid:
-                if prev_payload_cid != block['data']['cid']:
-                    blocks[idx - 1]['payloadChanged'] = False
-                    diff_key = f"CidDiff:{prev_payload_cid}:{block['data']['cid']}"
-                    diff_b = await reader_redis_conn.get(diff_key)
-                    diff_map = dict()
-                    if not diff_b:
-                        # diff not cached already
-                        # rest_logger.debug('Diff not cached | New CID | Old CID')
-                        # rest_logger.debug(blocks[idx - 1]['data']['cid'])
-                        # rest_logger.debug(block['data']['cid'])
-
-                        """ If the payload is not yet retrieved, then get if from ipfs """
-                        if 'payload' in formatted_block['data'].keys():
-                            prev_data = formatted_block['data']['payload']
-                        else:
-                            prev_data = await retrieval_utils.retrieve_payload_data(block['data']['cid'], writer_redis_conn=writer_redis_conn)
-                        # rest_logger.debug("Got the payload data: ")
-                        # rest_logger.debug(prev_data)
-
-                        if 'payload' in blocks[idx - 1]['data'].keys():
-                            cur_data = blocks[idx - 1]['data']['payload']
-                        else:
-                            cur_data = await retrieval_utils.retrieve_payload_data(
-                                blocks[idx-1]['data']['cid'],
-                                writer_redis_conn=writer_redis_conn
-                            )
-                        diff_rules = await utils.diffmap_utils.get_diff_rules(
-                            project_id=projectId,
-                            reader_redis_conn=reader_redis_conn
-                        )
-                        result = process_payloads_for_diff(
-                            project_id=projectId,
-                            prev_data=prev_data,
-                            cur_data=cur_data,
-                            diff_rules=diff_rules
-                        )
-                        # rest_logger.debug('After payload clean up and comparison if any')
-                        # rest_logger.debug(result)
-                        cur_data_copy = result['cur_copy']
-                        prev_data_copy = result['prev_copy']
-
-                        # calculate diff
-                        prev_data = json.loads(prev_data)
-                        cur_data = json.loads(cur_data)
-                        for k, v in cur_data_copy.items():
-                            if k in result['payload_changed'] and result['payload_changed'][k]:
-                                diff_map[k] = {
-                                    'old': prev_data.get(k),
-                                    'new': cur_data.get(k)
-                                }
-
-                        if len(diff_map):
-                            rest_logger.debug(f'Found diff in first time calculation{diff_map}')
-                        # cache in redis
-                        await writer_redis_conn.set(diff_key, json.dumps(diff_map))
-                    else:
-                        diff_map = json.loads(diff_b)
-                        # rest_logger.debug('Found Diff in Cache! | New CID | Old CID | Diff')
-                        # rest_logger.debug(blocks[idx - 1]['data']['cid'])
-                        # rest_logger.debug(block['data']['cid'])
-                        # rest_logger.debug(diff_map)
-                    blocks[idx - 1]['diff'] = diff_map
-                    if len(diff_map.keys()):
-                        blocks[idx - 1]['payloadChanged'] = True
-                else:  # If the cid of current snapshot is the same as that of the previous snapshot
-                    blocks[idx - 1]['payloadChanged'] = False
-            prev_payload_cid = block['data']['cid']
-            blocks.append(formatted_block)
-            prev_dag_cid = formatted_block['prevDagCid']
-            current_height = current_height - 1
-            idx += 1
+            # FIXME: find a better way to get the entire chunk of diffs within the height range. insert each accordingly
+            diff_at_height_r = await reader_redis_conn.zrangebyscore(
+                name=redis_keys.get_diff_snapshots_key(projectId),
+                min=current_height,
+                max=current_height,
+                withscores=False
+            )
+            if diff_at_height_r:
+                diff_map = json.loads(diff_at_height_r[0])['diff']
+            else:
+                diff_map = {}
+            formatted_block['diff'] = diff_map
+        blocks.append(formatted_block)
+        cur_dag_cid = formatted_block['prevDagCid']
+        current_height = current_height - 1
+        idx += 1
     return blocks
 
 

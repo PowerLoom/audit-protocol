@@ -157,7 +157,7 @@ class DAGBlock(BaseModel):
 class DiffCalculationRequest(BaseModel):
     project_id: str
     dagCid: str
-    lastDagCid: str
+    lastDagCid: Optional[str] = None
     payloadCid: str
     txHash: str
     tentative_block_height: int
