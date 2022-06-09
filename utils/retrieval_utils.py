@@ -338,11 +338,10 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     payload = dict()
 
     """ Get the payload Data """
-    payload_data = await dag_utils.get_dag_block(
-        dag_cid=block['data']['cid']
-    )
+    payload_data = await ipfs_client.cat(block['data']['cid']['/'])
+    payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
-    payload['cid'] = block['data']['cid']
+    payload['cid'] = block['data']['cid']['/']
     payload['type'] = block['data']['type']
 
     if data_flag == 1:

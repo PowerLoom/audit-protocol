@@ -142,7 +142,7 @@ class liquidityProcessedData(BaseModel):
 
 
 class DAGBlockPayloadLinkedPath(BaseModel):
-    cid: str
+    cid: Dict[str, str]
     type: str
 
 

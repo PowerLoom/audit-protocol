@@ -60,7 +60,7 @@ class DiffCalculationCallbackWorker(Process):
         dag_block = DAGBlock(
             height=command.tentative_block_height,
             prevCid={'/': command.lastDagCid},
-            data={'cid': command.payloadCid, 'type': 'HOT_IPFS'},
+            data={'cid': {'/': command.payloadCid}, 'type': 'HOT_IPFS'},
             txHash=command.txHash,
             timestamp=command.timestamp
         )
