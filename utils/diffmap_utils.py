@@ -75,6 +75,7 @@ def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, 
 def clean_map_members(data, key_rules):
     data_copy = deepcopy(data)
     top_level_keys_to_be_deleted = set()
+    data_copy = json.loads(data_copy)
     for k in data_copy.keys():
         if k and k in key_rules.keys():
             # print(f'Processing key rule for {k}')

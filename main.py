@@ -653,7 +653,7 @@ async def get_payloads(
                             project_id=projectId,
                             reader_redis_conn=reader_redis_conn
                         )
-                        result = await process_payloads_for_diff(
+                        result = process_payloads_for_diff(
                             project_id=projectId,
                             prev_data=prev_data,
                             cur_data=cur_data,
@@ -665,6 +665,8 @@ async def get_payloads(
                         prev_data_copy = result['prev_copy']
 
                         # calculate diff
+                        prev_data = json.loads(prev_data)
+                        cur_data = json.loads(cur_data)
                         for k, v in cur_data_copy.items():
                             if k in result['payload_changed'] and result['payload_changed'][k]:
                                 diff_map[k] = {
