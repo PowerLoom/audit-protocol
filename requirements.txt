@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 pygate_grpc
-git+https://github.com/blockvigil/maticvigil-python-sdk.git
+git+https://github.com/blockvigil/maticvigil-python-sdk.git@0e364f5ec557d3f7cbd708aed65ca30f9e0fb08c
 eth_utils
 async_timeout
 hiredis
