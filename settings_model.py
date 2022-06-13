@@ -80,6 +80,7 @@ class Settings(BaseModel):
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
     contract_addresses: Union[ContractAddresses, dict]
+    calculate_diff: bool
 
     @validator("bloom_filter_settings", "webhook_listener", "redis", "redis_reader")
     def convert_to_models(cls, data, values, **kwargs):
