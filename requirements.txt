@@ -38,4 +38,3 @@ rich
 cardinality
 httpx==0.22.0
 typer==0.3.2
-typing-extensions==3.7.4.3
