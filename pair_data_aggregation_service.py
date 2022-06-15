@@ -33,6 +33,8 @@ stderr_handler.setLevel(logging.ERROR)
 logger.addHandler(stderr_handler)
 logger.debug("Initialized logger")
 
+NAMESPACE = 'UNISWAPV2'
+
 #TODO: put rpc url in settings
 w3 = Web3(Web3.HTTPProvider("https://rpc-eth-arch.blockvigil.com/v1/2b3e1495cc8d5f27178974aab3f815c24ad4e201"))
 # TODO: Use async http provider once it is considered stable by the web3.py project maintainers
@@ -218,7 +220,7 @@ def calculate_pair_trade_volume(dag_chain):
     return [total_volume, fees, token0_volume, token1_volume, token0_volume_usd, token1_volume_usd]
 
 async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contract_address):
-    project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_UNISWAPV2'
+    project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_{NAMESPACE}'
 
     # liquidty data
     liquidity_head_marker = await writer_redis_conn.get(redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '24h'))
@@ -308,8 +310,8 @@ async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contrac
 
 async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Redis, pair_contract_address):
     try:
-        project_id_trade_volume = f'uniswap_pairContract_trade_volume_{pair_contract_address}_UNISWAPV2'
-        project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_UNISWAPV2'
+        project_id_trade_volume = f'uniswap_pairContract_trade_volume_{pair_contract_address}_{NAMESPACE}'
+        project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_{NAMESPACE}'
 
         # get head, tail and sliding window data from redis
         [
