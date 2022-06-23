@@ -5,7 +5,7 @@ from functools import partial
 from time import time
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
-from data_models import liquidityProcessedData
+from data_models import liquidityProcessedData, uniswapPairsSnapshotZset
 from utils import helper_functions
 from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
@@ -807,11 +807,17 @@ async def v2_pairs_data():
                         writer_redis_conn=redis_conn,
                         data_flag=1
                     )
+
+                    snapshotZsetEntry = uniswapPairsSnapshotZset(
+                        cid=dag_block_payload_prefilled['data']['cid'],
+                        txHash=dag_block_payload_prefilled['txHash']
+                    )
+
                     # store in snapshots zset
                     await asyncio.gather(
                         redis_conn.zadd(
                             name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
-                            mapping={dag_block_payload_prefilled['data']['cid']: common_blockheight_reached}),
+                            mapping={snapshotZsetEntry.json(): common_blockheight_reached}),
                         redis_conn.zadd(
                             name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
                             mapping={dag_block_payload_prefilled['data']['cid']: common_block_timestamp}),

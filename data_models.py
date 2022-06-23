@@ -162,3 +162,8 @@ class DiffCalculationRequest(BaseModel):
     txHash: str
     tentative_block_height: int
     timestamp: int
+
+
+class uniswapPairsSnapshotZset(BaseModel):
+    cid: str
+    txHash: str
