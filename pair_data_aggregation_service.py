@@ -127,8 +127,6 @@ async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer
     )
     pair_tokens_data = await writer_redis_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(pair_address))
     
-    logger.debug(f"Fetch token metadata, token0:{token0Addr} token1:{token1Addr}")
-    
     if pair_tokens_data:
         token0_decimals = pair_tokens_data[b"token0_decimals"].decode('utf-8')
         token1_decimals = pair_tokens_data[b"token1_decimals"].decode('utf-8')
@@ -389,7 +387,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             block_timestamp_total_reserve
         ] = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address)
         if not total_liquidity:
-            logger.error(f"Avoiding pair data calculation as liquidity data is not available - projectId:{project_id_token_reserve}")
+            logger.error(f"Error, exit process as liquidity data is not available - projectId:{project_id_token_reserve}")
             return
 
         if not cached_trade_volume_data:
@@ -438,7 +436,6 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             cids_volume_7d = volume_cids[1]
             block_height_trade_volume = int(dag_chain_24h[0]['data']['payload']['chainHeightRange']['end'])
         else:
-            logger.debug(f"Applying sliding window for trade volume on pair: {pair_contract_address}")
             
             sliding_window_front_24h = []
             sliding_window_back_24h = []
@@ -486,11 +483,9 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 )
             
             if not sliding_window_front_24h and not sliding_window_back_24h:
-                logger.error(f"Avoiding calculation as new 24h sliding window has not been created:{pair_contract_address}")
                 return
             
             if not sliding_window_front_7d and not sliding_window_back_7d:
-                logger.error(f"Avoiding calculation as new 7d sliding window has not been created:{pair_contract_address}")
                 return
 
             sliding_window_front_24h_cids = []

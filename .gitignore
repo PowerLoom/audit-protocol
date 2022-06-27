@@ -23,3 +23,5 @@ temp_files/
 
 docker/account_info.json
 docker/settings.json
+
+test.py

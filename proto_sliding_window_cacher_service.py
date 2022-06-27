@@ -1,7 +1,7 @@
 from typing import final
 from utils import redis_keys
 from utils.redis_conn import RedisPool
-from utils import helper_functions, dag_utils
+from utils import helper_functions, dag_utils, retrieval_utils
 from functools import wraps
 from pair_data_aggregation_service import v2_pairs_data
 from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
@@ -54,12 +54,7 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
         project_id=project_id, block_height=head, reader_redis_conn=redis_conn
     )
     head_block = await dag_utils.get_dag_block(head_cid)
-    sliding_cacher_logger.debug(
-        'Got head block at %s | Project ID : %s | DAG CID: %s \n%s',
-        head, project_id, head_cid, head_block
-    )
     present_ts = int(head_block['timestamp'])
-    sliding_cacher_logger.debug('Head time stamp: %s', present_ts)
     while current_height < head:
         dag_cid = await helper_functions.get_dag_cid(
             project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
@@ -79,12 +74,7 @@ async def find_tail(head: int, project_id: str, time_period_ts: int, redis_conn:
         project_id=project_id, block_height=head, reader_redis_conn=redis_conn
     )
     head_block = await dag_utils.get_dag_block(head_cid)
-    sliding_cacher_logger.debug(
-        'Got head block at %s | Project ID : %s | DAG CID: %s \n%s',
-        head, project_id, head_cid, head_block
-    )
     present_ts = int(head_block['timestamp'])
-    sliding_cacher_logger.debug('Head time stamp: %s', present_ts)
     while current_height < head:
         dag_cid = await helper_functions.get_dag_cid(
             project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
@@ -102,7 +92,7 @@ async def find_tail(head: int, project_id: str, time_period_ts: int, redis_conn:
 async def build_primary_index(
         project_id: str,
         time_period: str,
-        common_minimum_height: int,
+        height_map: dict,
         semaphore: asyncio.BoundedSemaphore,
         writer_redis_conn: aioredis.Redis
 ):
@@ -114,7 +104,7 @@ async def build_primary_index(
     #  1. maybe don't store it? 2. or, might be useful state information?
     idx_head_key = redis_keys.get_sliding_window_cache_head_marker(project_id, time_period)
     idx_tail_key = redis_keys.get_sliding_window_cache_tail_marker(project_id, time_period)
-    head_marker = common_minimum_height
+    head_marker = height_map.get('dag_block_height')
     tail_marker = None
     time_period_ts = convert_time_period_str_to_timestamp(time_period)
     markers = [await writer_redis_conn.get(k) for k in [idx_head_key, idx_tail_key]]
@@ -143,10 +133,6 @@ async def build_primary_index(
             # do not update markers in cache
             return
         else:
-            sliding_cacher_logger.debug(
-                'Sought tail ahead to %s from %s | %s data | Project ID: %s',
-                tail_ahead, tail_marker, time_period, project_id
-            )
             await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id, time_period),
                                         head_marker)
             await writer_redis_conn.set(redis_keys.get_sliding_window_cache_tail_marker(project_id, time_period),
@@ -159,6 +145,7 @@ async def build_primary_index(
 @acquire_bounded_semaphore
 async def get_max_height_pair_project(
     project_id: str,
+    height_map: dict,
     semaphore: asyncio.BoundedSemaphore,
     writer_redis_conn: aioredis.Redis
 ):
@@ -166,11 +153,32 @@ async def get_max_height_pair_project(
     max_height = await writer_redis_conn.get(project_height_key)
     try:
         max_height = int(max_height.decode('utf-8'))
+        dag_cid = await helper_functions.get_dag_cid(
+            project_id=project_id, block_height=max_height, reader_redis_conn=writer_redis_conn
+        )
+        dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+
+        height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
     except Exception as err:
         sliding_cacher_logger.error('Can\'t fetch max block height against project ID: %s | error_msg: %s', project_id, err)
         max_height = -1
     finally:
         return max_height
+
+
+async def adjust_projects_head_by_source_height(source_height_map, smallest_source_height, writer_redis_conn):
+    for project_map_id, project_map in source_height_map.items():
+        dag_block_height = int(project_map["dag_block_height"])
+        cycles = 0
+        while cycles <= 10 and int(smallest_source_height) != int(source_height_map[project_map_id]["source_height"]):
+            cycles += 1
+            dag_block_height -= 1
+            dag_cid = await helper_functions.get_dag_cid(
+                project_id=project_map_id, block_height=dag_block_height, reader_redis_conn=writer_redis_conn
+            )
+            dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+            source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
+            source_height_map[project_map_id]["dag_block_height"] = dag_block_height
 
 
 async def build_primary_indexes():
@@ -183,6 +191,7 @@ async def build_primary_indexes():
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
     project_id_to_register_series = dict(zip(registered_project_ids, registered_projects_ts))
+    project_source_height_map = {}
     
     
     tasks = list()
@@ -190,33 +199,31 @@ async def build_primary_indexes():
     for project_id, ts_arr in project_id_to_register_series.items():
         fn = get_max_height_pair_project(**{
             'project_id': project_id,
+            'height_map': project_source_height_map,
             'semaphore': semaphore,
             'writer_redis_conn': writer_redis_conn
         })
         tasks.append(fn)
-    max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.gather(*tasks, return_exceptions=True)
 
-    # set common min height to max of all projects
-    common_minimum_height = max(max_height_array)
+    smallest_source_height = project_source_height_map[next(iter(project_source_height_map))]["source_height"]
+    for project_map_id, project_map in project_source_height_map.items():
+        smallest_source_height = int(project_map["source_height"]) if int(project_map["source_height"]) < int(smallest_source_height) else int(smallest_source_height)
 
-    # now find the lowest common value which is not an error(-1)
-    for pair_max_height in max_height_array:
-        # if there was a error fetching max height then
-        # exit complete process because we need a common minimum height to proceed
-        if pair_max_height == -1:
-            sliding_cacher_logger.error('Not enough blocks against one of projectId')
-            sliding_cacher_logger.error('Exiting head&tail indexing process as we can\'t evaluate common minimum height...')
-            return
-        else:
-            common_minimum_height = pair_max_height if common_minimum_height >= pair_max_height else common_minimum_height
+    try:
+        await adjust_projects_head_by_source_height(project_source_height_map, smallest_source_height, writer_redis_conn)
+    except Exception as err:
+        sliding_cacher_logger.error(' can\'t adjust projects height for smallest source height | error_msg: %s', err)
+        return
 
     tasks = list()
     for project_id, ts_arr in project_id_to_register_series.items():
         for time_period in ts_arr:
+            height_map = project_source_height_map[project_id]
             fn = build_primary_index(**{
                 'project_id': project_id,
                 'time_period': time_period,
-                'common_minimum_height': common_minimum_height,
+                'height_map': height_map,
                 'semaphore': semaphore,
                 'writer_redis_conn': writer_redis_conn
             })
