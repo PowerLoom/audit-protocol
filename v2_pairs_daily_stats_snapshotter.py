@@ -166,7 +166,9 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                     "contract": addr,
                     "volume24": { "currentValue": 0, "previousValue": 0, "change": 0},
                     "tvl": { "currentValue": 0, "previousValue": 0, "change": 0},
-                    "fees24": { "currentValue": 0, "previousValue": 0, "change": 0}
+                    "fees24": { "currentValue": 0, "previousValue": 0, "change": 0},
+                    "block_height": 0,
+                    "block_timestamp": 0
                 }
 
                 daily_stats["volume24"]["currentValue"] += v2_pair_data_unpack(contract_obj["recent"]["volume_24h"])
@@ -190,9 +192,11 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                 if daily_stats["fees24"]["previousValue"] != 0:
                     daily_stats["fees24"]["change"] = daily_stats["fees24"]["currentValue"] - daily_stats["fees24"]["previousValue"]
                     daily_stats["fees24"]["change"] = daily_stats["fees24"]["change"] / daily_stats["fees24"]["previousValue"] * 100
-            
+
+                daily_stats["block_height"] = contract_obj["recent"]["block_height"]
+                daily_stats["block_timestamp"] = contract_obj["recent"]["block_timestamp"]
+
                 daily_stats_contracts.append(daily_stats)
-                
         
         else:
             logger.debug(f"v2 pair summary & daily stats snapshots are already in sync with block height")
