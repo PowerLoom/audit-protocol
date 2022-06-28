@@ -8,6 +8,7 @@ import json
 from httpx import AsyncClient, Timeout, Limits
 from utils.retrieval_utils import retrieve_block_data
 import logging.config
+from data_models import uniswapDailyStatsSnapshotZset
 import sys
 
 logger = logging.getLogger(__name__)
@@ -262,11 +263,17 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                         writer_redis_conn=redis_conn,
                         data_flag=1
                     )
+
+                    snapshotZsetEntry = uniswapDailyStatsSnapshotZset(
+                        cid=dag_block_payload_prefilled['data']['cid'],
+                        txHash=dag_block_payload_prefilled['txHash']
+                    )
+
                     # store in snapshots zset
                     await asyncio.gather(
                         redis_conn.zadd(
                             name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                            mapping={dag_block_payload_prefilled['data']['cid']: common_blockheight_reached}),
+                            mapping={snapshotZsetEntry.json(): common_blockheight_reached}),
                         redis_conn.set(
                             name=redis_keys.get_uniswap_pair_daily_stats_payload_at_blockheight(common_blockheight_reached),
                             value=json.dumps(dag_block_payload_prefilled['data']['payload']),

@@ -167,3 +167,7 @@ class DiffCalculationRequest(BaseModel):
 class uniswapPairsSnapshotZset(BaseModel):
     cid: str
     txHash: str
+
+class uniswapDailyStatsSnapshotZset(BaseModel):
+    cid: str
+    txHash: str
