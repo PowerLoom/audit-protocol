@@ -242,11 +242,11 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
             while True:
                 # introduce a break condition if something goes wrong and snapshot daily stats does not move ahead
                 waitCycles+=1
-                if waitCycles > 12: # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot daily stats submission
+                if waitCycles > 18: # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot daily stats submission
                     logger.debug(f"Waited for {waitCycles} cycles, daily stats project has not moved ahead. Stopped waiting to retry in next cycle.")
                     break
-                logger.debug('Waiting for 7 seconds to check if latest v2 pairs daily stats snapshot was committed...')
-                await asyncio.sleep(7)
+                logger.debug('Waiting for 10 seconds to check if latest v2 pairs daily stats snapshot was committed...')
+                await asyncio.sleep(10)
                 updated_audit_project_block_height = await helper_functions.get_block_height(
                     redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
                     reader_redis_conn=redis_conn
