@@ -462,7 +462,7 @@ func UploadToWeb3Storage(payload PayloadCommit) (string, bool) {
 				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 				continue
 			}
-			log.Errorf("Received 200 OK from web3.storage for project %s with snapshotCID %s commitId %s ",
+			log.Debugf("Received 200 OK from web3.storage for project %s with snapshotCID %s commitId %s ",
 				payload.ProjectId, resp.CID, payload.CommitId)
 			return resp.CID, true
 		} else {
