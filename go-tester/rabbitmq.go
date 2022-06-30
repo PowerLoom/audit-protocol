@@ -39,7 +39,7 @@ func (conn Conn) Publish(routingKey string, data []byte) error {
 		amqp.Publishing{
 			ContentType:  "application/json",
 			Body:         data,
-			DeliveryMode: amqp.Persistent,
+			DeliveryMode: amqp.Transient,
 		})
 }
 

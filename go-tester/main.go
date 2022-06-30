@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"sync"
 	"time"
 
 	cid "github.com/ipfs/go-cid"
@@ -23,11 +24,13 @@ type PayloadCommit struct {
 	ProjectId            string       `json:"projectId"`
 	CommitId             string       `json:"commitId"`
 	Payload              *TestPayload `json:"payload,omitempty""`
+	XYZ                  string       `json:"xyz"`
 	TentativeBlockHeight int64        `json:"tentativeBlockHeight"`
 	SnapshotCID          string       `json:"snapshotCID"`
 	ApiKeyHash           string       `json:"apiKeyHash"`
 	Resubmitted          bool         `json:"resubmitted"`
 	ResubmissionBlock    int          `json:"resubmissionBlock"` // corresponds to lastTouchedBlock in PendingTransaction model
+	Web3Storage          bool         `json:"web3Storage"`
 }
 type AuditContractCommitResp struct {
 	Success bool                          `json:"success"`
@@ -66,6 +69,8 @@ func writerHandler(w http.ResponseWriter, req *http.Request) {
 	resp.Data = append(resp.Data, respData)
 
 	res, _ := json.Marshal(resp)
+	//w.WriteHeader(http.StatusInternalServerError)
+
 	length, err := w.Write(res)
 	if err != nil {
 		log.Error("Failed to write res with err:", err)
@@ -83,13 +88,17 @@ func main() {
 	http.HandleFunc("/writer", writerHandler)
 	port := 8888
 	rand.Seed(time.Now().Unix())
+	log.SetLevel(log.DebugLevel)
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		log.Infof("Starting HTTP server on port %d in a go routine.", port)
 		http.ListenAndServe(fmt.Sprint(":", port), nil)
 	}()
 
 	rand.Seed(time.Now().Unix())
-	for j := 0; ; j++ {
+	for j := 0; j < 5; j++ {
 		log.Infof("Sending %d burst to rabbitmq.", j)
 		for i := 0; i < numProjects; i++ {
 
@@ -98,7 +107,10 @@ func main() {
 			pc.CommitId = "testCommitId" + fmt.Sprint(rand.Int())
 			pc.ProjectId = "testProjectId" + fmt.Sprint(i)
 			pc.TentativeBlockHeight = tentativeBlockHeights[i]
-			if j%10 == 0 { //simulate resubmissions intermittently
+			if i%2 == 0 {
+				pc.Web3Storage = true
+			}
+			if j%2 == 0 { //simulate resubmissions intermittently
 				//Simulate a resubmission.
 				// Create a cid manually by specifying the 'prefix' parameters
 				pref := cid.Prefix{
@@ -120,19 +132,22 @@ func main() {
 				pc.SnapshotCID = c.String()
 				pc.Payload = nil
 			} else {
+				pc.Resubmitted = false
 				pc.Payload = &TestPayload{Field1: "Hello", Field2: "Go Payload Commit service." + fmt.Sprint(rand.Int())}
+				pc.XYZ = "Test which should not be included in payload"
 			}
 			bytes, _ := json.Marshal(pc)
 			log.Info("payloadCommit.Payload", pc.Payload)
-			log.Debugf("Sending +%v to rabbitmq.", pc)
+			log.Infof("Sending %+v to rabbitmq.", pc)
 			//fmt.Println("Sending bytes", bytes)
 			err := conn.Publish("commit-payloads", bytes)
 			if err != nil {
-				log.Error("Failed to publish msg to rabbitmq.")
+				log.Error("Failed to publish msg to rabbitmq.", err)
 			}
+			//break
 		}
 		//break
-		time.Sleep(5 * 1000000000)
+		time.Sleep(5 * time.Second)
 	}
-
+	wg.Wait()
 }
