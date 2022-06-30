@@ -105,6 +105,13 @@ type SettingsObj struct {
 		SockConnect int `json:"sock_connect"`
 		Connect     int `json:"connect"`
 	} `json:"aiohtttp_timeouts"`
+	Web3Storage struct {
+		URL             string `json:"url"`
+		APIToken        string `json:"api_token"`
+		TimeoutSecs     int    `json:"timeout_secs"`
+		MaxIdleConns    int    `json:"max_idle_conns"`
+		IdleConnTimeout int    `json:"idle_conn_timeout"`
+	} `json:"web3_storage"`
 }
 
 func ParseSettings(settingsFile string) SettingsObj {

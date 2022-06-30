@@ -28,6 +28,7 @@ type PayloadCommit struct {
 	TentativeBlockHeight int    `json:"tentativeBlockHeight"`
 	Resubmitted          bool   `json:"resubmitted"`
 	ResubmissionBlock    int    `json:"resubmissionBlock"` // corresponds to lastTouchedBlock in PendingTransaction model
+	Web3Storage          bool   `json:"web3Storage"`       //This flag indicates to store the payload in web3.storage instead of IPFS.
 }
 
 type Snapshot struct {
@@ -79,4 +80,13 @@ type AuditContractErrResp struct {
 			} `json:"data"`
 		} `json:"details"`
 	} `json:"error"`
+}
+
+type Web3StoragePutResponse struct {
+	CID string `json:"cid"`
+}
+
+type Web3StorageErrResponse struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
 }

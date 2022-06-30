@@ -80,5 +80,12 @@
 	"max_payload_commits": 4,
 	"ipfs_timeout": 20,
 	"span_expire_timeout": 600,
-	"calculate_diff": false
+	"calculate_diff": false,
+	"web3_storage":{
+		"url":"https://api.web3.storage",
+		"api_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkaWQ6ZXRocjoweGRmQjk1NWY2NkZDREU2NzY1ZTk3M2I4MjczQjY3RGY3QUU0MEMwMDIiLCJpc3MiOiJ3ZWIzLXN0b3JhZ2UiLCJpYXQiOjE2NTYzOTI2MzUzNTEsIm5hbWUiOiJQb29sZXItc3RhZ2luZyJ9.OCzkS0Mnz4yWrcFWcrinMYKzGChfCKDZrB1MZlEyAKU",
+		"timeout_secs": 30,
+		"max_idle_conns": 5,
+		"idle_conn_timeout":0 
+	}
 }
