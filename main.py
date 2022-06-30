@@ -185,11 +185,13 @@ async def commit_payload(
     payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
     rest_logger.debug(f"Created the unique payload commit id: {payload_commit_id}")
 
+    web3_storage_flag = req_args.get('web3Storage', False)
     payload_for_commit = PayloadCommit(**{
         'projectId': project_id,
         'commitId': payload_commit_id,
         'payload': payload,
         'tentativeBlockHeight': last_tentative_block_height,
+        'web3Storage': web3_storage_flag
     })
 
     # push payload for commit to rabbitmq queue

@@ -94,13 +94,14 @@ def cleanup_children_procs(fn):
     return wrapper
 
 
-async def commit_payload(project_id, report_payload, session: AsyncClient):
+async def commit_payload(project_id, report_payload, session: AsyncClient, web3_storage_flag=True):
+    # setting web3Storage flag to true by default
     audit_protocol_url = f'http://{settings.host}:{settings.port}/commit_payload'
     async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3)):
         with attempt:
             response_obj = await session.post(
                     url=audit_protocol_url,
-                    json={'payload': report_payload, 'projectId': project_id}
+                    json={'payload': report_payload, 'projectId': project_id, 'web3Storage': web3_storage_flag}
             )
             logging.debug('Got audit protocol response: %s', response_obj.text)
             response_status_code = response_obj.status_code

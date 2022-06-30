@@ -29,6 +29,7 @@ class PayloadCommit(BaseModel):
     tentativeBlockHeight: int
     resubmitted: bool = False
     resubmissionBlock: int = 0  # corresponds to lastTouchedBlock in PendingTransaction model
+    web3Storage: bool = False
 
 
 class FilecoinJobData(BaseModel):
