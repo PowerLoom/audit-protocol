@@ -16,6 +16,7 @@ module.exports = {
       kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV,
+        GUNICORN_WORKERS: 20
       }
     },
     {
@@ -37,7 +38,8 @@ module.exports = {
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
       env: {
-        NODE_ENV: NODE_ENV
+        NODE_ENV: NODE_ENV,
+        GUNICORN_WORKERS: 20
       },
     },
     {

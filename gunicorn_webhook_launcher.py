@@ -12,7 +12,7 @@ import resource
 
 LOG_LEVEL = logging.getLevelName(os.environ.get("LOG_LEVEL", "DEBUG"))
 JSON_LOGS = True if os.environ.get("JSON_LOGS", "0") == "1" else False
-WORKERS = int(os.environ.get("GUNICORN_WORKERS", "10"))
+WORKERS = int(os.environ.get("GUNICORN_WORKERS", "20"))
 
 
 def post_worker_init(worker):
