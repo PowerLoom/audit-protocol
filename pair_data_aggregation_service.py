@@ -5,7 +5,7 @@ from functools import partial
 from time import time
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
-from data_models import liquidityProcessedData, uniswapPairsSnapshotZset
+from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, uniswapPairSummary7dCidRange, uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant
 from utils import helper_functions
 from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
@@ -408,21 +408,25 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             [total_volume_7d, fees_7d, token0_volume_7d, token1_volume_7d, token0_volume_usd_7d, token1_volume_usd_7d] = calculate_pair_trade_volume(dag_chain_7d)
 
             # parse and store dag chain cids on IPFS
-            volume_24h_cids = patch_cids_obj(dag_chain_24h, 'parse_cids', [])
-            volume_7d_cids = patch_cids_obj(dag_chain_7d, 'parse_cids', [])
             volume_cids = await asyncio.gather(
-                ipfs_client.add_json({ 
-                    'resultant':{
-                        "trade_volume_24h_cids": volume_24h_cids,
-                        'latestTimestamp_volume_24h': dag_chain_24h[0]['timestamp']
-                    }
-                }),
-                ipfs_client.add_json({ 
-                    'resultant':{
-                        "trade_volume_7d_cids": volume_7d_cids,
-                        'latestTimestamp_volume_7d': dag_chain_7d[0]['timestamp']
-                    }
-                })
+                ipfs_client.add_json(uniswapPairSummary24hCidRange(
+                    resultant=uniswapPairSummaryCid24hResultant(
+                        trade_volume_24h_cids= {
+                            "latest_dag_cid": dag_chain_24h[0]['dagCid'],
+                            "oldest_dag_cid": dag_chain_24h[-1]['dagCid'],
+                        },
+                        latestTimestamp_volume_24h = dag_chain_24h[0]['timestamp']
+                    )
+                )),
+                ipfs_client.add_json(uniswapPairSummary7dCidRange(
+                    resultant=uniswapPairSummaryCid7dResultant(
+                        trade_volume_7d_cids= {
+                            "latest_dag_cid": dag_chain_7d[0]['dagCid'],
+                            "oldest_dag_cid": dag_chain_7d[-1]['dagCid'],
+                        },
+                        latestTimestamp_volume_7d = dag_chain_7d[0]['timestamp']
+                    )
+                ))
             )
             # data = await ipfs_client.cat(volume_cids[0])
             # print(f"cid get: {data}")
@@ -514,12 +518,12 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 cached_trade_volume_data["aggregated_token0_volume_usd_24h"] -= back_token0_volume_usd
                 cached_trade_volume_data["aggregated_token1_volume_usd_24h"] -= back_token1_volume_usd
                 
-                # Patch 24h cids for back of the chain
-                sliding_window_back_24h_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in sliding_window_back_24h]
                 if trade_volume_cids_24h:
-                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"] = patch_cids_obj(trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"], 'remove_back_patch', sliding_window_back_24h_cids)
+                    # set last element of back sliding window as oldest dag cid 
+                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["oldest_dag_cid"] = sliding_window_back_24h[-1]['dagCid']
                 else:
-                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"] += sliding_window_back_24h_cids
+                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["oldest_dag_cid"] = sliding_window_back_24h[-1]['dagCid']
+                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["latest_dag_cid"] = sliding_window_back_24h[0]['dagCid']
 
             if sliding_window_front_24h:
                 [front_total_volume, front_fees, front_token0_volume, front_token1_volume, front_token0_volume_usd, front_token1_volume_usd] = calculate_pair_trade_volume(sliding_window_front_24h)
@@ -532,12 +536,12 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 # block height of trade volume
                 block_height_trade_volume = int(sliding_window_front_24h[0]['data']['payload']['chainHeightRange']['end'])
 
-                # Patch 24h cids for front of the chain
-                sliding_window_front_24h_cids = [{ 'dagCid': obj_24h['dagCid'], 'payloadCid': obj_24h['data']['cid']} for obj_24h in sliding_window_front_24h]
                 if trade_volume_cids_24h:
-                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"] = patch_cids_obj(trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"], 'add_front_patch', sliding_window_front_24h_cids)
+                    # set first element of front sliding window as latest dag cid
+                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["latest_dag_cid"] = sliding_window_front_24h[0]['dagCid']
                 else:
-                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"] = sliding_window_front_24h_cids + trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]
+                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["latest_dag_cid"] = sliding_window_front_24h[0]['dagCid']
+                    trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["oldest_dag_cid"] = sliding_window_front_24h[-1]['dagCid']
 
                 # store recent logs
                 await store_recent_transactions_logs(writer_redis_conn, sliding_window_front_24h, pair_contract_address)
@@ -552,12 +556,12 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 cached_trade_volume_data["aggregated_token0_volume_usd_7d"] -= back_token0_volume_usd
                 cached_trade_volume_data["aggregated_token1_volume_usd_7d"] -= back_token1_volume_usd
 
-                # Patch 7d cids for back of the chain
-                sliding_window_back_7d_cids = [{ 'dagCid': obj_7d['dagCid'], 'payloadCid': obj_7d['data']['cid']} for obj_7d in sliding_window_back_7d]
                 if trade_volume_cids_7d:
-                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"] = patch_cids_obj(trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"], 'remove_back_patch', sliding_window_back_7d_cids)
+                    # set last element of back sliding window as oldest dag cid 
+                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["oldest_dag_cid"] = sliding_window_back_7d[-1]['dagCid']
                 else:
-                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"] += sliding_window_back_7d_cids
+                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["oldest_dag_cid"] = sliding_window_back_7d[-1]['dagCid']
+                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["latest_dag_cid"] = sliding_window_back_7d[0]['dagCid']
 
             
             if sliding_window_front_7d:
@@ -568,12 +572,11 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 cached_trade_volume_data["aggregated_token0_volume_usd_7d"] += front_token0_volume_usd
                 cached_trade_volume_data["aggregated_token1_volume_usd_7d"] += front_token1_volume_usd
 
-                # Patch 7d cids for front of the chain
-                sliding_window_front_7d_cids = [{ 'dagCid': obj_7d['dagCid'], 'payloadCid': obj_7d['data']['cid']} for obj_7d in sliding_window_front_7d]
                 if trade_volume_cids_7d:
-                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"] = patch_cids_obj(trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"], 'add_front_patch', sliding_window_front_7d_cids)
+                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["latest_dag_cid"] = sliding_window_front_7d[0]['dagCid']
                 else:
-                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"] = sliding_window_front_7d_cids + trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]
+                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["latest_dag_cid"] = sliding_window_front_7d[0]['dagCid']
+                    trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["oldest_dag_cid"] = sliding_window_front_7d[-1]['dagCid']
 
 
 
@@ -581,18 +584,18 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             latestTimestamp_volume_24h = sliding_window_front_24h[0]['timestamp'] if sliding_window_front_24h else trade_volume_cids_24h['resultant']['latestTimestamp_volume_24h']
             latestTimestamp_volume_7d = sliding_window_front_7d[0]['timestamp'] if sliding_window_front_7d else trade_volume_cids_7d['resultant']['latestTimestamp_volume_7d']
             volume_cids = await asyncio.gather(
-                ipfs_client.add_json({ 
-                    'resultant':{
-                        "trade_volume_24h_cids": trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"],
-                        'latestTimestamp_volume_24h': latestTimestamp_volume_24h,
-                    }
-                }),
-                ipfs_client.add_json({
-                    'resultant':{
-                        "trade_volume_7d_cids": trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"],
-                        'latestTimestamp_volume_7d': latestTimestamp_volume_7d,
-                    }
-                })
+                ipfs_client.add_json(uniswapPairSummary24hCidRange(
+                    resultant=uniswapPairSummaryCid24hResultant(
+                        trade_volume_24h_cids= trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"],
+                        latestTimestamp_volume_24h = latestTimestamp_volume_24h
+                    )
+                )),
+                ipfs_client.add_json(uniswapPairSummary7dCidRange(
+                    resultant=uniswapPairSummaryCid7dResultant(
+                        trade_volume_7d_cids= trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"],
+                        latestTimestamp_volume_7d = latestTimestamp_volume_7d
+                    )
+                ))
             )
 
             # if liquidity reserve block height is not found

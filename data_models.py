@@ -1,3 +1,4 @@
+from calendar import c
 from pydantic import BaseModel, validator
 from typing import Union, List, Optional, Any, Dict
 import json
@@ -172,3 +173,17 @@ class uniswapPairsSnapshotZset(BaseModel):
 class uniswapDailyStatsSnapshotZset(BaseModel):
     cid: str
     txHash: str
+
+class uniswapPairSummaryCid7dResultant(BaseModel):
+    trade_volume_7d_cids: Dict[str, str]
+    latestTimestamp_volume_7d: str
+
+class uniswapPairSummary7dCidRange(BaseModel):
+    resultant: uniswapPairSummaryCid7dResultant
+
+class uniswapPairSummaryCid24hResultant(BaseModel):
+    trade_volume_24h_cids: Dict[str, str]
+    latestTimestamp_volume_24h: str
+
+class uniswapPairSummary24hCidRange(BaseModel):
+    resultant: uniswapPairSummaryCid24hResultant
