@@ -519,7 +519,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 cached_trade_volume_data["aggregated_token1_volume_usd_24h"] -= back_token1_volume_usd
                 
                 if trade_volume_cids_24h:
-                    # set last element of back sliding window as oldest dag cid 
+                    # set last element of back sliding window as oldest dag cid
+                    trade_volume_cids_24h = json.loads(trade_volume_cids_24h) if isinstance(trade_volume_cids_24h, str) else trade_volume_cids_24h
+                    if isinstance(trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"], list):
+                        trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"] = {} 
                     trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["oldest_dag_cid"] = sliding_window_back_24h[-1]['dagCid']
                 else:
                     trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["oldest_dag_cid"] = sliding_window_back_24h[-1]['dagCid']
@@ -537,7 +540,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 block_height_trade_volume = int(sliding_window_front_24h[0]['data']['payload']['chainHeightRange']['end'])
 
                 if trade_volume_cids_24h:
+                    trade_volume_cids_24h = json.loads(trade_volume_cids_24h) if isinstance(trade_volume_cids_24h, str) else trade_volume_cids_24h
                     # set first element of front sliding window as latest dag cid
+                    if isinstance(trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"], list):
+                        trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"] = {}
                     trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["latest_dag_cid"] = sliding_window_front_24h[0]['dagCid']
                 else:
                     trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"]["latest_dag_cid"] = sliding_window_front_24h[0]['dagCid']
@@ -557,7 +563,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 cached_trade_volume_data["aggregated_token1_volume_usd_7d"] -= back_token1_volume_usd
 
                 if trade_volume_cids_7d:
+                    trade_volume_cids_7d = json.loads(trade_volume_cids_7d) if isinstance(trade_volume_cids_7d, str) else trade_volume_cids_7d
                     # set last element of back sliding window as oldest dag cid 
+                    if isinstance(trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"], list):
+                        trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"] = {} 
                     trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["oldest_dag_cid"] = sliding_window_back_7d[-1]['dagCid']
                 else:
                     trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["oldest_dag_cid"] = sliding_window_back_7d[-1]['dagCid']
@@ -573,6 +582,9 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                 cached_trade_volume_data["aggregated_token1_volume_usd_7d"] += front_token1_volume_usd
 
                 if trade_volume_cids_7d:
+                    trade_volume_cids_7d = json.loads(trade_volume_cids_7d) if isinstance(trade_volume_cids_7d, str) else trade_volume_cids_7d
+                    if isinstance(trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"], list):
+                        trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"] = {} 
                     trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["latest_dag_cid"] = sliding_window_front_7d[0]['dagCid']
                 else:
                     trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"]["latest_dag_cid"] = sliding_window_front_7d[0]['dagCid']
