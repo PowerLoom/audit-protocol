@@ -417,7 +417,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                         },
                         latestTimestamp_volume_24h = str(dag_chain_24h[0]['timestamp'])
                     )
-                ).json()),
+                ).dict()),
                 ipfs_client.add_json(uniswapPairSummary7dCidRange(
                     resultant=uniswapPairSummaryCid7dResultant(
                         trade_volume_7d_cids= {
@@ -426,7 +426,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                         },
                         latestTimestamp_volume_7d = str(dag_chain_7d[0]['timestamp'])
                     )
-                ).json())
+                ).dict())
             )
             # data = await ipfs_client.cat(volume_cids[0])
             # print(f"cid get: {data}")
@@ -601,13 +601,13 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                         trade_volume_24h_cids= trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"],
                         latestTimestamp_volume_24h = str(latestTimestamp_volume_24h)
                     )
-                ).json()),
+                ).dict()),
                 ipfs_client.add_json(uniswapPairSummary7dCidRange(
                     resultant=uniswapPairSummaryCid7dResultant(
                         trade_volume_7d_cids= trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"],
                         latestTimestamp_volume_7d = str(latestTimestamp_volume_7d)
                     )
-                ).json())
+                ).dict())
             )
 
             # if liquidity reserve block height is not found
