@@ -83,11 +83,11 @@ func (verifier *DagVerifier) FetchLastProjectIndexedStatusFromRedis() {
 	if res.Err() != nil {
 		log.Error("Ideally should not come here, which means there is some other redis error. To debug:", res.Err())
 	}
+	verifier.ProjectsIndexedState = make(map[string]*ProjectIndexedState)
 	if len(res.Val()) == 0 {
 		log.Info("Failed to fetch Projects Index Status from redis.")
 		//Key doesn't exist.
 		log.Info("Key doesn't exist..hence find the starting index range for projects.")
-		verifier.ProjectsIndexedState = make(map[string]*ProjectIndexedState)
 		for i := range verifier.projects {
 			startIndex, err := verifier.FetchStartIndex(verifier.projects[i])
 			if err != nil {
