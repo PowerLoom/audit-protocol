@@ -18,11 +18,17 @@ import (
 
 var ctx = context.Background()
 
+type ProjectIndexedState struct {
+	StartSourceChainHeight   int64 `json:"startSourceChainHeight"`
+	CurrentSourceChainHeight int64 `json:"currentSourceChainHeight"`
+}
+
 type DagVerifier struct {
 	redisClient                      *redis.Client
 	projects                         []string
 	periodicRetrievalInterval        time.Duration
 	lastVerifiedDagBlockHeights      map[string]string
+	ProjectsIndexedState             map[string]*ProjectIndexedState
 	lastVerifiedDagBlockHeightsMutex *sync.RWMutex
 	slackClient                      *http.Client
 	dagChainHasIssues                bool
@@ -54,6 +60,7 @@ func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddres
 	verifier.periodicRetrievalInterval = 300 * time.Second
 	//Fetch DagChain verification status from redis for all projects.
 	verifier.FetchLastVerificationStatusFromRedis()
+	verifier.FetchLastProjectIndexedStatusFromRedis()
 	verifier.lastVerifiedDagBlockHeightsMutex = &sync.RWMutex{}
 }
 
@@ -66,6 +73,95 @@ func (verifier *DagVerifier) PopulateProjects(pairContractAddresses *[]string) {
 		verifier.projects = append(verifier.projects, pairTotalReserveProjectId)
 		verifier.projects = append(verifier.projects, pairTradeVolumeProjectId)
 	}
+}
+
+func (verifier *DagVerifier) FetchLastProjectIndexedStatusFromRedis() {
+	key := fmt.Sprintf(REDIS_KEY_PROJECTS_INDEX_STATUS, NAMESPACE)
+	log.Debug("Fetching Projects Index Status at key:", key)
+
+	res := verifier.redisClient.HGetAll(ctx, key)
+	if res.Err() != nil {
+		log.Error("Ideally should not come here, which means there is some other redis error. To debug:", res.Err())
+	}
+	if len(res.Val()) == 0 {
+		log.Info("Failed to fetch Projects Index Status from redis.")
+		//Key doesn't exist.
+		log.Info("Key doesn't exist..hence find the starting index range for projects.")
+		verifier.ProjectsIndexedState = make(map[string]*ProjectIndexedState)
+		for i := range verifier.projects {
+			startIndex, err := verifier.FetchStartIndex(verifier.projects[i])
+			if err != nil {
+				log.Errorf("Could not fetch Start index for project %s due to error %+v", verifier.projects[i], err)
+			}
+			log.Infof("Fetched startIndex for project %s as %d", verifier.projects[i], startIndex)
+			projectIndexedState := ProjectIndexedState{
+				StartSourceChainHeight:   startIndex,
+				CurrentSourceChainHeight: startIndex,
+			}
+			verifier.ProjectsIndexedState[verifier.projects[i]] = &projectIndexedState
+		}
+		return
+	}
+	//TODO: Update when handling dynamic addition of projects.
+	for i := range verifier.projects {
+		var projectIndexedState ProjectIndexedState
+		projectId := verifier.projects[i]
+		if val, ok := res.Val()[projectId]; ok {
+			err := json.Unmarshal([]byte(val), &projectIndexedState)
+			if err != nil {
+				log.Errorf("Could not fetch previous indexed state for project %s due to error %+v", verifier.projects[i], err)
+			}
+		}
+		verifier.ProjectsIndexedState[verifier.projects[i]] = &projectIndexedState
+		log.Infof("Updating startIndex for project %s as %d", projectId, projectIndexedState.StartSourceChainHeight)
+	}
+	log.Debugf("Fetched LastVerificationStatus from redis %+v", verifier.lastVerifiedDagBlockHeights)
+}
+
+func (verifier *DagVerifier) FetchStartIndex(projectId string) (int64, error) {
+	payloadCid, err := verifier.GetPayloadCidAtDAGHeight(projectId, "1")
+	if err != nil {
+		//Raise an alarm in future for this
+		log.Error("Failed to fetch DAG Chain CIDS for projectID from redis:", projectId)
+		return 0, err
+	}
+	if payloadCid == "" {
+		log.Info("Indexing has not started for projectId", projectId)
+		return 0, nil
+	}
+	//Fetch CID from IPFS and store the startHeight.
+	payload, err := ipfsClient.GetPayload(payloadCid, 3)
+	if err != nil {
+		log.Errorf("Failed to fetch payloadCID %s from IPFS for project %s", payloadCid, projectId)
+		return 0, nil
+	}
+	return payload.ChainHeightRange.Begin, nil
+}
+
+func (verifier *DagVerifier) GetPayloadCidAtDAGHeight(projectId string, startScore string) (string, error) {
+	//key := projectId + ":payloadCids"
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+	payloadCid := ""
+
+	log.Debug("Fetching PayloadCid from redis at key:", key, ",with startScore: ", startScore)
+	zRangeByScore := verifier.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+		Min: startScore,
+		Max: startScore,
+	})
+
+	err := zRangeByScore.Err()
+	log.Debug("Result for ZRangeByScoreWithScores : ", zRangeByScore)
+	if err != nil {
+		log.Error("Could not fetch entries error: ", err, "Query:", zRangeByScore)
+		return "", err
+	}
+	res := zRangeByScore.Val()
+	//dagPayloadsInfo = make([]DagPayload, len(res))
+	log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
+	if len(res) == 1 {
+		payloadCid = fmt.Sprintf("%v", res[0].Member)
+	}
+	return payloadCid, nil
 }
 
 func (verifier *DagVerifier) FetchLastVerificationStatusFromRedis() {
@@ -94,11 +190,29 @@ func (verifier *DagVerifier) FetchLastVerificationStatusFromRedis() {
 }
 
 func (verifier *DagVerifier) UpdateLastStatusToRedis() {
+	//No retry has been added, because in case of a failure, status will get updated in next run.
 	key := fmt.Sprintf(REDIS_KEY_DAG_VERIFICATION_STATUS, NAMESPACE)
-	log.Info("Updating LastVerificationStatusFromRedis at key:", key)
+	log.Info("Updating LastVerificationStatus at key:", key)
 	res := verifier.redisClient.HMSet(ctx, key, verifier.lastVerifiedDagBlockHeights)
 	if res.Err() != nil {
 		log.Error("Failed to update lastVerifiedDagBlockHeights in redis..Retry in next run.")
+	}
+	//Update indexed status to redis
+	key = fmt.Sprintf(REDIS_KEY_PROJECTS_INDEX_STATUS, NAMESPACE)
+	log.Info("Updating LastIndexedStatus at key:", key)
+	projectsIndexedState := make(map[string]string)
+	for i := range verifier.projects {
+		if val, ok := verifier.ProjectsIndexedState[verifier.projects[i]]; ok {
+			marshalledState, err := json.Marshal(val)
+			if err != nil {
+				log.Fatalf("Failed to marshal json %+v", err)
+			}
+			projectsIndexedState[verifier.projects[i]] = string(marshalledState)
+		}
+	}
+	res1 := verifier.redisClient.HMSet(ctx, key, projectsIndexedState)
+	if res1.Err() != nil {
+		log.Error("Failed to update LastIndexedStatus in redis..Retry in next run.")
 	}
 }
 
@@ -195,7 +309,7 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	log.Infof("Verifying Dagchain for ProjectId %s , from block %d to %d", projectId, dagChain[0].Height, dagChain[(len(dagChain)-1)].Height)
 	issuesPresent, chainIssues := verifier.verifyDagForIssues(&dagChain)
 	if !issuesPresent {
-		log.Info("Dag chain has issues for projectID:", projectId)
+		log.Infof("Dag chain has issues for projectID %s. Issues are: %+v", projectId, chainIssues)
 		verifier.updateDagIssuesInRedis(projectId, chainIssues)
 		verifier.dagChainHasIssues = true
 		verifier.dagChainIssues[projectId] = chainIssues
@@ -204,6 +318,17 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	//Use single hash key in redis to store the same against contractAddress.
 	verifier.lastVerifiedDagBlockHeightsMutex.Lock()
 	verifier.lastVerifiedDagBlockHeights[projectId] = strconv.FormatInt(dagChain[len(dagChain)-1].Height, 10)
+	if verifier.ProjectsIndexedState[projectId].StartSourceChainHeight == 0 {
+		verifier.ProjectsIndexedState[projectId].StartSourceChainHeight, err = verifier.FetchStartIndex(projectId)
+		if err != nil {
+			log.Errorf("Failed to fetch startIndex for project %s due to error %+v", projectId, err)
+		}
+		log.Infof("Updating startIndex for project %s as %d", projectId,
+			verifier.ProjectsIndexedState[projectId].StartSourceChainHeight)
+	}
+	verifier.ProjectsIndexedState[projectId].CurrentSourceChainHeight = dagChain[len(dagChain)-1].Payload.Data.ChainHeightRange.End
+	log.Infof("Updating currentIndex for project %s as %d", projectId,
+		verifier.ProjectsIndexedState[projectId].CurrentSourceChainHeight)
 	verifier.lastVerifiedDagBlockHeightsMutex.Unlock()
 	return nil
 }
@@ -261,6 +386,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 		if verifier.noOfCyclesSinceChainStuck[projectId] > 3 {
 			isDagchainStuckForAnyProject++
 			verifier.dagChainHasIssues = true
+			log.Infof("Dag chain is stuck for project %s at DAG height %d from past 3 cycles of run.",
+				projectId, currentCycleDAGchainHeight[projectId])
 		}
 	}
 	//Check if dagChain has issues for any project.
@@ -284,6 +411,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	//Do not notify if recently notification has been sent.
 	//TODO: Rough suppression logic, not very elegant.
 	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
+	//As of now the workaround is to restart dag-verifier once issues are resolved.
 	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
 		if time.Now().Unix()-verifier.lastNotifyTime > 1800 {
 			for retryCount := 0; ; {
@@ -306,7 +434,10 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 			}
 		}
 	}
+	//Cleanup reported issues, because they are not recoverable and only way to recover
+	//is to clean-slate or truncate chains and resume.
 	verifier.dagChainHasIssues = false
+	verifier.dagChainIssues = make(map[string][]DagChainIssue)
 
 	for _, projectId := range verifier.projects {
 		verifier.previousCycleDagChainHeight[projectId] = currentCycleDAGchainHeight[projectId]
