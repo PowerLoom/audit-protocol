@@ -4,6 +4,12 @@ from utils import redis_keys
 import typer
 import redis
 import json
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+
+
+console = Console()
 
 REDIS_CONN_CONF = redis_conn.REDIS_CONN_CONF
 app = typer.Typer()
@@ -166,6 +172,45 @@ def updateStoredProjectIds(namespace: str = typer.Argument('UNISWAPV2')):
     all_projectIds.append(f"uniswap_V2DailyStatsSnapshot_{namespace}")
     
     r.sadd('storedProjectIds', *all_projectIds)
+
+@app.command()
+def projectIndexStatus(project: str = typer.Argument(''), namespace: str = typer.Argument('UNISWAPV2')):
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
+
+    indexeStatus = None
+    if project != '':
+        indexeStatus = r.hget(f'projects:{namespace}:IndexStatus', project)
+        if not indexeStatus:
+            console.log(f"\n[bold red]Project is not indexed[bold red]: \n{project}\n")
+            return
+        indexeStatus = [{project: indexeStatus.decode('utf-8')}]
+    else:
+        indexeStatus = r.hgetall(f'projects:{namespace}:IndexStatus')
+        if not indexeStatus:
+            console.log(f"\n[bold red]Indexes map doesn't exist [bold red]: 'projects:{namespace}:IndexStatus'\n")
+            return
+        indexeStatus = [{k.decode('utf-8'): v.decode('utf-8')} for k, v in indexeStatus.items()]
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("ProjecId", justify="center")
+    table.add_column("Start source chain height", justify="center")
+    table.add_column("Current source chain height", justify="center")
+
+    count = 7
+    for project_indexes in indexeStatus:
+        k, v = project_indexes.popitem()
+        v = json.loads(v)
+        table.add_row(
+            Text(k, justify="left", overflow="ellipsis"), 
+            str(v["startSourceChainHeight"]), 
+            str(v["currentSourceChainHeight"]),
+        )
+        count -= 1
+        if count == 0:
+            break
+
+    console.print(table)
+
 
 if __name__ == '__main__':
     app()
