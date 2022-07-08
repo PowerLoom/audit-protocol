@@ -196,7 +196,6 @@ def projectIndexStatus(project: str = typer.Argument(''), namespace: str = typer
     table.add_column("Start source chain height", justify="center")
     table.add_column("Current source chain height", justify="center")
 
-    count = 7
     for project_indexes in indexeStatus:
         k, v = project_indexes.popitem()
         v = json.loads(v)
@@ -205,9 +204,6 @@ def projectIndexStatus(project: str = typer.Argument(''), namespace: str = typer
             str(v["startSourceChainHeight"]), 
             str(v["currentSourceChainHeight"]),
         )
-        count -= 1
-        if count == 0:
-            break
 
     console.print(table)
 
