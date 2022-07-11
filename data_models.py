@@ -145,8 +145,6 @@ class liquidityProcessedData(BaseModel):
 
 class DAGBlockPayloadLinkedPath(BaseModel):
     cid: Dict[str, str]
-    type: str
-
 
 class DAGBlock(BaseModel):
     height: int
