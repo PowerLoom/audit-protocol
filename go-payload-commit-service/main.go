@@ -643,9 +643,9 @@ func InitVigilClient() {
 
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        100,
-		MaxConnsPerHost:     100,
-		MaxIdleConnsPerHost: 100,
+		MaxIdleConns:        CONCURRENCY,
+		MaxConnsPerHost:     CONCURRENCY,
+		MaxIdleConnsPerHost: CONCURRENCY,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -687,9 +687,9 @@ func InitIPFSClient() {
 	//TODO: Move these to settings
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        50,
-		MaxConnsPerHost:     50,
-		MaxIdleConnsPerHost: 50,
+		MaxIdleConns:        CONCURRENCY,
+		MaxConnsPerHost:     CONCURRENCY,
+		MaxIdleConnsPerHost: CONCURRENCY,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
