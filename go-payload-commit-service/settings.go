@@ -47,17 +47,7 @@ type SettingsObj struct {
 	MetadataCache string `json:"metadata_cache"`
 	DagTableName  string `json:"dag_table_name"`
 	Seed          string `json:"seed"`
-	DagStructure  struct {
-		Height  int    `json:"height"`
-		PrevCid string `json:"prevCid"`
-		Data    struct {
-			Cid  string `json:"cid"`
-			Type string `json:"type"`
-		} `json:"data"`
-		TxHash    string `json:"txHash"`
-		Timestamp string `json:"timestamp"`
-	} `json:"dag_structure"`
-	Redis struct {
+	Redis         struct {
 		Host     string `json:"host"`
 		Port     int    `json:"port"`
 		Db       int    `json:"db"`
