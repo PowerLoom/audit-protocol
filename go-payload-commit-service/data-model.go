@@ -33,8 +33,7 @@ type PayloadCommit struct {
 }
 
 type Snapshot struct {
-	Cid  string `json:"cid"`
-	Type string `json:"type"`
+	Cid string `json:"cid"`
 }
 
 type CommonVigilRequestParams struct {
