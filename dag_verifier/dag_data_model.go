@@ -62,8 +62,7 @@ type DagPayloadData struct {
 
 type DagChainBlock struct {
 	Data struct {
-		Cid  string `json:"cid"`
-		Type string `json:"type"`
+		Cid string `json:"cid"`
 	} `json:"data"`
 	Height    int64      `json:"height"`
 	PrevCid   string     `json:"prevCid"`
