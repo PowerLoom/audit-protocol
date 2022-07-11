@@ -29,6 +29,7 @@ var ctx = context.Background()
 var redisClient *redis.Client
 var ipfsClient *shell.Shell
 var vigilHttpClient http.Client
+var webhookClient http.Client
 var w3sHttpClient http.Client
 var settingsObj SettingsObj
 var consts ConstsObj
@@ -42,6 +43,9 @@ var WEB3_STORAGE_UPLOAD_URL_SUFFIX = "/upload"
 
 const MAX_RETRY_COUNT = 3
 const SECONDS_BETWEEN_RETRY = 5
+
+const CONCURRENCY = 50 //indicates number of go-routines to maintain.
+const HTTP_CLIENT_TIMEOUT_SECS = 10
 
 var commonVigilParams CommonVigilRequestParams
 
@@ -168,6 +172,7 @@ func main() {
 	InitIPFSClient()
 	InitRedisClient()
 	InitVigilClient()
+	InitWebhookCallbackClient()
 	log.Info("Starting RabbitMq Consumer")
 	InitRabbitmqConsumer()
 	InitW3sClient()
@@ -192,10 +197,9 @@ func ParseConsts(constsFile string) {
 
 func InitRabbitmqConsumer() {
 	var err error
-	concurrency := 50
 	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
 	rmqConnection, err = GetConn(rabbitMqURL)
-	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, concurrency)
+	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, CONCURRENCY)
 	if err != nil {
 		panic(err)
 	}
@@ -204,7 +208,7 @@ func InitRabbitmqConsumer() {
 	rmqQueueName := "audit-protocol-commit-payloads"
 	rmqRoutingKey := "commit-payloads"
 
-	err = rmqConnection.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, concurrency)
+	err = rmqConnection.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, CONCURRENCY)
 	if err != nil {
 		panic(err)
 	}
@@ -388,34 +392,119 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
 	log.Tracef("Token hash generated for payload %+v for project %s with commitID %s  is : ",
 		*payload, payload.ProjectId, payload.CommitId, tokenHash)
 	var txHash string
-	var retryType retryType
-	for retryCount := 0; ; {
-		txHash, retryType, err = SubmitTxnToChain(payload, tokenHash)
-		if err != nil {
-			if retryType == NO_RETRY_FAILURE {
-				return retryType
-			} else if retryType == RETRY_WITH_DELAY {
-				time.Sleep(5 * time.Second)
+	if payload.SkipAnchorProof {
+		txHash = tokenHash
+	} else {
+		var retryType retryType
+		for retryCount := 0; ; {
+			txHash, retryType, err = SubmitTxnToChain(payload, tokenHash)
+			if err != nil {
+				if retryType == NO_RETRY_FAILURE {
+					return retryType
+				} else if retryType == RETRY_WITH_DELAY {
+					time.Sleep(5 * time.Second)
+				}
+				if retryCount == MAX_RETRY_COUNT {
+					log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Prost-Vigil with err %+v after max retries of %d",
+						payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
+					time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+					return RETRY_IMMEDIATE
+				}
+				retryCount++
+				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Prost-Vigil with err %+v ..retryCount %d",
+					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
+				continue
 			}
-			if retryCount == MAX_RETRY_COUNT {
-				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Prost-Vigil with err %+v after max retries of %d",
-					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
-				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
-				return RETRY_IMMEDIATE
-			}
-			retryCount++
-			log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Prost-Vigil with err %+v ..retryCount %d",
-				payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
-			continue
+			break
 		}
-		break
 	}
 	/*Add to redis pendingTransactions*/
 	err = AddToPendingTxnsInRedis(payload, tokenHash, txHash)
 	if err != nil {
 		return RETRY_IMMEDIATE
 	}
+	if payload.SkipAnchorProof {
+		//Notify webhook listener service as we are skipping proof anchor on chain.
+		return InvokeWebhookCallback(payload, txHash)
+	}
 	return NO_RETRY_SUCCESS
+}
+
+//TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
+//As of now it is copy pasted and looks ugly.
+func InvokeWebhookCallback(payload *PayloadCommit, txHash string) retryType {
+	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.WebhookListener.Host, settingsObj.WebhookListener.Port)
+	var req AuditContractSimWebhookCallbackRequest
+	req.EventName = "RecordAppended"
+	req.Type = "event"
+	req.Ctime = time.Now().Unix()
+	req.TxHash = txHash
+	req.EventData.ApiKeyHash = txHash
+	req.EventData.PayloadCommitId = payload.CommitId
+	req.EventData.ProjectId = payload.ProjectId
+	req.EventData.SnapshotCid = payload.SnapshotCID
+	req.EventData.TentativeBlockHeight = payload.TentativeBlockHeight
+	req.EventData.Timestamp = time.Now().Unix()
+	reqParams, err := json.Marshal(req)
+
+	if err != nil {
+		log.Fatalf("CRITICAL. Failed to Json-Marshall webhook listener request for project %s with commitID %s , with err %v",
+			payload.ProjectId, payload.CommitId, err)
+		return NO_RETRY_FAILURE
+	}
+	for retryCount := 0; ; {
+		if retryCount == MAX_RETRY_COUNT {
+			log.Errorf("Webhook invocation failed for snapshot %s project %s with commitId %s after max-retry of %d",
+				payload.SnapshotCID, payload.ProjectId, payload.CommitId, MAX_RETRY_COUNT)
+			return RETRY_IMMEDIATE
+		}
+		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(reqParams))
+		if err != nil {
+			log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
+				reqURL, commonVigilParams, err)
+			return RETRY_IMMEDIATE
+		}
+		req.Header.Add("Authorization", "Bearer "+settingsObj.Web3Storage.APIToken)
+		req.Header.Add("accept", "application/json")
+		req.Header.Add("Content-Type", "application/json")
+		log.Debugf("Sending Req to webhook listener URL %s for project %s with snapshotCID %s commitId %s ",
+			reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
+		res, err := webhookClient.Do(req)
+		if err != nil {
+			retryCount++
+			log.Errorf("Failed to send request %+v towards webhook listener URL %s for project %s with snapshotCID %s commitId %s with error %+v.  Retrying %d",
+				req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err, retryCount)
+			continue
+		}
+		defer res.Body.Close()
+		var resp map[string]json.RawMessage
+		respBody, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			retryCount++
+			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from webhook listener with error %+v. Retrying %d",
+				payload.ProjectId, payload.SnapshotCID, payload.CommitId, err, retryCount)
+			continue
+		}
+		if res.StatusCode == http.StatusOK {
+			err = json.Unmarshal(respBody, &resp)
+			if err != nil {
+				retryCount++
+				log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s from webhook listener with error %+v. Retrying %d",
+					respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err, retryCount)
+				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+				continue
+			}
+			log.Debugf("Received 200 OK with body %+v from webhook listener for project %s with snapshotCID %s commitId %s ",
+				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
+			return NO_RETRY_SUCCESS
+		} else {
+			retryCount++
+			log.Errorf("Received Error response %+v from webhook listener for project %s with commitId %s with statusCode %d and status : %s ",
+				resp, payload.ProjectId, payload.CommitId, res.StatusCode, res.Status)
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+			continue
+		}
+	}
 }
 
 func UploadToWeb3Storage(payload PayloadCommit) (string, bool) {
@@ -449,7 +538,7 @@ func UploadToWeb3Storage(payload PayloadCommit) (string, bool) {
 		respBody, err := ioutil.ReadAll(res.Body)
 		if err != nil {
 			retryCount++
-			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from Prost-Vigil with error %+v. Retrying %d",
+			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from web3.storage with error %+v. Retrying %d",
 				payload.ProjectId, payload.SnapshotCID, payload.CommitId, err, retryCount)
 			continue
 		}
@@ -563,7 +652,7 @@ func InitVigilClient() {
 	}
 
 	vigilHttpClient = http.Client{
-		Timeout:   10 * time.Second,
+		Timeout:   HTTP_CLIENT_TIMEOUT_SECS * time.Second,
 		Transport: &t,
 	}
 
@@ -628,4 +717,20 @@ func InitW3sClient() {
 		Transport: &t,
 	}
 
+}
+
+func InitWebhookCallbackClient() {
+	t := http.Transport{
+		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+		MaxIdleConns:        CONCURRENCY,
+		MaxConnsPerHost:     CONCURRENCY,
+		MaxIdleConnsPerHost: CONCURRENCY,
+		IdleConnTimeout:     0,
+		DisableCompression:  true,
+	}
+
+	webhookClient = http.Client{
+		Timeout:   HTTP_CLIENT_TIMEOUT_SECS * time.Second,
+		Transport: &t,
+	}
 }
