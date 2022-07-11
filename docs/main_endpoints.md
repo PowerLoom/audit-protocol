@@ -147,8 +147,7 @@ curl --location --request GET 'http://localhost:9000/project_a/payload/2'
 {
     "bafyreid5n6cdvladlhnmbmoi6rijlclyl7djmxtiltyvbmscx6f3oraqhi": {
         "data": {
-            "cid": "QmRLPF2hSMfTAX1FBidYZ8sEJ3U42MeoRN7rhv9m7xrBVL",
-            "type": "COLD_FILECOIN"
+            "cid": "QmRLPF2hSMfTAX1FBidYZ8sEJ3U42MeoRN7rhv9m7xrBVL"
         },
         "height": 2,
         "prevCid": "bafyreig25lhuucjwioietwivkaebzmsvdjndxuwpgbd6uv2athdgxuryni",
@@ -173,7 +172,6 @@ curl --location --request GET 'http://localhost:9000/project_a/payload/2/data'
 {
     "bafyreid5n6cdvladlhnmbmoi6rijlclyl7djmxtiltyvbmscx6f3oraqhi": {
         "cid": "QmRLPF2hSMfTAX1FBidYZ8sEJ3U42MeoRN7rhv9m7xrBVL",
-        "type": "COLD_FILECOIN",
         "payload": "{\"data\": \"SomasdasdeData_2\", \"field\": \"CONSTANT FIELD\"}"
     }
 }
@@ -198,7 +196,6 @@ curl --location --request GET 'http://localhost:9000/project_a/payloads?from_hei
         "dagCid": "bafyreieyxciwmwvkr5awpptleidmcu22wvqkxvmxnlt267hbxiedlbtz3y",
         "data": {
             "cid": "QmSUV3br8EJkquqx9MXfZgdNXRweMyyCNFZL3siwfunC7A",
-            "type": "COLD_FILECOIN",
             "payload": "{\"data\": \"SomasdasdeData_3\", \"field\": \"CONSTANT FIELD\"}"
         },
         "height": 29,
@@ -211,7 +208,6 @@ curl --location --request GET 'http://localhost:9000/project_a/payloads?from_hei
         "dagCid": "bafyreiaoh3hw6ja3rhyr6joyaauehrwg4sho7xyj25dwgpq5tbromea7zq",
         "data": {
             "cid": "QmSUV3br8EJkquqx9MXfZgdNXRweMyyCNFZL3siwfunC7A",
-            "type": "COLD_FILECOIN",
             "payload": "{\"data\": \"SomasdasdeData_3\", \"field\": \"CONSTANT FIELD\"}"
         },
         "height": 28,
@@ -224,7 +220,6 @@ curl --location --request GET 'http://localhost:9000/project_a/payloads?from_hei
         "dagCid": "bafyreicjfw46522slofy27qbhakbhxngnqruvaw2dzv6mn2nm5oodryoda",
         "data": {
             "cid": "QmSUV3br8EJkquqx9MXfZgdNXRweMyyCNFZL3siwfunC7A",
-            "type": "COLD_FILECOIN",
             "payload": "{\"data\": \"SomasdasdeData_3\", \"field\": \"CONSTANT FIELD\"}"
         },
         "height": 27,
@@ -336,7 +331,7 @@ curl --location --request GET 'http://localhost:9000/static/bafyreiasny22nn32xb4
 ```
 
 ```json
-{"data": {"cid": "QmSUV3br8EJkquqx9MXfZgdNXRweMyyCNFZL3siwfunC7A", "type": "COLD_FILECOIN", "payload": "{\"data\": \"SomasdasdeData_3\", \"field\": \"CONSTANT FIELD\"}"}, "height": 10, "prevCid": "bafyreiappl5s4nqnzmpjzfb5z45cwkp4twuccreovoimgp4wqpomvrglgi", "timestamp": 1610095068, "txHash": "0x0848b3c7b5d492a468eef661ed5aa212ff8b010b4b700b5459d6f9a01420ddb7"}
+{"data": {"cid": "QmSUV3br8EJkquqx9MXfZgdNXRweMyyCNFZL3siwfunC7A", "payload": "{\"data\": \"SomasdasdeData_3\", \"field\": \"CONSTANT FIELD\"}"}, "height": 10, "prevCid": "bafyreiappl5s4nqnzmpjzfb5z45cwkp4twuccreovoimgp4wqpomvrglgi", "timestamp": 1610095068, "txHash": "0x0848b3c7b5d492a468eef661ed5aa212ff8b010b4b700b5459d6f9a01420ddb7"}
 ```
 
 ### GET /projects/updates
