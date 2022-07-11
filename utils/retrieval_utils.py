@@ -342,7 +342,6 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
-    payload['type'] = block['data']['type']
 
     if data_flag == 1:
         block['data'] = payload
