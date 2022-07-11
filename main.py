@@ -174,12 +174,12 @@ async def commit_payload(
     rest_logger.debug(f"Got last tentative block height: {last_tentative_block_height}. Previous IPLD CID in the DAG: {prev_dag_cid}")
 
     last_tentative_block_height = last_tentative_block_height + 1
-
+    skip_anchor_proof_tx = req_args.get('skipAnchorProof', True)  # skip anchor tx by default, unless passed
     """ Create a unique identifier for this payload """
     payload_data = {
         'tentativeBlockHeight': last_tentative_block_height,
         'payload': payload,
-        'projectId': project_id
+        'projectId': project_id,
     }
     # salt with commit time
     payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
@@ -191,7 +191,8 @@ async def commit_payload(
         'commitId': payload_commit_id,
         'payload': payload,
         'tentativeBlockHeight': last_tentative_block_height,
-        'web3Storage': web3_storage_flag
+        'web3Storage': web3_storage_flag,
+        'skipAnchorProof': skip_anchor_proof_tx
     })
 
     # push payload for commit to rabbitmq queue
