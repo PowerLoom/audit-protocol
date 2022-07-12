@@ -9,7 +9,7 @@ from utils import dag_utils
 from utils.ipfs_async import client as ipfs_client
 from utils.redis_conn import RedisPool
 from aio_pika import ExchangeType, DeliveryMode, Message
-from tenacity import retry_if_exception, wait_random_exponential, stop_after_attempt, retry
+from tenacity import retry_if_exception, wait_random_exponential, stop_after_attempt, retry, AsyncRetrying, wait_random
 from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional
@@ -416,18 +416,42 @@ async def payload_to_dag_processor_task(event_data):
 
             response_body = {'status': 'Discarded', 'reason': 'Not found in pending transaction set'}
         else:
-            _dag_cid, dag_block = await dag_utils.create_dag_block(
-                tx_hash=event_data['txHash'],
-                project_id=project_id,
-                tentative_block_height=tentative_block_height_event_data,
-                payload_cid=event_data['event_data']['snapshotCid'],
-                timestamp=event_data['event_data']['timestamp'],
-                reader_redis_conn=reader_redis_conn,
-                writer_redis_conn=writer_redis_conn
-            )
-            custom_logger.info('Created DAG block with CID %s at height %s', _dag_cid,
-                             tentative_block_height_event_data)
-
+            async for attempt in AsyncRetrying(
+                reraise=True, stop=stop_after_attempt(5), wait=wait_random(1, 2),
+                retry=retry_if_exception(IPFSOpException)
+            ):
+                with attempt:
+                    t = attempt.retry_state.attempt_number
+                    if t > 1:
+                        if not await lock.owned():
+                            # NOTE: this current task deals with a very specific event data payload that has arrived
+                            #       in order, it is essential that the lock never gets released until this payload
+                            #       at the given height gets processed.
+                            #       _IF_ it finds the lock expired while operating, the only side effect can be out of
+                            #       order events getting enqueued OR the resubmission logic getting triggered if enough
+                            #       out of order events have accumulated. Possibly when the top level retry kicks
+                            #       in at such a point, a resubmission might have happened and this payload might
+                            #       not be in the set of pending txs. So no harm right? REVIEW!
+                            # reacquire lock
+                            if not await lock.locked() or not await lock.owned():
+                                if not await lock.acquire():
+                                    raise RedisLockAcquisitionFailure
+                            # locked by (*ANY*) process and that happens to be me: # if lock.locked() and lock.owned() #
+                            else:
+                                # extend lock by 15 more seconds for safety
+                                await lock.extend(additional_time=15)
+                    _dag_cid, dag_block = await dag_utils.create_dag_block(
+                        tx_hash=event_data['txHash'],
+                        project_id=project_id,
+                        tentative_block_height=tentative_block_height_event_data,
+                        payload_cid=event_data['event_data']['snapshotCid'],
+                        timestamp=event_data['event_data']['timestamp'],
+                        reader_redis_conn=reader_redis_conn,
+                        writer_redis_conn=writer_redis_conn
+                    )
+                    custom_logger.info('Created DAG block with CID %s at height %s', _dag_cid,
+                                     tentative_block_height_event_data)
+                    break
             # clear payload commit ID log on success
             await dag_utils.clear_payload_commit_processing_logs(
                 project_id=project_id,
@@ -528,19 +552,36 @@ async def payload_to_dag_processor_task(event_data):
                         'Processing queued confirmed tx %s at tentative_block_height: %s',
                         pending_tx_obj, _tt_block_height
                     )
+                    async for attempt in AsyncRetrying(
+                        reraise=True, stop=stop_after_attempt(5), wait=wait_random(1, 2),
+                        retry=retry_if_exception(IPFSOpException)
+                    ):
+                        with attempt:
+                            t = attempt.retry_state.attempt_number
+                            if t > 1:
+                                if not await lock.owned():
+                                    # reacquire lock
+                                    if not await lock.locked() or not await lock.owned():
+                                        if not await lock.acquire():
+                                            raise RedisLockAcquisitionFailure
+                                    # locked by (*ANY*) process and that happens to be me: # if lock.locked() and lock.owned() #
+                                    else:
+                                        # extend lock by 10 more seconds
+                                        await lock.extend(additional_time=10)
 
-                    """ Create the dag block for this event """
-                    _dag_cid, dag_block = await dag_utils.create_dag_block(
-                        tx_hash=pending_tx_obj.event_data.txHash,
-                        project_id=project_id,
-                        tentative_block_height=_tt_block_height,
-                        payload_cid=pending_tx_obj.event_data.snapshotCid,
-                        timestamp=int(pending_tx_obj.event_data.timestamp),
-                        reader_redis_conn=reader_redis_conn,
-                        writer_redis_conn=writer_redis_conn
-                    )
-                    custom_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
-                                     _tt_block_height)
+                            """ Create the dag block for this event """
+                            _dag_cid, dag_block = await dag_utils.create_dag_block(
+                                tx_hash=pending_tx_obj.event_data.txHash,
+                                project_id=project_id,
+                                tentative_block_height=_tt_block_height,
+                                payload_cid=pending_tx_obj.event_data.snapshotCid,
+                                timestamp=int(pending_tx_obj.event_data.timestamp),
+                                reader_redis_conn=reader_redis_conn,
+                                writer_redis_conn=writer_redis_conn
+                            )
+                            custom_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
+                                             _tt_block_height)
+                            break
                     pending_blocks_finalized.append({
                         'status': 'Inserted', 'atHeight': _tt_block_height, 'dagCID': _dag_cid
                     })
@@ -615,7 +656,13 @@ async def payload_to_dag_processor_task(event_data):
                         )
             response_body.update({'pendingBlocksFinalized': pending_blocks_finalized})
     # release aioredis lock
-    await lock.release()
+    try:
+        await lock.release()
+    except aioredis.exceptions.LockNotOwnedError:
+        custom_logger.error(
+            'Error releasing lock for project ID %s since lock not owned by current task',
+            project_id
+        )
 
 
 @app.post('/')

@@ -149,14 +149,16 @@ async def create_dag_block(
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
 ) -> Tuple[str, DAGBlock]:
-    """ Get the last dag cid using the tentativeBlockHeight"""   
+    """ Get the last dag cid using the tentativeBlockHeight"""
+    # in the calling context, a lock on a project does not exist more than 10 seconds.
+    # So IPFS operations should raise exceptions well ahead of time
     try:
         future_dag_cid = helper_functions.get_dag_cid(
             project_id=project_id,
             block_height=tentative_block_height - 1,
             reader_redis_conn=reader_redis_conn
         ) 
-        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=10)
+        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=5)
     except asyncio.TimeoutError as err:
         logger.error("Timeout while get dag cid from ipfs, Exception: %s", err, exc_info=True)
         raise IPFSOpException from err 
@@ -176,7 +178,7 @@ async def create_dag_block(
     """ Convert dag structure to json and put it on ipfs dag """
     try:
         future_dag = put_dag_block(dag.json())
-        dag_cid = await asyncio.wait_for(future_dag, timeout=10)
+        dag_cid = await asyncio.wait_for(future_dag, timeout=5)
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise IPFSOpException from e
