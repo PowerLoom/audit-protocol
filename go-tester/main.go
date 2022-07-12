@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -31,6 +32,7 @@ type PayloadCommit struct {
 	Resubmitted          bool         `json:"resubmitted"`
 	ResubmissionBlock    int          `json:"resubmissionBlock"` // corresponds to lastTouchedBlock in PendingTransaction model
 	Web3Storage          bool         `json:"web3Storage"`
+	SkipAnchorProof      bool         `json:"skipAnchorProof"`
 }
 type AuditContractCommitResp struct {
 	Success bool                          `json:"success"`
@@ -78,6 +80,25 @@ func writerHandler(w http.ResponseWriter, req *http.Request) {
 	log.Infof("Sent response %+v of length %d", resp, length)
 }
 
+func WebhookListener(w http.ResponseWriter, req *http.Request) {
+	log.Infof("Received http request for callback %+v : ", *req)
+	reqBytes, _ := ioutil.ReadAll(req.Body)
+	var reqParams map[string]json.RawMessage
+	json.Unmarshal(reqBytes, &reqParams)
+	log.Infof("Received http request body for callback %+v : ", reqParams)
+	var resp AuditContractCommitResp
+	resp.Success = true
+
+	res, _ := json.Marshal(resp)
+	//w.WriteHeader(http.StatusInternalServerError)
+
+	length, err := w.Write(res)
+	if err != nil {
+		log.Error("Failed to write res with err:", err)
+	}
+	log.Infof("Sent response %+v for webhook callback of length %d", resp, length)
+}
+
 func main() {
 	conn, err := GetConn("amqp://guest:guest@localhost:5672/")
 	if err != nil {
@@ -86,6 +107,8 @@ func main() {
 	numProjects := 10
 	var tentativeBlockHeights [50]int64
 	http.HandleFunc("/writer", writerHandler)
+	http.HandleFunc("/", WebhookListener)
+
 	port := 8888
 	rand.Seed(time.Now().Unix())
 	log.SetLevel(log.DebugLevel)
@@ -109,6 +132,9 @@ func main() {
 			pc.TentativeBlockHeight = tentativeBlockHeights[i]
 			if i%2 == 0 {
 				pc.Web3Storage = true
+				pc.SkipAnchorProof = false
+			} else {
+				pc.SkipAnchorProof = true
 			}
 			if j%2 == 0 { //simulate resubmissions intermittently
 				//Simulate a resubmission.
