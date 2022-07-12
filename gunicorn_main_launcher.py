@@ -94,6 +94,7 @@ if __name__ == '__main__':
 
     options = {
         "bind": f"{settings.host}:{settings.port}",
+        "keepalive": settings.keepalive_secs,
         "workers": WORKERS,
         "accesslog": "-",
         "errorlog": "-",

@@ -98,6 +98,7 @@ if __name__ == '__main__':
 
     options = {
         "bind": f"{settings.webhook_listener.host}:{settings.webhook_listener.port}",
+        "keepalive":settings.webhook_listener.keepalive_secs,
         "workers": WORKERS,
         "accesslog": "-",
         "errorlog": "-",

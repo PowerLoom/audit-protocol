@@ -19,6 +19,7 @@ class WebhookListener(BaseModel):
     host: str
     port: int
     validate_header_sig: bool = False
+    keepalive_secs: int = 600
 
 
 class HTTPClientConnection(BaseModel):
@@ -52,6 +53,7 @@ class TableNames(BaseModel):
 class Settings(BaseModel):
     host: str
     port: str
+    keepalive_secs: int = 600
     rlimit: dict
     ipfs_url: str
     rabbitmq: RabbitMQConfig
