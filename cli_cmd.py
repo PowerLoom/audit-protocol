@@ -174,16 +174,16 @@ def updateStoredProjectIds(namespace: str = typer.Argument('UNISWAPV2')):
     r.sadd('storedProjectIds', *all_projectIds)
 
 @app.command()
-def projectIndexStatus(project: str = typer.Argument(''), namespace: str = typer.Argument('UNISWAPV2')):
+def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2", "--namespace"), projectId: str = typer.Option(None, "--projectId")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
     indexeStatus = None
-    if project != '':
-        indexeStatus = r.hget(f'projects:{namespace}:IndexStatus', project)
+    if projectId:
+        indexeStatus = r.hget(f'projects:{namespace}:IndexStatus', projectId)
         if not indexeStatus:
-            console.log(f"\n[bold red]Project is not indexed[bold red]: \n{project}\n")
+            console.log(f"\n[bold red]Project is not indexed[bold red]: \n{projectId}\n")
             return
-        indexeStatus = [{project: indexeStatus.decode('utf-8')}]
+        indexeStatus = [{projectId: indexeStatus.decode('utf-8')}]
     else:
         indexeStatus = r.hgetall(f'projects:{namespace}:IndexStatus')
         if not indexeStatus:
