@@ -10,6 +10,7 @@ type RecordTxEventData struct {
 	PayloadCommitId      string  `json:"payloadCommitId"`
 	SnapshotCid          string  `json:"snapshotCid"`
 	TentativeBlockHeight int     `json:"tentativeBlockHeight"`
+	SkipAnchorProof      bool    `json:"skipAnchorProof"`
 }
 
 type PendingTransaction struct {

@@ -41,10 +41,11 @@ var REDIS_KEY_PENDING_TXNS = "projectID:%s:pendingTransactions"
 
 var WEB3_STORAGE_UPLOAD_URL_SUFFIX = "/upload"
 
+//TODO: Move all these to settings.
 const MAX_RETRY_COUNT = 3
 const SECONDS_BETWEEN_RETRY = 5
 
-const CONCURRENCY = 50 //indicates number of go-routines to maintain.
+const CONCURRENCY = 20 //indicates number of go-routines to maintain.
 const HTTP_CLIENT_TIMEOUT_SECS = 10
 
 var commonVigilParams CommonVigilRequestParams
@@ -327,6 +328,8 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 	pendingtxn.EventData.Timestamp = float64(time.Now().Unix())
 	pendingtxn.EventData.TentativeBlockHeight = payload.TentativeBlockHeight
 	pendingtxn.EventData.ApiKeyHash = tokenHash
+	pendingtxn.EventData.SkipAnchorProof = payload.SkipAnchorProof
+
 	if payload.Resubmitted {
 		pendingtxn.LastTouchedBlock = payload.ResubmissionBlock
 	} else {

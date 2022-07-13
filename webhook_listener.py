@@ -296,7 +296,8 @@ async def payload_to_dag_processor_task(event_data):
                                 'tentativeBlockHeight': tx_commit_details.tentativeBlockHeight,
                                 'apiKeyHash': tx_commit_details.apiKeyHash,
                                 'resubmitted': True,
-                                'resubmissionBlock': tentative_block_height_event_data
+                                'resubmissionBlock': tentative_block_height_event_data,
+                                'skipAnchorProof' : tx_commit_details.skipAnchorProof
                             }
                         )
                         message = Message(

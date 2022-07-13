@@ -11,6 +11,7 @@ class AuditRecordTxEventData(BaseModel):
     payloadCommitId: str
     snapshotCid: str
     tentativeBlockHeight: int
+    skipAnchorProof: bool = True
 
 
 class PendingTransaction(BaseModel):
