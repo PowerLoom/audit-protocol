@@ -20,6 +20,7 @@ class WebhookListener(BaseModel):
     port: int
     validate_header_sig: bool = False
     keepalive_secs: int = 600
+    redis_lock_lifetime: int
 
 
 class HTTPClientConnection(BaseModel):

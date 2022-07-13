@@ -13,7 +13,11 @@ import logging
 import aioredis
 import hmac
 import sys
-from utils.ipfs_async import IPFSOpException
+
+
+class DAGCreationException(Exception):
+    pass
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.DEBUG)
@@ -140,6 +144,35 @@ async def get_payload(payload_cid: str):
     return await get_dag_block(payload_cid)
 
 
+async def create_dag_block_timebound(
+    tx_hash: str,
+    project_id: str,
+    tentative_block_height: int,
+    payload_cid: str,
+    timestamp: int,
+    reader_redis_conn: aioredis.Redis,
+    writer_redis_conn: aioredis.Redis
+) -> Tuple[str, DAGBlock]:
+    try:
+        future_create_dag_block = create_dag_block(
+            tx_hash=tx_hash,
+            project_id=project_id,
+            tentative_block_height=tentative_block_height,
+            payload_cid=payload_cid,
+            timestamp=timestamp,
+            reader_redis_conn=reader_redis_conn,
+            writer_redis_conn=writer_redis_conn
+        )
+        return await asyncio.wait_for(
+            future_create_dag_block,
+            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
+            timeout=settings.webhook_listener.redis_lock_lifetime - 1  # timeout a sec before the lifetime expiry
+        )
+    except Exception as err:
+        logger.error("Overall timeout or exception on DAG block creations, Exception: %s", err, exc_info=True)
+        raise DAGCreationException from err
+
+
 async def create_dag_block(
         tx_hash: str,
         project_id: str,
@@ -147,22 +180,24 @@ async def create_dag_block(
         payload_cid: str,
         timestamp: int,
         reader_redis_conn: aioredis.Redis,
-        writer_redis_conn: aioredis.Redis,
+        writer_redis_conn: aioredis.Redis
 ) -> Tuple[str, DAGBlock]:
     """ Get the last dag cid using the tentativeBlockHeight"""
-    # in the calling context, a lock on a project does not exist more than 10 seconds.
-    # So IPFS operations should raise exceptions well ahead of time
+    # a lock on a project does not exist more than settings.webhook_listener.redis_lock_lifetime seconds.
     try:
         future_dag_cid = helper_functions.get_dag_cid(
             project_id=project_id,
             block_height=tentative_block_height - 1,
             reader_redis_conn=reader_redis_conn
-        ) 
-        last_dag_cid = await asyncio.wait_for(future_dag_cid, timeout=5)
-    except asyncio.TimeoutError as err:
-        logger.error("Timeout while get dag cid from ipfs, Exception: %s", err, exc_info=True)
-        raise IPFSOpException from err 
-        
+        )
+        last_dag_cid = await asyncio.wait_for(
+            future_dag_cid,
+            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
+            timeout=settings.webhook_listener.redis_lock_lifetime/2 * 0.8
+        )
+    except Exception as e:
+        logger.error("Failure while getting dag cid from Redis zset of project CIDs, Exception: %s", e, exc_info=True)
+        raise
 
     """ Fill up the dag """
     dag = DAGBlock(
@@ -176,12 +211,17 @@ async def create_dag_block(
     logger.debug("DAG created: %s", dag)
 
     """ Convert dag structure to json and put it on ipfs dag """
+    # IPFS operations should raise exceptions well ahead of time
     try:
         future_dag = put_dag_block(dag.json())
-        dag_cid = await asyncio.wait_for(future_dag, timeout=5)
+        dag_cid = await asyncio.wait_for(
+            future_dag,
+            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
+            timeout=settings.webhook_listener.redis_lock_lifetime / 2 * 0.8
+        )
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
-        raise IPFSOpException from e
+        raise DAGCreationException from e
 
     """ Update redis keys """
     last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id)

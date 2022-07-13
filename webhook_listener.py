@@ -22,7 +22,7 @@ import logging
 import sys
 import json
 import os
-from utils.ipfs_async import IPFSOpException
+from utils.dag_utils import DAGCreationException
 
 
 class RedisLockAcquisitionFailure(Exception):
@@ -100,9 +100,8 @@ async def startup_boilerplate():
 
 @retry(
     reraise=True,
-    wait=wait_random_exponential(multiplier=1, max=30),
-    stop=stop_after_attempt(3),
-    retry=(retry_if_exception(RedisLockAcquisitionFailure) | retry_if_exception(IPFSOpException))
+    wait=wait_random_exponential(multiplier=1, min=15, max=30),
+    retry=retry_if_exception(RedisLockAcquisitionFailure)
 )
 async def payload_to_dag_processor_task(event_data):
     """ Get data from the event """
@@ -118,7 +117,7 @@ async def payload_to_dag_processor_task(event_data):
         redis=writer_redis_conn,
         name=project_id,
         blocking_timeout=5,  # should not need more than 5 seconds of waiting on acquiring a lock
-        timeout=10  # entire operation should not take more than 10 seconds
+        timeout=settings.webhook_listener.redis_lock_lifetime
     )
     ret = await lock.acquire()
     if not ret:
@@ -297,7 +296,7 @@ async def payload_to_dag_processor_task(event_data):
                                 'apiKeyHash': tx_commit_details.apiKeyHash,
                                 'resubmitted': True,
                                 'resubmissionBlock': tentative_block_height_event_data,
-                                'skipAnchorProof' : tx_commit_details.skipAnchorProof
+                                'skipAnchorProof': tx_commit_details.skipAnchorProof
                             }
                         )
                         message = Message(
@@ -418,30 +417,43 @@ async def payload_to_dag_processor_task(event_data):
             response_body = {'status': 'Discarded', 'reason': 'Not found in pending transaction set'}
         else:
             async for attempt in AsyncRetrying(
-                reraise=True, stop=stop_after_attempt(5), wait=wait_random(1, 2),
-                retry=retry_if_exception(IPFSOpException)
+                # we want to retry as soon since there are enough timed waits in the asyncio awaited operations
+                reraise=True, wait=wait_random(min=1, max=2),
+                retry=retry_if_exception(DAGCreationException)
             ):
                 with attempt:
                     t = attempt.retry_state.attempt_number
                     if t > 1:
+                        custom_logger.info(
+                            'In-order DAG block creation | Project ID: %s | Tentative Height: %s | Retry attempt: %s',
+                            project_id, tentative_block_height_event_data, t
+                        )
                         if not await lock.owned():
-                            # NOTE: this current task deals with a very specific event data payload that has arrived
-                            #       in order, it is essential that the lock never gets released until this payload
-                            #       at the given height gets processed.
-                            #       _IF_ it finds the lock expired while operating, the only side effect can be out of
-                            #       order events getting enqueued OR the resubmission logic getting triggered if enough
-                            #       out of order events have accumulated. Possibly when the top level retry kicks
-                            #       in at such a point, a resubmission might have happened and this payload might
-                            #       not be in the set of pending txs. So no harm right? REVIEW!
                             # reacquire lock
                             if not await lock.locked() or not await lock.owned():
-                                if not await lock.acquire():
+                                custom_logger.warning(
+                                    'Project specific lock expired while retrying DAG Creation '
+                                    '| Project %s | Tentative Height %s | Retry attempt number: %s',
+                                    project_id, tentative_block_height_event_data, t
+                                )
+                                r_a = await lock.acquire()
+                                if not r_a:
+                                    custom_logger.warning(
+                                        'Project specific lock expired while retrying DAG Creation | Failed to reacquire'
+                                        '| Project %s | Tentative Height %s | Retry attempt number: %s',
+                                        project_id, tentative_block_height_event_data, t
+                                    )
                                     raise RedisLockAcquisitionFailure
                             # locked by (*ANY*) process and that happens to be me: # if lock.locked() and lock.owned() #
                             else:
-                                # extend lock by 15 more seconds for safety
-                                await lock.extend(additional_time=15)
-                    _dag_cid, dag_block = await dag_utils.create_dag_block(
+                                # extend lock for safety
+                                await lock.extend(additional_time=settings.webhook_listener.redis_lock_lifetime)
+                                custom_logger.info(
+                                    'In-order DAG block creation | Retry attempt: %s | Project specific lock lifetime '
+                                    'extended successfully %s | Tentative height: %s',
+                                    t, project_id, tentative_block_height_event_data
+                                )
+                    _dag_cid, dag_block = await dag_utils.create_dag_block_timebound(
                         tx_hash=event_data['txHash'],
                         project_id=project_id,
                         tentative_block_height=tentative_block_height_event_data,
@@ -452,7 +464,6 @@ async def payload_to_dag_processor_task(event_data):
                     )
                     custom_logger.info('Created DAG block with CID %s at height %s', _dag_cid,
                                      tentative_block_height_event_data)
-                    break
             # clear payload commit ID log on success
             await dag_utils.clear_payload_commit_processing_logs(
                 project_id=project_id,
@@ -554,24 +565,38 @@ async def payload_to_dag_processor_task(event_data):
                         pending_tx_obj, _tt_block_height
                     )
                     async for attempt in AsyncRetrying(
-                        reraise=True, stop=stop_after_attempt(5), wait=wait_random(1, 2),
-                        retry=retry_if_exception(IPFSOpException)
+                        reraise=True,
+                        # we want to retry as soon since there are enough timed waits in the asyncio awaited operations
+                        # also helps with lock not expiring midway while waiting
+                        wait=wait_random(min=1, max=2),
+                        retry=retry_if_exception(DAGCreationException)
                     ):
                         with attempt:
                             t = attempt.retry_state.attempt_number
                             if t > 1:
+                                custom_logger.info(
+                                    'Queued DAG block creation %s after successful in-order DAG block creation '
+                                    '| Project ID: %s | Tentative Height: %s | Retry attempt: %s',
+                                    pending_tx_obj.txHash, project_id, _tt_block_height, t
+                                )
                                 if not await lock.owned():
                                     # reacquire lock
-                                    if not await lock.locked() or not await lock.owned():
-                                        if not await lock.acquire():
-                                            raise RedisLockAcquisitionFailure
-                                    # locked by (*ANY*) process and that happens to be me: # if lock.locked() and lock.owned() #
-                                    else:
-                                        # extend lock by 10 more seconds
-                                        await lock.extend(additional_time=10)
+                                    custom_logger.warning(
+                                        'Project specific lock expired while retrying DAG Creation '
+                                        '| Project %s | Tentative Height %s | Retry attempt number: %s',
+                                        project_id, tentative_block_height_event_data, t
+                                    )
+                                    r_a = await lock.acquire()
+                                    if not r_a:
+                                        custom_logger.warning(
+                                            'Project specific lock expired while retrying DAG Creation | Failed to reacquire'
+                                            '| Project %s | Tentative Height %s | Retry attempt number: %s',
+                                            project_id, _tt_block_height, t
+                                        )
+                                        raise RedisLockAcquisitionFailure
 
                             """ Create the dag block for this event """
-                            _dag_cid, dag_block = await dag_utils.create_dag_block(
+                            _dag_cid, dag_block = await dag_utils.create_dag_block_timebound(
                                 tx_hash=pending_tx_obj.event_data.txHash,
                                 project_id=project_id,
                                 tentative_block_height=_tt_block_height,
@@ -582,7 +607,7 @@ async def payload_to_dag_processor_task(event_data):
                             )
                             custom_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
                                              _tt_block_height)
-                            break
+
                     pending_blocks_finalized.append({
                         'status': 'Inserted', 'atHeight': _tt_block_height, 'dagCID': _dag_cid
                     })
@@ -691,7 +716,7 @@ async def create_dag(
             rest_logger.debug(event_data)
             try:
                 asyncio.ensure_future(payload_to_dag_processor_task(event_data))
-            except IPFSOpException:
+            except DAGCreationException:
                 response_status_code = 500
 
     response.status_code = response_status_code
