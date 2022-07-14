@@ -7,7 +7,11 @@
 		"port": 9002,
 		"validate_header_sig": false,
 		"keepalive_secs": 600,
-		"redis_lock_lifetime": 30
+		"redis_lock_lifetime": 30,
+		"rate_limit" :{
+			"req_per_sec": 50,
+			"burst": 20
+		}
 	},
 	"rabbitmq": {
 		"user": "guest",
@@ -31,8 +35,16 @@
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
 	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
+	"ipfs_rate_limit" :{
+		"req_per_sec": 100,
+		"burst": 100
+	},
 	"snapshot_interval": 4,
 	"contract_call_backend": "http://127.0.0.1:8888/writer",
+	"contract_rate_limit" :{
+		"req_per_sec": 50,
+		"burst": 50
+	},
 	"seed": "THISISRANDOMSEED",
 	"REDIS": {
 		"HOST": "127.0.0.1",
@@ -73,6 +85,7 @@
 		"connect": 5
 	},
 	"payload_commit_interval": 2,
+	"payload_commit_concurrency": 20,
 	"pruning_service_interval": 10,
 	"retrieval_service_interval": 3,
 	"deal_watcher_service_interval": 3,
@@ -89,6 +102,10 @@
 		"api_token":"",
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
-		"idle_conn_timeout":0 
+		"idle_conn_timeout":0,
+		"rate_limit" :{
+			"req_per_sec": 3,
+			"burst": 6
+		}
 	}
 }

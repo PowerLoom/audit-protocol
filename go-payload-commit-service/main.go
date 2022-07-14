@@ -22,6 +22,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/writer"
 	"github.com/streadway/amqp"
+	"golang.org/x/time/rate"
 )
 
 var ctx = context.Background()
@@ -36,6 +37,12 @@ var consts ConstsObj
 var rmqConnection *Conn
 var exitChan chan bool
 
+//Rate Limiter Objects
+var webhookClientRateLimiter *rate.Limiter
+var web3StorageClientRateLimiter *rate.Limiter
+var ipfsClientRateLimiter *rate.Limiter
+var vigilClientRateLimiter *rate.Limiter
+
 var REDIS_KEY_PAYLOAD_CIDS = "projectID:%s:payloadCids"
 var REDIS_KEY_PENDING_TXNS = "projectID:%s:pendingTransactions"
 
@@ -45,7 +52,6 @@ var WEB3_STORAGE_UPLOAD_URL_SUFFIX = "/upload"
 const MAX_RETRY_COUNT = 3
 const SECONDS_BETWEEN_RETRY = 5
 
-const CONCURRENCY = 20 //indicates number of go-routines to maintain.
 const HTTP_CLIENT_TIMEOUT_SECS = 10
 
 var commonVigilParams CommonVigilRequestParams
@@ -169,14 +175,19 @@ func main() {
 	RegisterSignalHandles()
 	InitLogger()
 	settingsObj = ParseSettings("../settings.json")
+	if settingsObj.PayloadCommitConcurrency == 0 {
+		settingsObj.PayloadCommitConcurrency = 20 //Defaut value
+		log.Infof("Setting Concurrency as 20 by default as it was not set.")
+	}
 	ParseConsts("../dev_consts.json")
 	InitIPFSClient()
 	InitRedisClient()
 	InitVigilClient()
 	InitWebhookCallbackClient()
 	log.Info("Starting RabbitMq Consumer")
-	InitRabbitmqConsumer()
 	InitW3sClient()
+
+	InitRabbitmqConsumer()
 
 }
 
@@ -200,7 +211,7 @@ func InitRabbitmqConsumer() {
 	var err error
 	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
 	rmqConnection, err = GetConn(rabbitMqURL)
-	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, CONCURRENCY)
+	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, settingsObj.PayloadCommitConcurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -209,7 +220,7 @@ func InitRabbitmqConsumer() {
 	rmqQueueName := "audit-protocol-commit-payloads"
 	rmqRoutingKey := "commit-payloads"
 
-	err = rmqConnection.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, CONCURRENCY)
+	err = rmqConnection.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, settingsObj.PayloadCommitConcurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -249,6 +260,13 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
 			for retryCount := 0; ; {
 				options.DagPutOptions()
+
+				err := ipfsClientRateLimiter.Wait(context.Background())
+				if err != nil {
+					log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
+					time.Sleep(1 * time.Second)
+					continue
+				}
 				snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
 				/*snapshotCid, err := ipfsClient.DagPutWithOpts(bytes.NewReader(payloadCommit.Payload),
 				options.Dag.InputCodec("dag-json"),
@@ -407,13 +425,13 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
 					time.Sleep(5 * time.Second)
 				}
 				if retryCount == MAX_RETRY_COUNT {
-					log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Prost-Vigil with err %+v after max retries of %d",
+					log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Vigil with err %+v after max retries of %d",
 						payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
 					time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 					return RETRY_IMMEDIATE
 				}
 				retryCount++
-				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Prost-Vigil with err %+v ..retryCount %d",
+				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Vigil with err %+v ..retryCount %d",
 					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
 				continue
 			}
@@ -469,6 +487,13 @@ func InvokeWebhookCallback(payload *PayloadCommit, txHash string) retryType {
 		req.Header.Add("Authorization", "Bearer "+settingsObj.Web3Storage.APIToken)
 		req.Header.Add("accept", "application/json")
 		req.Header.Add("Content-Type", "application/json")
+
+		err = webhookClientRateLimiter.Wait(context.Background())
+		if err != nil {
+			log.Errorf("WebhookClient Rate Limiter wait timeout with error %+v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
 		log.Debugf("Sending Req to webhook listener URL %s for project %s with snapshotCID %s commitId %s ",
 			reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
 		res, err := webhookClient.Do(req)
@@ -526,6 +551,13 @@ func UploadToWeb3Storage(payload PayloadCommit) (string, bool) {
 		}
 		req.Header.Add("Authorization", "Bearer "+settingsObj.Web3Storage.APIToken)
 		req.Header.Add("accept", "application/json")
+
+		err = web3StorageClientRateLimiter.Wait(context.Background())
+		if err != nil {
+			log.Errorf("Web3Storage Rate Limiter wait timeout with error %+v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
 		log.Debugf("Sending Req to web3.storage URL %s for project %s with snapshotCID %s commitId %s ",
 			reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
 		res, err := vigilHttpClient.Do(req)
@@ -600,11 +632,19 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("accept", "application/json")
-	log.Debugf("Sending Req with params %+v to Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
+
+	err = vigilClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		log.Errorf("VigilClient Rate Limiter wait timeout with error %+v", err)
+		time.Sleep(1 * time.Second)
+		return "", RETRY_IMMEDIATE, err
+	}
+
+	log.Debugf("Sending Req with params %+v to Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
 		reqParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tokenHash)
 	res, err := vigilHttpClient.Do(req)
 	if err != nil {
-		log.Errorf("Failed to send request %+v towards Prost-Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
+		log.Errorf("Failed to send request %+v towards Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
 			req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
 		return "", RETRY_IMMEDIATE, err
 	}
@@ -612,32 +652,32 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	var resp AuditContractCommitResp
 	respBody, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from Prost-Vigil with error %+v",
+		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from Vigil with error %+v",
 			payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
 		return "", RETRY_IMMEDIATE, err
 	}
 	if res.StatusCode == http.StatusOK {
 		err = json.Unmarshal(respBody, &resp)
 		if err != nil {
-			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards Prost-Vigil with error %+v",
+			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards Vigil with error %+v",
 				respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
 			return "", RETRY_WITH_DELAY, err
 		}
 		if resp.Success {
-			log.Debugf("Received Success response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s.",
+			log.Debugf("Received Success response %+v from Vigil for project %s with snapshotCID %s commitId %s.",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
 			return resp.Data[0].TxHash, NO_RETRY_SUCCESS, nil
 		} else {
 			var tmpRsp map[string]string
 			_ = json.Unmarshal(respBody, &tmpRsp)
-			log.Errorf("Received 200 OK with Error response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s resp bytes %+v ",
+			log.Errorf("Received 200 OK with Error response %+v from Vigil for project %s with snapshotCID %s commitId %s resp bytes %+v ",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tmpRsp)
-			return "", RETRY_WITH_DELAY, errors.New("Received Error response from Prost-Vigil : " + fmt.Sprintf("%+v", resp))
+			return "", RETRY_WITH_DELAY, errors.New("Received Error response from Vigil : " + fmt.Sprintf("%+v", resp))
 		}
 	} else {
-		log.Errorf("Received Error response %+v from Prost-Vigil for project %s with snapshotCID %s commitId %s with statusCode %d and status : %s ",
+		log.Errorf("Received Error response %+v from Vigil for project %s with snapshotCID %s commitId %s with statusCode %d and status : %s ",
 			resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, res.StatusCode, res.Status)
-		return "", RETRY_WITH_DELAY, errors.New("Received Error response from Prost-Vigil" + fmt.Sprint(respBody))
+		return "", RETRY_WITH_DELAY, errors.New("Received Error response from Vigil" + fmt.Sprint(respBody))
 	}
 }
 
@@ -646,9 +686,9 @@ func InitVigilClient() {
 
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        CONCURRENCY,
-		MaxConnsPerHost:     CONCURRENCY,
-		MaxIdleConnsPerHost: CONCURRENCY,
+		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -663,6 +703,21 @@ func InitVigilClient() {
 	commonVigilParams.NetworkId = 137
 	commonVigilParams.HackerMan = false
 	commonVigilParams.IgnoreGasEstimate = false
+
+	//Default values
+	tps := rate.Limit(50) //50 TPS
+	burst := 50
+	if settingsObj.ContractRateLimiter != nil {
+		burst = settingsObj.ContractRateLimiter.Burst
+		if settingsObj.ContractRateLimiter.RequestsPerSec == -1 {
+			tps = rate.Inf
+			burst = 0
+		} else {
+			tps = rate.Limit(settingsObj.ContractRateLimiter.RequestsPerSec)
+		}
+	}
+	log.Infof("Rate Limit configured for Vigil Client at %v TPS with a burst of %d", tps, burst)
+	vigilClientRateLimiter = rate.NewLimiter(tps, burst)
 }
 
 func InitRedisClient() {
@@ -690,9 +745,9 @@ func InitIPFSClient() {
 	//TODO: Move these to settings
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        CONCURRENCY,
-		MaxConnsPerHost:     CONCURRENCY,
-		MaxIdleConnsPerHost: CONCURRENCY,
+		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -703,6 +758,22 @@ func InitIPFSClient() {
 	}
 	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
 	ipfsClient = shell.NewShellWithClient(connectUrl, &ipfsHttpClient)
+
+	//Default values
+	tps := rate.Limit(100) //50 TPS
+	burst := 100
+	if settingsObj.IPFSRateLimiter != nil {
+		burst = settingsObj.IPFSRateLimiter.Burst
+		if settingsObj.IPFSRateLimiter.RequestsPerSec == -1 {
+			tps = rate.Inf
+			burst = 0
+		} else {
+			tps = rate.Limit(settingsObj.IPFSRateLimiter.RequestsPerSec)
+		}
+	}
+	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
+	ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
+
 }
 func InitW3sClient() {
 	t := http.Transport{
@@ -719,14 +790,28 @@ func InitW3sClient() {
 		Transport: &t,
 	}
 
+	//Default values
+	tps := rate.Limit(3) //3 TPS
+	burst := 3
+	if settingsObj.Web3Storage.RateLimiter != nil {
+		burst = settingsObj.Web3Storage.RateLimiter.Burst
+		if settingsObj.Web3Storage.RateLimiter.RequestsPerSec == -1 {
+			tps = rate.Inf
+			burst = 0
+		} else {
+			tps = rate.Limit(settingsObj.Web3Storage.RateLimiter.RequestsPerSec)
+		}
+	}
+	log.Infof("Rate Limit configured for web3.storage at %v TPS with a burst of %d", tps, burst)
+	web3StorageClientRateLimiter = rate.NewLimiter(tps, burst)
 }
 
 func InitWebhookCallbackClient() {
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        CONCURRENCY,
-		MaxConnsPerHost:     CONCURRENCY,
-		MaxIdleConnsPerHost: CONCURRENCY,
+		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -735,4 +820,18 @@ func InitWebhookCallbackClient() {
 		Timeout:   HTTP_CLIENT_TIMEOUT_SECS * time.Second,
 		Transport: &t,
 	}
+	//Default values
+	tps := rate.Limit(50) //50 TPS
+	burst := 20
+	if settingsObj.WebhookListener.RateLimiter != nil {
+		burst = settingsObj.WebhookListener.RateLimiter.Burst
+		if settingsObj.WebhookListener.RateLimiter.RequestsPerSec == -1 {
+			tps = rate.Inf
+			burst = 0
+		} else {
+			tps = rate.Limit(settingsObj.WebhookListener.RateLimiter.RequestsPerSec)
+		}
+	}
+	log.Infof("Rate Limit configured for webhookClient at %v TPS with a burst of %d", tps, burst)
+	webhookClientRateLimiter = rate.NewLimiter(tps, burst)
 }

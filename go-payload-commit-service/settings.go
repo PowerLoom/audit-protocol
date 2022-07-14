@@ -7,13 +7,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+type _RateLimiter struct {
+	Burst          int `json:"burst"`
+	RequestsPerSec int `json:"req_per_sec"`
+}
+
 //TODO: Move settings into a common package to be used by all go services under audit-protocol.
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
 	WebhookListener struct {
-		Host string `json:"host"`
-		Port int    `json:"port"`
+		Host        string        `json:"host"`
+		Port        int           `json:"port"`
+		RateLimiter *_RateLimiter `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
 	IpfsURL          string `json:"ipfs_url"`
 	SnapshotInterval int    `json:"snapshot_interval"`
@@ -31,8 +37,9 @@ type SettingsObj struct {
 			} `json:"core"`
 		} `json:"setup"`
 	} `json:"rabbitmq"`
-	ContractCallBackend string `json:"contract_call_backend"`
-	RPCMatic            string `json:"rpc_matic"`
+	ContractCallBackend string        `json:"contract_call_backend"`
+	ContractRateLimiter *_RateLimiter `json:"contract_rate_limit,omitempty"`
+	RPCMatic            string        `json:"rpc_matic"`
 	ContractAddresses   struct {
 		IuniswapV2Factory string `json:"iuniswap_v2_factory"`
 		IuniswapV2Router  string `json:"iuniswap_v2_router"`
@@ -79,28 +86,31 @@ type SettingsObj struct {
 		ErrorRate   float64     `json:"error_rate"`
 		Filename    interface{} `json:"filename"`
 	} `json:"bloom_filter_settings"`
-	PayloadCommitInterval      int      `json:"payload_commit_interval"`
-	PruningServiceInterval     int      `json:"pruning_service_interval"`
-	RetrievalServiceInterval   int      `json:"retrieval_service_interval"`
-	DealWatcherServiceInterval int      `json:"deal_watcher_service_interval"`
-	BackupTargets              []string `json:"backup_targets"`
-	MaxPayloadCommits          int      `json:"max_payload_commits"`
-	UnpinMode                  string   `json:"unpin_mode"`
-	MaxPendingEvents           int      `json:"max_pending_events"`
-	IpfsTimeout                int      `json:"ipfs_timeout"`
-	SpanExpireTimeout          int      `json:"span_expire_timeout"`
-	APIKey                     string   `json:"api_key"`
+	PayloadCommitInterval      int           `json:"payload_commit_interval"`
+	PayloadCommitConcurrency   int           `json:"payload_commit_concurrency"`
+	PruningServiceInterval     int           `json:"pruning_service_interval"`
+	RetrievalServiceInterval   int           `json:"retrieval_service_interval"`
+	DealWatcherServiceInterval int           `json:"deal_watcher_service_interval"`
+	BackupTargets              []string      `json:"backup_targets"`
+	MaxPayloadCommits          int           `json:"max_payload_commits"`
+	UnpinMode                  string        `json:"unpin_mode"`
+	MaxPendingEvents           int           `json:"max_pending_events"`
+	IpfsTimeout                int           `json:"ipfs_timeout"`
+	IPFSRateLimiter            *_RateLimiter `json:"ipfs_rate_limit,omitempty"`
+	SpanExpireTimeout          int           `json:"span_expire_timeout"`
+	APIKey                     string        `json:"api_key"`
 	AiohtttpTimeouts           struct {
 		SockRead    int `json:"sock_read"`
 		SockConnect int `json:"sock_connect"`
 		Connect     int `json:"connect"`
 	} `json:"aiohtttp_timeouts"`
 	Web3Storage struct {
-		URL             string `json:"url"`
-		APIToken        string `json:"api_token"`
-		TimeoutSecs     int    `json:"timeout_secs"`
-		MaxIdleConns    int    `json:"max_idle_conns"`
-		IdleConnTimeout int    `json:"idle_conn_timeout"`
+		URL             string        `json:"url"`
+		APIToken        string        `json:"api_token"`
+		TimeoutSecs     int           `json:"timeout_secs"`
+		MaxIdleConns    int           `json:"max_idle_conns"`
+		IdleConnTimeout int           `json:"idle_conn_timeout"`
+		RateLimiter     *_RateLimiter `json:"rate_limit,omitempty"`
 	} `json:"web3_storage"`
 }
 
