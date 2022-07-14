@@ -223,20 +223,21 @@ async def payload_to_dag_processor_task(event_data):
                 max=tentative_block_height_event_data,
                 withscores=True
             )
-            # filter out prior resubmitted transactions not older than 3 blocks
-            # or if they are 'fresh' as well (lastTouchedBlock = 0) yet 3 blocks have passed since confirmation
+            # filter out prior resubmitted transactions not older than 10 blocks
+            # or if they are 'fresh' as well (lastTouchedBlock = 0) yet 10 blocks have passed since confirmation
             # has arrived (the score of the pending tx entry is used for this, which is the tentative block
             # height at which the tx callback is supposed to arrive)
             # not to be considered in this set are the ones already enqueued for block creation
             # (lastTouchedBlock == -1)
+            num_block_to_wait_for_resubmission = 10
             pending_confirmation_callbacks_txs_filtered = list(filter(
                 lambda x:
                 (PendingTransaction.parse_raw(x[0]).lastTouchedBlock != -1 and
                  PendingTransaction.parse_raw(x[0]).lastTouchedBlock != 0 and
-                 PendingTransaction.parse_raw(x[0]).lastTouchedBlock + 3 <= tentative_block_height_event_data
+                 PendingTransaction.parse_raw(x[0]).lastTouchedBlock + num_block_to_wait_for_resubmission <= tentative_block_height_event_data
                  )
                 or (PendingTransaction.parse_raw(x[0]).lastTouchedBlock == 0 and
-                    int(x[1]) + 3 <= tentative_block_height_event_data),
+                    int(x[1]) + num_block_to_wait_for_resubmission <= tentative_block_height_event_data),
                 pending_confirmation_callbacks_txs
             ))
             custom_logger.info(
@@ -470,11 +471,10 @@ async def payload_to_dag_processor_task(event_data):
                 payload_commit_id=event_data['event_data']['payloadCommitId'],
                 writer_redis_conn=writer_redis_conn
             )
-
             # clear from pending set
             _ = await writer_redis_conn.zremrangebyscore(
-                name=redis_keys.get_pending_transactions_key(project_id), 
-                min=tentative_block_height_event_data, 
+                name=redis_keys.get_pending_transactions_key(project_id),
+                min=tentative_block_height_event_data,
                 max=tentative_block_height_event_data
             )
             if _:
