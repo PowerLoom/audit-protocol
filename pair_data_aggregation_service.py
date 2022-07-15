@@ -9,7 +9,7 @@ from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, uniswa
 from utils import helper_functions
 from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
-from utils.redis_conn import RedisPool
+from utils.redis_conn import RedisPool, provide_redis_conn
 from utils.retrieval_utils import retrieve_block_data
 import cardinality
 import aioredis
@@ -93,6 +93,51 @@ async def get_maker_pair_data(prop):
         return "MKR"
     else:
         return "Maker"
+
+async def get_oldest_block_and_timestamp(pair_contract_address):
+    project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_{NAMESPACE}'
+
+    aioredis_pool = RedisPool()
+    await aioredis_pool.populate()
+    redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
+
+    # liquidty data
+    liquidity_tail_marker_24h, liquidity_tail_marker_7d = await redis_conn.mget(
+        redis_keys.get_sliding_window_cache_tail_marker(project_id_token_reserve, '24h'),
+        redis_keys.get_sliding_window_cache_tail_marker(project_id_token_reserve, '7d')
+    )
+    liquidity_tail_marker_24h = int(liquidity_tail_marker_24h.decode('utf-8')) if liquidity_tail_marker_24h else 0
+    liquidity_tail_marker_7d = int(liquidity_tail_marker_7d.decode('utf-8')) if liquidity_tail_marker_7d else 0
+    
+
+    liquidity_data_24h, liquidity_data_7d = await asyncio.gather(
+        get_dag_block_by_height(
+            project_id_token_reserve,
+            liquidity_tail_marker_24h,
+            redis_conn
+        ),
+        get_dag_block_by_height(
+            project_id_token_reserve,
+            liquidity_tail_marker_7d,
+            redis_conn
+        )
+    )
+    
+    if not liquidity_data_24h or not liquidity_data_7d:
+        return {
+            "begin_block_height_24h": 0,
+            "begin_block_timestamp_24h": 0,
+            "begin_block_height_7d": 0,
+            "begin_block_timestamp_7d": 0,    
+        }
+
+
+    return {
+        "begin_block_height_24h": int(liquidity_data_24h['data']['payload']['chainHeightRange']['begin']),
+        "begin_block_timestamp_24h": int(liquidity_data_24h['data']['payload']['timestamp']),
+        "begin_block_height_7d": int(liquidity_data_7d['data']['payload']['chainHeightRange']['begin']),
+        "begin_block_timestamp_7d": int(liquidity_data_7d['data']['payload']['timestamp']),
+    }
 
 async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer_redis_conn):
     """
@@ -716,8 +761,10 @@ async def v2_pairs_data():
         final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(*process_data_list, return_exceptions=True)
         common_blockheight_reached = False
         common_block_timestamp = False
+        pair_contract_address = None
         collected_heights = list(map(lambda x: x.block_height, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
         collected_block_timestamp = list(map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
+        pair_addresses = list(map(lambda x: x.contractAddress, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
         # logger.debug('Final results from running v2 pairs coroutines: %s', final_results)
         # logger.debug('Filtered heights from running v2 pairs coroutines: %s', collected_heights)
         if cardinality.count(final_results) != cardinality.count(collected_heights):
@@ -731,6 +778,7 @@ async def v2_pairs_data():
             if all(collected_heights[0] == y for y in collected_heights):
                 common_blockheight_reached = collected_heights[0]
                 common_block_timestamp = collected_block_timestamp[0]
+                pair_contract_address = pair_addresses[0]
                 logger.debug('Setting common blockheight reached to %s', collected_heights[0])
             else:
                 logger.error(
@@ -819,9 +867,15 @@ async def v2_pairs_data():
                         data_flag=1
                     )
 
+                    begin_block_data = await get_oldest_block_and_timestamp(pair_contract_address)
+
                     snapshotZsetEntry = uniswapPairsSnapshotZset(
                         cid=dag_block_payload_prefilled['data']['cid'],
-                        txHash=dag_block_payload_prefilled['txHash']
+                        txHash=dag_block_payload_prefilled['txHash'],
+                        begin_block_height_24h=begin_block_data["begin_block_height_24h"],
+                        begin_block_timestamp_24h=begin_block_data["begin_block_timestamp_24h"],
+                        begin_block_height_7d=begin_block_data["begin_block_height_7d"],
+                        begin_block_timestamp_7d=begin_block_data["begin_block_timestamp_7d"]
                     )
 
                     # store in snapshots zset

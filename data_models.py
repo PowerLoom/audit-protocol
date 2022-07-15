@@ -168,6 +168,10 @@ class DiffCalculationRequest(BaseModel):
 class uniswapPairsSnapshotZset(BaseModel):
     cid: str
     txHash: str
+    begin_block_height_24h: int
+    begin_block_timestamp_24h: int
+    begin_block_height_7d: int
+    begin_block_timestamp_7d: int
 
 class uniswapDailyStatsSnapshotZset(BaseModel):
     cid: str
