@@ -560,7 +560,7 @@ func UploadToWeb3Storage(payload PayloadCommit) (string, bool) {
 		}
 		log.Debugf("Sending Req to web3.storage URL %s for project %s with snapshotCID %s commitId %s ",
 			reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
-		res, err := vigilHttpClient.Do(req)
+		res, err := w3sHttpClient.Do(req)
 		if err != nil {
 			retryCount++
 			log.Errorf("Failed to send request %+v towards web3.storage URL %s for project %s with snapshotCID %s commitId %s with error %+v.  Retrying %d",
