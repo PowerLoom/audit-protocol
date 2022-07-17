@@ -13,8 +13,10 @@ type SlackNotifyReq struct {
 	DAGsummary string `json:"dagChainSummary"`
 }
 
-type DagChainSummary struct {
+type DagChainReport struct {
 	Namespace                   string `json:"namespace"`
+	Severity                    string `json:"severity"`                               //HIGH,MEDIUM, LOW
+	ProjectsWithCacheIssueCount int    `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
 	ProjectsTrackedCount        int    `json:"projectsTrackedCount"`
 	ProjectsWithIssuesCount     int    `json:"projectsWithIssuesCount"`
 	ProjectsWithStuckChainCount int    `json:"projectsWithStuckChainCount"`

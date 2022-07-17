@@ -32,6 +32,7 @@ type DagVerifier struct {
 	lastVerifiedDagBlockHeightsMutex *sync.RWMutex
 	slackClient                      *http.Client
 	dagChainHasIssues                bool
+	dagCacheIssues                   int
 	dagChainIssues                   map[string][]DagChainIssue
 	previousCycleDagChainHeight      map[string]int64
 	noOfCyclesSinceChainStuck        map[string]int
@@ -45,6 +46,10 @@ const PAIR_TOTALRESERVE_PROJECTID string = "projectID:uniswap_pairContract_pair_
 
 const DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT string = "DUPLICATE_HEIGHT_IN_CHAIN"
 const DAG_CHAIN_ISSUE_GAP_IN_CHAIN string = "GAP_IN_CHAIN"
+
+const DAG_CHAIN_REPORT_SEVERITY_HIGH = "High"
+const DAG_CHAIN_REPORT_SEVERITY_MEDIUM = "Medium"
+const DAG_CHAIN_REPORT_SEVERITY_LOW = "Low"
 
 func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddresses *[]string) {
 	verifier.InitIPFSClient(settings)
@@ -271,7 +276,6 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	//Fetch the DAGChain cached in redis and then corresponding payloads at chainHeight.
 	// For now only the Chain that is stored in redis is used as a reference to verify.
 	//TODO: Need to validate the original dag chain from what is stored in IPFS. Is this required??
-	var dagChain []DagChainBlock
 	verifier.lastVerifiedDagBlockHeightsMutex.RLock()
 	startScore := verifier.lastVerifiedDagBlockHeights[projectId]
 	verifier.lastVerifiedDagBlockHeightsMutex.RUnlock()
@@ -357,7 +361,7 @@ func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps 
 }
 
 func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
-	var dagSummary DagChainSummary
+	var dagSummary DagChainReport
 	dagSummary.Namespace = NAMESPACE
 
 	currentCycleDAGchainHeight := make(map[string]int64, len(verifier.projects))
@@ -396,6 +400,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 		dagSummary.ProjectsWithIssuesCount = len(verifier.dagChainIssues)
 		dagSummary.CurrentMinChainHeight = currentMinChainHeight
 		dagSummary.ProjectsWithStuckChainCount = isDagchainStuckForAnyProject
+		dagSummary.ProjectsWithCacheIssueCount = verifier.dagCacheIssues
 
 		for _, projectIssues := range verifier.dagChainIssues {
 			dagSummary.OverallIssueCount += len(projectIssues)
@@ -407,31 +412,31 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 				}
 			}
 		}
+		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
+	} else if verifier.dagCacheIssues > 0 {
+		dagSummary.ProjectsTrackedCount = len(verifier.projects)
+		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_LOW
+		dagSummary.ProjectsWithCacheIssueCount = verifier.dagCacheIssues
+		dagSummary.CurrentMinChainHeight = currentMinChainHeight
+
+		err := verifier.NotifySlackOfDAGSummary(dagSummary)
+		if err != nil {
+			log.Errorf("Slack Notify failed with error %+v", err)
+		}
+		verifier.dagCacheIssues = 0
 	}
+
 	//Do not notify if recently notification has been sent.
 	//TODO: Rough suppression logic, not very elegant.
 	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
 	//As of now the workaround is to restart dag-verifier once issues are resolved.
 	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
 		if time.Now().Unix()-verifier.lastNotifyTime > 1800 {
-			for retryCount := 0; ; {
-				retryType := verifier.NotifySlackOfDAGSummary(dagSummary)
-				if retryType == NO_RETRY_FAILURE || retryType == NO_RETRY_SUCCESS {
-					if retryType == NO_RETRY_SUCCESS {
-						verifier.lastNotifyTime = time.Now().Unix()
-					}
-					break
-				}
-				if retryCount == 3 {
-					log.Errorf("Giving up notifying slack after retrying for %d times", retryCount)
-					return
-				}
-				retryCount++
-				if retryType == RETRY_WITH_DELAY {
-					time.Sleep(5 * time.Second)
-				}
-				log.Errorf("Slack Notify failed with error..retrying %d", retryCount)
+			err := verifier.NotifySlackOfDAGSummary(dagSummary)
+			if err != nil {
+				log.Errorf("Slack Notify failed with error %+v", err)
 			}
+			verifier.lastNotifyTime = time.Now().Unix()
 		}
 	}
 	//Cleanup reported issues, because they are not recoverable and only way to recover
@@ -444,7 +449,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	}
 }
 
-func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainSummary) retryType {
+func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) error {
 	//TODO: Move this to settings
 	reqURL := "https://hooks.slack.com/workflows/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"
 	var slackReq SlackNotifyReq
@@ -454,46 +459,55 @@ func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainSummary)
 	body, err := json.Marshal(slackReq)
 	if err != nil {
 		log.Fatalf("Failed to marshal request %+v towards Slack Webhook with error %+v", dagSummary, err)
-		return NO_RETRY_FAILURE
+		return err
 	}
-
-	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
-	if err != nil {
-		log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
-			reqURL, dagSummary, err)
-		return NO_RETRY_FAILURE
-	}
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("accept", "application/json")
-	log.Debugf("Sending Req with params %+v to Slack Webhook URL %s.",
-		dagSummary, reqURL)
-	res, err := verifier.slackClient.Do(req)
-	if err != nil {
-		log.Errorf("Failed to send request %+v towards Slack Webhook URL %s with error %+v",
-			req, reqURL, err)
-		return RETRY_IMMEDIATE
-	}
-	defer res.Body.Close()
-	var resp SlackResp
-	respBody, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		log.Errorf("Failed to read response body from Slack Webhook with error %+v",
-			err)
-		return RETRY_IMMEDIATE
-	}
-	if res.StatusCode == http.StatusOK {
-		log.Debugf("Received success response from Slack Webhook with statusCode %d", res.StatusCode)
-		return NO_RETRY_SUCCESS
-	} else {
-		err = json.Unmarshal(respBody, &resp)
-		if err != nil {
-			log.Errorf("Failed to unmarshal response %+v towards Slack Webhook with error %+v",
-				respBody, err)
-			return RETRY_WITH_DELAY
+	for retryCount := 0; ; retryCount++ {
+		if retryCount == 3 {
+			log.Errorf("Giving up notifying slack after retrying for %d times", retryCount)
+			return errors.New("failed to notify after maximum retries")
 		}
-		log.Errorf("Received Error response %+v from Slack Webhook with statusCode %d and status : %s ",
-			resp, res.StatusCode, res.Status)
-		return RETRY_WITH_DELAY
+		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
+		if err != nil {
+			log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
+				reqURL, dagSummary, err)
+			return err
+		}
+		req.Header.Add("Content-Type", "application/json")
+		req.Header.Add("accept", "application/json")
+		log.Debugf("Sending Req with params %+v to Slack Webhook URL %s.",
+			dagSummary, reqURL)
+		res, err := verifier.slackClient.Do(req)
+		if err != nil {
+			log.Errorf("Failed to send request %+v towards Slack Webhook URL %s with error %+v",
+				req, reqURL, err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		defer res.Body.Close()
+		var resp SlackResp
+		respBody, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			log.Errorf("Failed to read response body from Slack Webhook with error %+v",
+				err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if res.StatusCode == http.StatusOK {
+			log.Debugf("Received success response from Slack Webhook with statusCode %d", res.StatusCode)
+			return nil
+		} else {
+			err = json.Unmarshal(respBody, &resp)
+			if err != nil {
+				log.Errorf("Failed to unmarshal response %+v towards Slack Webhook with error %+v",
+					respBody, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			log.Errorf("Received Error response %+v from Slack Webhook with statusCode %d and status : %s ",
+				resp, res.StatusCode, res.Status)
+			time.Sleep(5 * time.Second)
+			continue
+		}
 	}
 }
 
@@ -558,9 +572,30 @@ func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScor
 	res := zRangeByScore.Val()
 	//dagPayloadsInfo = make([]DagPayload, len(res))
 	log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
+
+	//Hate GOTO's but felt this is the cleanest way to handle this.
+RESTART_CID_COMP_LOOP:
 	for i := range res {
 		if len(dagChain) > i {
+			/* TODO: Implement this logic to Check for sequence of payloadCIDS
+			if i != len(dagChain)-1 {
+				if res[i].Score != res[i+1].Score-1 {
+					log.Warnf("PayloadCids are out of sequence in redis cache for project %s. Missing payloadCid at score %d", projectId, res[i].Score+1)
+				}
+			}*/
 			if dagChain[i].Height != int64(res[i].Score) {
+				//Handling special case of duplicate entries in redis DAG cache, this doesn't affect original DAGChain that is in IPFS.
+				if (i > 0) &&
+					(dagChain[i].Height == dagChain[i-1].Height) &&
+					(dagChain[i].Data.Cid == dagChain[i-1].Data.Cid) {
+					log.Warnf("Duplicate entry found in redis cache at DAGChain Height %d in cache for Project %s", dagChain[i].Height, projectId)
+					//Notify of a minor issue and proceed by removing the duplicate entry so that verification proceed
+					copy(dagChain[i:], dagChain[i+1:])
+					dagChain = dagChain[:len(dagChain)-1]
+					verifier.dagCacheIssues++
+					//TODO: Should we auto-correct the cache or let it be?
+					goto RESTART_CID_COMP_LOOP
+				}
 				return dagChain, fmt.Errorf("CRITICAL:Inconsistency between DAG Chain and Payloads stored in redis for Project:%s", projectId)
 			}
 			dagChain[i].Payload.PayloadCid = fmt.Sprintf("%v", res[i].Member)
