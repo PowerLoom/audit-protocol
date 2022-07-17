@@ -540,7 +540,7 @@ func (verifier *DagVerifier) GetDagChainCidsFromRedis(projectId string, startSco
 	for i := range res {
 		//Safe to convert as we know height will always be int.
 		dagChainCids[i].Height = int64(res[i].Score)
-		dagChainCids[i].Data.Cid = fmt.Sprintf("%v", res[i].Member)
+		dagChainCids[i].CurrentCid = fmt.Sprintf("%v", res[i].Member)
 	}
 	lastVerifiedStatus, err := strconv.ParseInt(startScore, 10, 64)
 	if err != nil && len(dagChainCids) == 1 && dagChainCids[0].Height == lastVerifiedStatus {
@@ -586,8 +586,8 @@ RESTART_CID_COMP_LOOP:
 			if dagChain[i].Height != int64(res[i].Score) {
 				//Handling special case of duplicate entries in redis DAG cache, this doesn't affect original DAGChain that is in IPFS.
 				if (i > 0) &&
-					(dagChain[i].Height == dagChain[i-1].Height) &&
-					(dagChain[i].Data.Cid == dagChain[i-1].Data.Cid) {
+					(dagChain[i].Height == dagChain[i-1].Height) {
+					//TODO: Fetch DAGBlocks from IPFS to verify if snapshot CIDs are same
 					log.Warnf("Duplicate entry found in redis cache at DAGChain Height %d in cache for Project %s", dagChain[i].Height, projectId)
 					//Notify of a minor issue and proceed by removing the duplicate entry so that verification proceed
 					copy(dagChain[i:], dagChain[i+1:])

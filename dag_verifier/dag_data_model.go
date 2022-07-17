@@ -66,9 +66,10 @@ type DagChainBlock struct {
 	Data struct {
 		Cid string `json:"cid"`
 	} `json:"data"`
-	Height    int64      `json:"height"`
-	PrevCid   string     `json:"prevCid"`
-	Timestamp int64      `json:"timestamp"`
-	TxHash    string     `json:"txHash"`
-	Payload   DagPayload `json:"payload"`
+	Height     int64      `json:"height"`
+	PrevCid    string     `json:"prevCid"`
+	Timestamp  int64      `json:"timestamp"`
+	TxHash     string     `json:"txHash"`
+	Payload    DagPayload `json:"payload"`
+	CurrentCid string
 }
