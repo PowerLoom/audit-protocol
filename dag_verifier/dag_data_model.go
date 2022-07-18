@@ -62,12 +62,16 @@ type DagPayloadData struct {
 	Timestamp   float64 `json:"timestamp"`
 }
 
+type IPLDLink struct {
+	LinkData string `json:"/"`
+}
+
 type DagChainBlock struct {
 	Data struct {
-		Cid string `json:"cid"`
+		Cid IPLDLink `json:"cid"`
 	} `json:"data"`
 	Height     int64      `json:"height"`
-	PrevCid    string     `json:"prevCid"`
+	PrevCid    IPLDLink   `json:"prevCid"`
 	Timestamp  int64      `json:"timestamp"`
 	TxHash     string     `json:"txHash"`
 	Payload    DagPayload `json:"payload"`

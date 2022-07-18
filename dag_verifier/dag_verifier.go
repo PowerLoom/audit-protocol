@@ -124,7 +124,7 @@ func (verifier *DagVerifier) FetchLastProjectIndexedStatusFromRedis() {
 }
 
 func (verifier *DagVerifier) FetchStartIndex(projectId string) (int64, error) {
-	payloadCid, err := verifier.GetPayloadCidAtDAGHeight(projectId, "1")
+	payloadCid, err := verifier.GetPayloadCidAtDAGHeightFromRedis(projectId, "1")
 	if err != nil {
 		//Raise an alarm in future for this
 		log.Error("Failed to fetch DAG Chain CIDS for projectID from redis:", projectId)
@@ -143,7 +143,7 @@ func (verifier *DagVerifier) FetchStartIndex(projectId string) (int64, error) {
 	return payload.ChainHeightRange.Begin, nil
 }
 
-func (verifier *DagVerifier) GetPayloadCidAtDAGHeight(projectId string, startScore string) (string, error) {
+func (verifier *DagVerifier) GetPayloadCidAtDAGHeightFromRedis(projectId string, startScore string) (string, error) {
 	//key := projectId + ":payloadCids"
 	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
 	payloadCid := ""
@@ -511,7 +511,7 @@ func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) 
 	}
 }
 
-//TODO: Need to handle Dagchain reorg event and reset the lastVerifiedBlockHeight to the same.
+// Need to handle Dagchain reorg event and reset the lastVerifiedBlockHeight to the same.
 /*func (verifier *DagVerifier) HandleChainReOrg(){
 
 }*/
@@ -587,14 +587,30 @@ RESTART_CID_COMP_LOOP:
 				//Handling special case of duplicate entries in redis DAG cache, this doesn't affect original DAGChain that is in IPFS.
 				if (i > 0) &&
 					(dagChain[i].Height == dagChain[i-1].Height) {
-					//TODO: Fetch DAGBlocks from IPFS to verify if snapshot CIDs are same
-					log.Warnf("Duplicate entry found in redis cache at DAGChain Height %d in cache for Project %s", dagChain[i].Height, projectId)
-					//Notify of a minor issue and proceed by removing the duplicate entry so that verification proceed
-					copy(dagChain[i:], dagChain[i+1:])
-					dagChain = dagChain[:len(dagChain)-1]
-					verifier.dagCacheIssues++
-					//TODO: Should we auto-correct the cache or let it be?
-					goto RESTART_CID_COMP_LOOP
+					dagBlock, err := ipfsClient.DagGet(dagChain[i].CurrentCid)
+					if err != nil {
+						log.Infof("Failed to fetch DAGblock %s from IPFS due to error %+v..retrying in next cycle",
+							dagChain[i].CurrentCid, err)
+						return nil, errors.New("failed to fetch DAGblock from IPFS due to error")
+					}
+					dagBlock1, err := ipfsClient.DagGet(dagChain[i-1].CurrentCid)
+					if err != nil {
+						log.Infof("Failed to fetch DAGblock %s from IPFS due to error %+v..retrying in next cycle",
+							dagChain[i-1].CurrentCid, err)
+						return nil, errors.New("failed to fetch DAGblock from IPFS due to error")
+					}
+					if dagBlock.Data.Cid == dagBlock1.Data.Cid {
+						log.Warnf("Duplicate entry found in redis cache at DAGChain Height %d in cache for Project %s", dagChain[i].Height, projectId)
+						//Notify of a minor issue and proceed by removing the duplicate entry so that verification proceed
+						copy(dagChain[i:], dagChain[i+1:])
+						dagChain = dagChain[:len(dagChain)-1]
+						verifier.dagCacheIssues++
+						//TODO: Should we auto-correct the cache or let it be?
+						goto RESTART_CID_COMP_LOOP
+					} else {
+						log.Errorf("Payloads at DAG blocks for project %s are not same and are different in DAGs %+v and %+v .",
+							projectId, dagBlock, dagBlock1)
+					}
 				}
 				return dagChain, fmt.Errorf("CRITICAL:Inconsistency between DAG Chain and Payloads stored in redis for Project:%s", projectId)
 			}
@@ -653,7 +669,6 @@ func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, [
 func (verifier *DagVerifier) InitRedisClient(settingsObj SettingsObj) {
 	redisURL := settingsObj.Redis.Host + ":" + strconv.Itoa(settingsObj.Redis.Port)
 	redisDb := settingsObj.Redis.Db
-	//TODO: Change post testing to fetch from settings.
 	//redisURL = "localhost:6379"
 	//redisDb = 0
 	log.Info("Connecting to redis at:", redisURL)
