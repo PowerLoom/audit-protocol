@@ -500,8 +500,7 @@ func validSnapshot(payloadCommit *PayloadCommit, lastTentativeBlockHeight int) (
 			return false, nil
 		}
 		if currentSnapshotData.ChainHeightRange.Begin != previousSnapshot.ChainHeightRange.End+1 {
-			log.Warnf("Snapshot received is out of sequence in comparison to previously submitted one for project %s and commitId %s.",
-				"Either another go-routine is processing in parallel or there was a snapshot submission missed",
+			log.Warnf("Snapshot received is out of sequence in comparison to previously submitted one for project %s and commitId %s.Either another go-routine is processing in parallel or there was a snapshot submission missed",
 				payloadCommit.ProjectId, payloadCommit.CommitId)
 		}
 	}
