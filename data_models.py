@@ -27,7 +27,7 @@ class PayloadCommit(BaseModel):
     # following two can be used to substitute for not supplying the payload but the CID and hash itself
     snapshotCID: Optional[str] = None
     apiKeyHash: Optional[str] = None
-    tentativeBlockHeight: int
+    tentativeBlockHeight: int = 0
     resubmitted: bool = False
     resubmissionBlock: int = 0  # corresponds to lastTouchedBlock in PendingTransaction model
     web3Storage: bool = False

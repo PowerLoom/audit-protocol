@@ -43,8 +43,9 @@ var web3StorageClientRateLimiter *rate.Limiter
 var ipfsClientRateLimiter *rate.Limiter
 var vigilClientRateLimiter *rate.Limiter
 
-var REDIS_KEY_PAYLOAD_CIDS = "projectID:%s:payloadCids"
-var REDIS_KEY_PENDING_TXNS = "projectID:%s:pendingTransactions"
+var REDIS_KEY_PROJECT_PAYLOAD_CIDS = "projectID:%s:payloadCids"
+var REDIS_KEY_PROJECT_PENDING_TXNS = "projectID:%s:pendingTransactions"
+var REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT = "projectID:%s:tentativeBlockHeight"
 
 var WEB3_STORAGE_UPLOAD_URL_SUFFIX = "/upload"
 
@@ -240,16 +241,35 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 
 	err := json.Unmarshal(d.Body, &payloadCommit)
 	if err != nil {
-		log.Errorf("CRITICAL: Json unmarshal failed for payloadCommit %v, with err %v", d.Body, err)
+		log.Warnf("CRITICAL: Json unmarshal failed for payloadCommit %v, with err %v. Ignoring", d.Body, err)
 		return true
 	}
 
 	if !payloadCommit.Resubmitted {
+		lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
+		if err != nil {
+			return false
+		}
+		//Note: Once we bring in consensus, tentativeBlockHeight should be updated only once consensus is achieved
+		payloadCommit.TentativeBlockHeight = lastTentativeBlockHeight + 1
+		if lastTentativeBlockHeight > 0 {
+			isValidSnapshot, err := validSnapshot(&payloadCommit, lastTentativeBlockHeight)
+			if err != nil {
+				log.Errorf("Could not validate current snapshot for project %s with commitId %s",
+					payloadCommit.ProjectId, payloadCommit.CommitId)
+				return false
+			}
+			if !isValidSnapshot {
+				log.Warnf("Invalid snapshot received for project %s at tentativeBlockHeight %d and ignoring it",
+					payloadCommit.ProjectId, lastTentativeBlockHeight)
+				return true
+			}
+		}
 		if payloadCommit.Web3Storage {
 			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Uploading payload to web3.storage.",
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
 			snapshotCid, opStatus := UploadToWeb3Storage(payloadCommit)
-			if opStatus == false {
+			if !opStatus {
 				return false
 			}
 			log.Debugf("web3.storage upload Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
@@ -288,13 +308,23 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				break
 			}
 		}
+
 		err = StorePayloadCidInRedis(&payloadCommit)
 		if err != nil {
+			log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",
+				payloadCommit.ProjectId, payloadCommit.CommitId, err)
+			return false
+		}
+		//Update TentativeBlockHeight for the project
+		err = UpdateTentativeBlockHeight(&payloadCommit)
+		if err != nil {
+			log.Errorf("Failed to update tentativeBlockHeight for the project %s with commitId %s due to error %+v",
+				payloadCommit.ProjectId, payloadCommit.CommitId, err)
 			return false
 		}
 	} else {
 		if payloadCommit.SnapshotCID == "" && payloadCommit.Payload == nil {
-			log.Fatalf("Received incoming Payload commit message without snapshotCID and empty payload at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq. Discarding this message without processing.",
+			log.Warnf("Received incoming Payload commit message without snapshotCID and empty payload at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq. Discarding this message without processing.",
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 			return true
 		} else {
@@ -304,18 +334,183 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 		}
 	}
-	retryType := PrepareAndSubmitTxnToChain(&payloadCommit)
-	if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
-		return false
-	} else if retryType == NO_RETRY_SUCCESS {
-		log.Trace("Submitted txn to chain for %+v", payloadCommit)
+
+	var txHash string
+	var retryType retryType
+	if !payloadCommit.SkipAnchorProof {
+		txHash, retryType = PrepareAndSubmitTxnToChain(&payloadCommit)
+		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
+			//TODO: Not retrying further..need to think of project recovery from this point.
+			log.Warnf("MAX Retries reached while trying to invoke Vigil services for project %s and commitId %s with tentativeBlockHeight %d.",
+				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
+			return true
+		} else if retryType == NO_RETRY_SUCCESS {
+			log.Trace("Submitted txn to chain for %+v", payloadCommit)
+		} else {
+			log.Errorf("Irrecoverable error occurred and hence ignoring snapshots for processing.")
+			return true
+		}
+	} else {
+		var status bool
+		txHash, status = GenerateTokenHash(&payloadCommit)
+		payloadCommit.ApiKeyHash = txHash
+		if !status {
+			log.Errorf("Irrecoverable error occurred and hence ignoring snapshots for processing.")
+			return true
+		}
+	}
+
+	/*Add to redis pendingTransactions*/
+	err = AddToPendingTxnsInRedis(&payloadCommit, txHash)
+	if err != nil {
+		//TODO: Not retrying further..need to think of project recovery from this point.
+		log.Errorf("Unable to add transaction to PendingTxns after max retries for project %s and commitId %s with tentativeBlockHeight %d.",
+			payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
+		return true
+	}
+	//Optimize: No need to invoke webhook callback, rather DAG Block can be created from here directly
+	//But sequencing logic needs to be introduced based on chainHeightRange.
+	if payloadCommit.SkipAnchorProof {
+		//Notify webhook listener service as we are skipping proof anchor on chain.
+		retryType := InvokeWebhookCallback(&payloadCommit)
+		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
+			//TODO: Not retrying further..need to think of project recovery from this point.
+			log.Warnf("MAX Retries reached while trying to invoke webhook listener for project %s and commitId %s with tentativeBlockHeight %d.",
+				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
+			return true
+		} else if retryType == NO_RETRY_SUCCESS {
+			log.Trace("Submitted txn to chain for %+v", payloadCommit)
+		}
 	}
 	return true
 }
 
+func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) *PayloadData {
+	payloadCid, err := GetPayloadCidAtProjectHeightFromRedis(projectId, strconv.Itoa(lastTentativeBlockHeight))
+	if err != nil {
+		log.Errorf("Failed to fetch payloadCid for project %s at height %d from redis due to error %+v",
+			projectId, lastTentativeBlockHeight, err)
+		return nil
+	}
+	payload, err := GetPayloadFromIPFS(payloadCid, 3)
+	if err != nil {
+		log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
+			payloadCid, projectId, lastTentativeBlockHeight, err)
+		return nil
+	}
+	return payload
+}
+
+func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) (string, error) {
+	//key := projectId + ":payloadCids"
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+	payloadCid := ""
+
+	log.Debug("Fetching PayloadCid from redis at key:", key, ",with startScore: ", startScore)
+	for i := 0; ; {
+		zRangeByScore := redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+			Min: startScore,
+			Max: startScore,
+		})
+
+		err := zRangeByScore.Err()
+		log.Debug("Result for ZRangeByScoreWithScores : ", zRangeByScore)
+		if err != nil {
+			log.Errorf("Could not fetch PayloadCid from  redis for project %s at blockHeight %d error: %+v Query: %+v",
+				projectId, startScore, err, zRangeByScore)
+			if i == MAX_RETRY_COUNT {
+				log.Errorf("Could not fetch PayloadCid from  redis after max retries for project %s at blockHeight %d error: %+v Query: %+v",
+					projectId, startScore, err, zRangeByScore)
+				return "", err
+			}
+			i++
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+			continue
+		}
+
+		res := zRangeByScore.Val()
+		//dagPayloadsInfo = make([]DagPayload, len(res))
+		log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
+		if len(res) == 1 {
+			payloadCid = fmt.Sprintf("%v", res[0].Member)
+			log.Debugf("PayloadCID %s fetched for project %s at height %s from redis", payloadCid, projectId, startScore)
+		} else {
+			log.Errorf("Found more than 1 payload CIDS at height %d for project %s",
+				startScore, projectId)
+		}
+		break
+	}
+	return payloadCid, nil
+}
+
+func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error) {
+	var payload PayloadData
+	for i := 0; ; {
+		log.Debugf("Fetching payloadCid %s from IPFS", payloadCid)
+		data, err := ipfsClient.Cat(payloadCid)
+		if err != nil {
+			if i >= retryCount {
+				log.Errorf("Failed to fetch Payload with CID %s from IPFS even after max retries due to error %+v.", payloadCid, err)
+				return &payload, err
+			}
+			log.Errorf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+			i++
+			continue
+		}
+
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(data)
+
+		err = json.Unmarshal(buf.Bytes(), &payload)
+		if err != nil {
+			log.Errorf("Failed to Unmarshal Json Payload from IPFS, CID %s, bytes: %+v due to error %+v ",
+				payloadCid, buf, err)
+			return nil, err
+		}
+		break
+	}
+
+	log.Debugf("Fetched Payload with CID %s from IPFS: %+v", payloadCid, payload)
+	return &payload, nil
+}
+
+func validSnapshot(payloadCommit *PayloadCommit, lastTentativeBlockHeight int) (bool, error) {
+	// Check if this is a duplicate snapshot of previously submitted one and ignore if so.
+	// We could've used snapshotCID to compare with previous one, but a snapshotter can submit incorrect snapshot at same chainHeightRange?
+	// Fetch previously submitted payLoad and compare chainHeight to confirm duplicate.
+	previousSnapshot := GetPreviousSnapshot(payloadCommit.ProjectId, lastTentativeBlockHeight)
+	if previousSnapshot == nil {
+		log.Warnf("Could not get previous snapshot for project %s with commitId %s, sending NACK to rabbitmq",
+			payloadCommit.ProjectId, payloadCommit.CommitId)
+		return false, errors.New("could not get previous snapshot for project")
+	}
+	var currentSnapshotData PayloadData
+	err := json.Unmarshal(payloadCommit.Payload, &currentSnapshotData)
+	if err != nil {
+		log.Warnf("Unable to decode current snapshot for project %s with commitId %s as payload due to error %+v",
+			payloadCommit.ProjectId, payloadCommit.CommitId, err)
+		return false, nil
+	}
+	if currentSnapshotData.ChainHeightRange != nil && previousSnapshot.ChainHeightRange != nil {
+		if (currentSnapshotData.ChainHeightRange.Begin == previousSnapshot.ChainHeightRange.Begin) &&
+			(currentSnapshotData.ChainHeightRange.End == previousSnapshot.ChainHeightRange.End) {
+			log.Warnf("Duplicate snapshot received for project %s with commitId %s as chainHeightRange is same for previous and current %+v",
+				payloadCommit.ProjectId, payloadCommit.CommitId, currentSnapshotData.ChainHeightRange)
+			return false, nil
+		}
+		if currentSnapshotData.ChainHeightRange.Begin != previousSnapshot.ChainHeightRange.End+1 {
+			log.Warnf("Snapshot received is out of sequence in comparison to previously submitted one for project %s and commitId %s.",
+				"Either another go-routine is processing in parallel or there was a snapshot submission missed",
+				payloadCommit.ProjectId, payloadCommit.CommitId)
+		}
+	}
+	return true, nil
+}
+
 func StorePayloadCidInRedis(payload *PayloadCommit) error {
 	for retryCount := 0; ; {
-		key := fmt.Sprintf(REDIS_KEY_PAYLOAD_CIDS, payload.ProjectId)
+		key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, payload.ProjectId)
 		res := redisClient.ZAdd(ctx, key,
 			&redis.Z{
 				Score:  float64(payload.TentativeBlockHeight),
@@ -337,15 +532,15 @@ func StorePayloadCidInRedis(payload *PayloadCommit) error {
 	return nil
 }
 
-func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash string) error {
-	key := fmt.Sprintf(REDIS_KEY_PENDING_TXNS, payload.ProjectId)
+func AddToPendingTxnsInRedis(payload *PayloadCommit, txHash string) error {
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_PENDING_TXNS, payload.ProjectId)
 	var pendingtxn PendingTransaction
 	pendingtxn.EventData.ProjectId = payload.ProjectId
 	pendingtxn.EventData.SnapshotCid = payload.SnapshotCID
 	pendingtxn.EventData.PayloadCommitId = payload.CommitId
 	pendingtxn.EventData.Timestamp = float64(time.Now().Unix())
 	pendingtxn.EventData.TentativeBlockHeight = payload.TentativeBlockHeight
-	pendingtxn.EventData.ApiKeyHash = tokenHash
+	pendingtxn.EventData.ApiKeyHash = payload.ApiKeyHash
 	pendingtxn.EventData.SkipAnchorProof = payload.SkipAnchorProof
 
 	if payload.Resubmitted {
@@ -386,80 +581,125 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, tokenHash string, txHash st
 	return nil
 }
 
-func PrepareAndSubmitTxnToChain(payload *PayloadCommit) retryType {
+func GenerateTokenHash(payload *PayloadCommit) (string, bool) {
+	bn := make([]byte, 32)
+	ba := make([]byte, 32)
+	bm := make([]byte, 32)
+	bn[31] = 0
+	ba[31] = 0
+	bm[31] = 0
 	var snapshot Snapshot
-	var tokenHash string
 	snapshot.Cid = payload.SnapshotCID
+
 	snapshotBytes, err := json.Marshal(snapshot)
 	if err != nil {
 		log.Errorf("CRITICAL. Failed to Json-Marshall snapshot %v for project %s with commitID %s , with err %v",
 			snapshot, payload.ProjectId, payload.CommitId, err)
-		return NO_RETRY_FAILURE
+		return "", false
 	}
-	log.Trace("SnapshotBytes: ", snapshotBytes)
-	if payload.ApiKeyHash == "" {
-		bn := make([]byte, 32)
-		ba := make([]byte, 32)
-		bm := make([]byte, 32)
-		bn[31] = 0
-		ba[31] = 0
-		bm[31] = 0
+	tokenHash := crypto.Keccak256Hash(snapshotBytes, bn, ba, bm).String()
+	return tokenHash, true
+}
 
-		tokenHash = crypto.Keccak256Hash(snapshotBytes, bn, ba, bm).String()
+func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
+	var tokenHash, txHash string
+	var status bool
+	var err error
+
+	if payload.ApiKeyHash == "" {
+		tokenHash, status = GenerateTokenHash(payload)
+		if !status {
+			return "", NO_RETRY_FAILURE
+		}
 	} else {
 		tokenHash = payload.ApiKeyHash
 	}
 	log.Tracef("Token hash generated for payload %+v for project %s with commitID %s  is : ",
 		*payload, payload.ProjectId, payload.CommitId, tokenHash)
-	var txHash string
-	if payload.SkipAnchorProof {
-		txHash = tokenHash
-	} else {
-		var retryType retryType
-		for retryCount := 0; ; {
-			txHash, retryType, err = SubmitTxnToChain(payload, tokenHash)
-			if err != nil {
-				if retryType == NO_RETRY_FAILURE {
-					return retryType
-				} else if retryType == RETRY_WITH_DELAY {
-					time.Sleep(5 * time.Second)
-				}
-				if retryCount == MAX_RETRY_COUNT {
-					log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Vigil with err %+v after max retries of %d",
-						payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
-					time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
-					return RETRY_IMMEDIATE
-				}
-				retryCount++
-				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Vigil with err %+v ..retryCount %d",
-					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
-				continue
+
+	var retryType retryType
+	for retryCount := 0; ; {
+		txHash, retryType, err = SubmitTxnToChain(payload, tokenHash)
+		if err != nil {
+			if retryType == NO_RETRY_FAILURE {
+				return txHash, retryType
+			} else if retryType == RETRY_WITH_DELAY {
+				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
 			}
-			break
+			if retryCount == MAX_RETRY_COUNT {
+				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Vigil with err %+v after max retries of %d",
+					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, MAX_RETRY_COUNT)
+				time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+				return txHash, RETRY_IMMEDIATE
+			}
+			retryCount++
+			log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Vigil with err %+v ..retryCount %d",
+				payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
+			continue
 		}
+		break
 	}
-	/*Add to redis pendingTransactions*/
-	err = AddToPendingTxnsInRedis(payload, tokenHash, txHash)
-	if err != nil {
-		return RETRY_IMMEDIATE
+
+	return txHash, NO_RETRY_SUCCESS
+}
+
+func UpdateTentativeBlockHeight(payload *PayloadCommit) error {
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, payload.ProjectId)
+	for retryCount := 0; ; retryCount++ {
+		res := redisClient.Set(ctx, key, strconv.Itoa(payload.TentativeBlockHeight), 0)
+		if res.Err() != nil {
+			if retryCount > MAX_RETRY_COUNT {
+				return res.Err()
+			}
+			log.Errorf("Failed to update tentativeBlockHeight for project %s with commitId %s due to error %+v, retrying",
+				payload.ProjectId, payload.CommitId, res.Err())
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+			continue
+		}
+		break
 	}
-	if payload.SkipAnchorProof {
-		//Notify webhook listener service as we are skipping proof anchor on chain.
-		return InvokeWebhookCallback(payload, txHash)
+	return nil
+}
+
+func GetTentativeBlockHeight(projectId string) (int, error) {
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, projectId)
+	tentativeBlockHeight := 0
+	var err error
+	for retryCount := 0; ; retryCount++ {
+		res := redisClient.Get(ctx, key)
+		if res.Err() != nil {
+			if res.Err() == redis.Nil {
+				log.Infof("TentativeBlockHeight key is not present ")
+				return tentativeBlockHeight, nil
+			}
+			if retryCount > MAX_RETRY_COUNT {
+				return tentativeBlockHeight, res.Err()
+			}
+			log.Errorf("Failed to fetch tentativeBlockHeight for project %s", projectId)
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+			continue
+		}
+		tentativeBlockHeight, err = strconv.Atoi(res.Val())
+		if err != nil {
+			log.Fatalf("TentativeBlockHeight Corrupted for project %s with err %+v", projectId, err)
+			return tentativeBlockHeight, err
+		}
+		break
 	}
-	return NO_RETRY_SUCCESS
+	log.Debugf("TenativeBlockHeight for project %s is %d", projectId, tentativeBlockHeight)
+	return tentativeBlockHeight, nil
 }
 
 //TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
 //As of now it is copy pasted and looks ugly.
-func InvokeWebhookCallback(payload *PayloadCommit, txHash string) retryType {
+func InvokeWebhookCallback(payload *PayloadCommit) retryType {
 	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.WebhookListener.Host, settingsObj.WebhookListener.Port)
 	var req AuditContractSimWebhookCallbackRequest
 	req.EventName = "RecordAppended"
 	req.Type = "event"
 	req.Ctime = time.Now().Unix()
-	req.TxHash = txHash
-	req.EventData.ApiKeyHash = txHash
+	req.TxHash = payload.ApiKeyHash
+	req.EventData.ApiKeyHash = payload.ApiKeyHash
 	req.EventData.PayloadCommitId = payload.CommitId
 	req.EventData.ProjectId = payload.ProjectId
 	req.EventData.SnapshotCid = payload.SnapshotCID
@@ -646,7 +886,7 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	if err != nil {
 		log.Errorf("Failed to send request %+v towards Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
 			req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-		return "", RETRY_IMMEDIATE, err
+		return "", RETRY_WITH_DELAY, err
 	}
 	defer res.Body.Close()
 	var resp AuditContractCommitResp
@@ -654,7 +894,7 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	if err != nil {
 		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from Vigil with error %+v",
 			payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-		return "", RETRY_IMMEDIATE, err
+		return "", RETRY_WITH_DELAY, err
 	}
 	if res.StatusCode == http.StatusOK {
 		err = json.Unmarshal(respBody, &resp)

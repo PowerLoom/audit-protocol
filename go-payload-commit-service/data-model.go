@@ -33,6 +33,16 @@ type PayloadCommit struct {
 	SkipAnchorProof      bool   `json:"skipAnchorProof"`
 }
 
+type _ChainHeightRange_ struct {
+	Begin int64 `json:"begin"`
+	End   int64 `json:"end"`
+}
+
+type PayloadData struct {
+	ChainHeightRange  *_ChainHeightRange_ `json:"chainHeightRange"`
+	EndBlockTimestamp float64             `json:"timestamp"`
+}
+
 type Snapshot struct {
 	Cid string `json:"cid"`
 }

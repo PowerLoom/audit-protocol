@@ -104,12 +104,7 @@ async def get_max_block_height(project_id: str, reader_redis_conn: aioredis.Redi
         tetative block height of that projectId from redis
     """
     prev_dag_cid = await helper_functions.get_last_dag_cid(project_id=project_id, reader_redis_conn=reader_redis_conn)
-    block_height = await helper_functions.get_block_height(project_id=project_id, reader_redis_conn=reader_redis_conn)
-    last_tentative_block_height = await helper_functions.get_tentative_block_height(
-        project_id=project_id, reader_redis_conn=reader_redis_conn
-    )
-    last_payload_cid = await helper_functions.get_last_payload_cid(project_id, reader_redis_conn)
-    return prev_dag_cid, block_height, last_tentative_block_height, last_payload_cid
+    return prev_dag_cid, last_payload_cid
 
 
 async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn: aioredis.Redis):
@@ -139,14 +134,14 @@ async def commit_payload(
         request: Request,
         response: Response
 ):
-    """ 
+    """
         This endpoint handles the following cases
         - If there are no pending dag block creations, then commit the payload
         and return the snapshot-cid, tentative block height and the payload changed flag
 
-        - If there are any pending dag block creations that are left, then Queue up 
+        - If there are any pending dag block creations that are left, then Queue up
         the payload and let a background service handle it.
-        
+
         - If there are more than `N` no.of payloads pending, then trigger a mechanism to block
         further calls to this endpoint until all the pending payloads are committed. This
         number is specified in the settings.json file as 'max_pending_payload_commits'
@@ -162,22 +157,15 @@ async def commit_payload(
     except Exception as e:
         return {'error': "Either payload or projectId"}
 
-    last_tentative_block_height_key = redis_keys.get_tentative_block_height_key(project_id)
+    out = await helper_functions.check_project_exists(
+        project_id=project_id, reader_redis_conn=request.app.reader_redis_pool
+    )
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
 
-    """ 
-    Retrieve the block height, last dag cid and tentative block height 
-    for the project_id
-    """
-    prev_dag_cid, block_height, last_tentative_block_height, last_snapshot_cid = \
-        await get_max_block_height(project_id, reader_redis_conn=reader_redis_conn)
-
-    rest_logger.debug(f"Got last tentative block height: {last_tentative_block_height}. Previous IPLD CID in the DAG: {prev_dag_cid}")
-
-    last_tentative_block_height = last_tentative_block_height + 1
     skip_anchor_proof_tx = req_args.get('skipAnchorProof', True)  # skip anchor tx by default, unless passed
     """ Create a unique identifier for this payload """
     payload_data = {
-        'tentativeBlockHeight': last_tentative_block_height,
         'payload': payload,
         'projectId': project_id,
     }
@@ -190,7 +178,7 @@ async def commit_payload(
         'projectId': project_id,
         'commitId': payload_commit_id,
         'payload': payload,
-        'tentativeBlockHeight': last_tentative_block_height,
+        #'tentativeBlockHeight': last_tentative_block_height,
         'web3Storage': web3_storage_flag,
         'skipAnchorProof': skip_anchor_proof_tx
     })
@@ -215,7 +203,6 @@ async def commit_payload(
             'Published payload against commit ID %s to RabbitMQ payload commit service queue', payload_commit_id
         )
 
-    _ = await writer_redis_conn.set(last_tentative_block_height_key, last_tentative_block_height)
     # await writer_redis_conn.zadd(
     #     key=redis_keys.get_payload_commit_id_process_logs_zset_key(
     #         project_id=project_id, payload_commit_id=payload_commit_id
@@ -236,7 +223,6 @@ async def commit_payload(
     # )
 
     return {
-        'tentativeHeight': last_tentative_block_height,
         'commitId': payload_commit_id
     }
 
@@ -251,10 +237,10 @@ async def configure_project(
     req_args = await request.json()
     """
     {
-        "rules": 
+        "rules":
             [
                 {
-                    "ruleType": "ignore",    
+                    "ruleType": "ignore",
                     "field": "trail",
                     "fieldType": "list",
                     "listMemberType": "map",
