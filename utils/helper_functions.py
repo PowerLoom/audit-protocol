@@ -112,6 +112,10 @@ async def commit_payload(project_id, report_payload, session: AsyncClient, web3_
                 return {
                     "message": f"failed with status code: {response_status_code}", "response": response
                 }  # ignore 500 and 502 errors
+            elif 'error' in response.keys():
+                return{
+                    "message": f"failed with error message: {response}"
+                }
             else:
                 raise Exception(
                     'Failed audit protocol engine call with status code: {} and response: {}'.format(
