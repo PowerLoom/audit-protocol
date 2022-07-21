@@ -1,6 +1,7 @@
 from functools import wraps
 from config import settings as settings_conf
-import aioredis
+# import aioredis
+from redis import asyncio as aioredis
 import traceback
 import redis
 import contextlib
@@ -28,21 +29,24 @@ REDIS_CONN_CONF = {
     "host": settings_conf.redis.host,
     "port": settings_conf.redis.port,
     "password": settings_conf.redis.password,
-    "db": settings_conf.redis.db
+    "db": settings_conf.redis.db,
+    "retry_on_error": redis.exceptions.ReadOnlyError
 }
 
 REDIS_WRITER_CONN_CONF = {
     "host": settings_conf.redis.host,
     "port": settings_conf.redis.port,
     "password": settings_conf.redis.password,
-    "db": settings_conf.redis.db
+    "db": settings_conf.redis.db,
+    "retry_on_error": redis.exceptions.ReadOnlyError
 }
 
 REDIS_READER_CONN_CONF = {
     "host": settings_conf.redis_reader.host,
     "port": settings_conf.redis_reader.port,
     "password": settings_conf.redis_reader.password,
-    "db": settings_conf.redis_reader.db
+    "db": settings_conf.redis_reader.db,
+    "retry_on_error": redis.exceptions.ReadOnlyError
 }
 
 
@@ -100,14 +104,16 @@ def provide_redis_conn(fn):
 async def get_writer_redis_pool(pool_size=200):
     return await aioredis.from_url(
         url=construct_writer_redis_url(),
-        max_connections=pool_size
+        max_connections=pool_size,
+        retry_on_error=redis.exceptions.ReadOnlyError
     )
 
 
 async def get_reader_redis_pool(pool_size=200):
     return await aioredis.from_url(
         url=construct_reader_redis_url(),
-        max_connections=pool_size
+        max_connections=pool_size,
+        retry_on_error=redis.exceptions.ReadOnlyError
     )
 
 
@@ -118,6 +124,7 @@ async def get_writer_redis_conn():
         port=REDIS_WRITER_CONN_CONF['port'],
         db=REDIS_WRITER_CONN_CONF['db'],
         password=REDIS_WRITER_CONN_CONF['password'],
+        retry_on_error=redis.exceptions.ReadOnlyError,
         single_connection_client=True
     )
     return out
@@ -129,6 +136,7 @@ async def get_reader_redis_conn():
         port=REDIS_READER_CONN_CONF['port'],
         db=REDIS_READER_CONN_CONF['db'],
         password=REDIS_READER_CONN_CONF['password'],
+        retry_on_error=redis.exceptions.ReadOnlyError,
         single_connection_client=True
     )
     return out

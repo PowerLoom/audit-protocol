@@ -19,7 +19,7 @@ import asyncpool
 import uvloop
 import signal
 import aio_pika
-import aioredis
+from redis import asyncio as aioredis
 import time
 import logging
 import asyncio

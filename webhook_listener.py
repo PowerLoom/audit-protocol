@@ -14,8 +14,7 @@ from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional
 from data_models import PayloadCommit, PendingTransaction
-from aioredis.lock import Lock as aioredisLock
-import aioredis
+from redis import asyncio as aioredis
 import asyncio
 import aiohttp
 import logging
@@ -113,7 +112,7 @@ async def payload_to_dag_processor_task(event_data):
     writer_redis_conn: aioredis.Redis = app.writer_redis_pool
     reader_redis_conn: aioredis.Redis = app.reader_redis_pool
     # acquire project ID processing lock
-    lock = aioredisLock(
+    lock = aioredis.lock.Lock(
         redis=writer_redis_conn,
         name=project_id,
         blocking_timeout=5,  # should not need more than 5 seconds of waiting on acquiring a lock

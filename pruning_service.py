@@ -1,6 +1,6 @@
 import logging
 import sys
-import aioredis
+from redis import asyncio as aioredis
 from config import settings
 import time
 import asyncio

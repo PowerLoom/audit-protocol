@@ -1,5 +1,5 @@
 from utils.redis_conn import get_reader_redis_conn, get_writer_redis_conn
-import aioredis
+from redis import asyncio as aioredis
 import asyncio
 
 async def test():

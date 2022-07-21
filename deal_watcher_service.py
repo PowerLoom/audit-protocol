@@ -7,7 +7,7 @@ from pydantic import ValidationError
 import json
 from config import settings
 import asyncio
-import aioredis
+from redis import asyncio as aioredis
 from utils.ipfs_async import client as ipfs_client
 import ipfshttpclient
 from data_models import ContainerData, SiaSkynetData

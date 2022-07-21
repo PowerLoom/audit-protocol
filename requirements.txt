@@ -5,10 +5,9 @@ git+https://github.com/blockvigil/maticvigil-python-sdk.git@0e364f5ec557d3f7cbd7
 eth_utils
 async_timeout
 hiredis
-aioredis>=2.0,<2.1
 aiofiles
 aiohttp
-redis>=4.2,<4.3
+redis>=4.2.0rc1
 coloredlogs
 #git+https://github.com/ipfs/py-ipfs-http-client.git
 git+https://github.com/anomit/IPFS-Toolkit-Python.git@76dc979dd8ca6c31b0fe07d41cf13d3c467072c8

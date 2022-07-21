@@ -11,8 +11,8 @@ from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
 from utils.redis_conn import RedisPool, provide_redis_conn
 from utils.retrieval_utils import retrieve_block_data
+from redis import asyncio as aioredis
 import cardinality
-import aioredis
 import asyncio
 import json
 import logging.config

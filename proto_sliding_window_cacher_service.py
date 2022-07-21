@@ -5,7 +5,7 @@ from utils import helper_functions, dag_utils, retrieval_utils
 from functools import wraps
 from pair_data_aggregation_service import v2_pairs_data
 from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
-import aioredis
+from redis import asyncio as aioredis
 import asyncio
 import json
 import logging

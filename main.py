@@ -21,7 +21,7 @@ from aio_pika.pool import Pool
 import logging
 import sys
 import json
-import aioredis
+from redis import asyncio as aioredis
 import redis
 import time
 import asyncio

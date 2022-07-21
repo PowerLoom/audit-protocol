@@ -5,7 +5,7 @@ from config import settings
 from tenacity import AsyncRetrying, stop_after_attempt
 import logging
 import sys
-import aioredis
+from redis import asyncio as aioredis
 
 
 async def get_tentative_block_height(

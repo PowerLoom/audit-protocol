@@ -10,7 +10,7 @@ import asyncio
 import json
 import io
 import logging
-import aioredis
+from redis import asyncio as aioredis
 import hmac
 import sys
 
