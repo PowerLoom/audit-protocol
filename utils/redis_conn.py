@@ -1,6 +1,6 @@
 from functools import wraps
 from config import settings as settings_conf
-# import aioredis
+# from redis import asyncio as aioredis
 from redis import asyncio as aioredis
 import traceback
 import redis

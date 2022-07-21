@@ -2,7 +2,7 @@ from utils import redis_keys
 from utils.redis_conn import RedisPool
 from utils import helper_functions
 from utils.retrieval_utils import retrieve_payload_data
-import aioredis
+from redis import asyncio as aioredis
 import asyncio
 import json
 from httpx import AsyncClient, Timeout, Limits

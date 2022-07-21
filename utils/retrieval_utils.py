@@ -3,7 +3,7 @@ from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
 from utils import helper_functions
 from utils import dag_utils
-import aioredis
+from redis import asyncio as aioredis
 import json
 import logging
 import sys
