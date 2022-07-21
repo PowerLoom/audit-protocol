@@ -435,8 +435,9 @@ func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) 
 			payloadCid = fmt.Sprintf("%v", res[0].Member)
 			log.Debugf("PayloadCID %s fetched for project %s at height %s from redis", payloadCid, projectId, startScore)
 		} else {
-			log.Errorf("Found more than 1 payload CIDS at height %d for project %s",
+			log.Errorf("Found more than 1 payload CIDS at height %d for project %s which means project state is messed up due to an issue that has occured while previous snapshot processing, considering the first one so that current snapshot processing can proceed",
 				startScore, projectId)
+			payloadCid = fmt.Sprintf("%v", res[0].Member)
 		}
 		break
 	}
