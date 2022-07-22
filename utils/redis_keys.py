@@ -1,11 +1,7 @@
+# keep a mapping from payload commit ID to tx hash
 def get_payload_commit_key(payload_commit_id: str):
     payload_commit_key = "payloadCommit:{}".format(payload_commit_id)
     return payload_commit_key
-
-
-def get_pending_payload_commits_key():
-    pending_payload_commits_key = "pendingPayloadCommits"
-    return pending_payload_commits_key
 
 
 def get_pending_retrieval_requests_key():
@@ -33,6 +29,14 @@ def get_block_height_key(project_id: str):
     return block_height_key
 
 
+def get_sliding_window_cache_head_marker(project_id: str, time_period: str):
+    return f'projectID:{project_id}:slidingCache:{time_period}:head'
+
+
+def get_sliding_window_cache_tail_marker(project_id: str, time_period: str):
+    return f'projectID:{project_id}:slidingCache:{time_period}:tail'
+
+
 def get_containers_created_key(project_id: str):
     containers_created_key = "projectID:{}:containers".format(project_id)
     return containers_created_key
@@ -53,6 +57,9 @@ def get_event_data_key(payload_commit_id: str):
     return event_data_key
 
 
+# a ZSET
+# webhook callbacks have arrived against the corresponding tentative block heights, but yet to be included in the
+# DAG chain because of some missing callback in the past which will lead to a gap in the DAG chain
 def get_pending_blocks_key(project_id: str):
     pending_blocks_key = "projectID:{}:pendingBlocks".format(project_id)
     return pending_blocks_key
@@ -118,6 +125,10 @@ def get_executing_containers_key():
     return executing_containers_key
 
 
+def get_payload_commit_id_process_logs_zset_key(project_id, payload_commit_id):
+    return f'projectID:{project_id}:payloadCommitID:{payload_commit_id}:processingLogs'
+
+
 def get_hits_dag_block_key():
     hits_dag_block_key = "hitsDagBlock"
     return hits_dag_block_key
@@ -153,6 +164,11 @@ def get_pending_transactions_key(project_id: str):
     return pending_transaction_key
 
 
+# will be used to store input data against a transaction for later re-processing if required
+def get_pending_tx_input_data_key(tx_hash: str):
+    return f'txHash:{tx_hash}:inputData'
+
+
 def get_discarded_transactions_key(project_id: str):
     discarded_transactions_key = "projectID:{}:discardedTransactions".format(project_id)
     return discarded_transactions_key
@@ -166,3 +182,69 @@ def get_live_spans_key(project_id: str, span_id: str):
 def get_cached_containers_key(container_id: str):
     cached_containers_key = "cachedContainers:{}".format(container_id)
     return cached_containers_key
+
+
+def get_projects_registered_for_cache_indexing_key():
+    return 'cache:indexesRequested'
+
+
+#TODO: THIS IS REALLY BAD MAKE A REDIS KEY FILE like FpmmPooler and shift atleat below keys to it
+NAMESPACE = 'UNISWAPV2'
+
+
+def get_uniswap_pair_contract_tokens_addresses(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensAddresses'.format(pair_address)
+
+
+def get_uniswap_pair_contract_tokens_data(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensData'.format(pair_address)
+
+
+def get_uniswap_pair_contract_V2_pair_data(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:contractV2PairCachedData'.format(pair_address)
+
+
+def get_uniswap_pair_snapshot_last_block_height():
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':lastBlockHeight'
+
+
+def get_uniswap_pair_snapshot_summary_zset():
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':snapshotsZset'
+
+def get_uniswap_pair_snapshot_payload_at_blockheight(block_height):
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+f':snapshot:{block_height}'
+
+def get_uniswap_pair_daily_stats_snapshot_zset():
+    return 'uniswap:V2DailyStatsSnapshot:'+NAMESPACE+':snapshotsZset'
+
+def get_uniswap_pair_daily_stats_payload_at_blockheight(block_height):
+    return 'uniswap:V2DailyStatsSnapshot:'+NAMESPACE+f':snapshot:{block_height}'
+
+
+def get_uniswap_pairs_summary_snapshot_project_id():
+    return 'uniswap_V2PairsSummarySnapshot_'+NAMESPACE
+
+def get_uniswap_pairs_v2_daily_snapshot_project_id():
+    return 'uniswap_V2DailyStatsSnapshot_'+NAMESPACE
+
+def get_uniswap_pair_snapshot_timestamp_zset():
+    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':snapshotTimestampZset'
+
+
+def get_uniswap_pair_cached_token_price(pair_symbol):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:cachedPairPrice'.format(pair_symbol)
+
+
+def get_uniswap_pair_cached_recent_logs(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:recentLogs'.format(pair_address)
+
+
+def get_uniswap_pair_cache_daily_stats(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:dailyCache'.format(pair_address)
+
+
+def get_uniswap_pair_cache_sliding_window_data(pair_address):
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:slidingWindowData'.format(pair_address)
+
+def get_uniswap_projects_dag_verifier_status(current_namespace):
+    return "projects:"+current_namespace+":dagVerificationStatus"

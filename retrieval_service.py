@@ -6,8 +6,6 @@ import json
 from bloom_filter import BloomFilter
 import coloredlogs
 from utils import helper_functions
-
-from utils.redis_conn import provide_async_writer_conn_inst, provide_async_reader_conn_inst
 from utils import redis_keys
 from utils.ipfs_async import client as ipfs_client
 from utils.diffmap_utils import preprocess_dag
@@ -26,8 +24,6 @@ retrieval_logger.debug("Initialized logger")
 coloredlogs.install(level="DEBUG", logger=retrieval_logger, stream=sys.stdout)
 
 
-@provide_async_writer_conn_inst
-@provide_async_reader_conn_inst
 async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
 
     """ Get all the pending requests """
@@ -50,8 +46,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
             # Get the height of last pruned cid
             last_pruned_height = await helper_functions.get_last_pruned_height(
                 project_id=request_info['projectId'],
-                reader_redis_conn=reader_redis_conn,
-                writer_redis_conn=writer_redis_conn
+                reader_redis_conn=reader_redis_conn
             )
 
             retrieval_logger.debug("Last Pruned Height:")
@@ -81,9 +76,9 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
             for block_cid, block_height in all_cids:
                 block_cid = block_cid.decode('utf-8')
                 block_height = int(block_height)
-                retrieval_logger.debug("Fetching block at height:")
-                retrieval_logger.debug(block_cid)
-                retrieval_logger.debug(block_height)
+                # retrieval_logger.debug("Fetching block at height:")
+                # retrieval_logger.debug(block_cid)
+                # retrieval_logger.debug(block_height)
 
                 """ Check if the DAG block is pinned """
                 if (block_height > (max_block_height - settings.max_ipfs_blocks)) or (
@@ -171,9 +166,8 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
 
                 retrieval_files_key = redis_keys.get_retrieval_request_files_key(requestId)
                 _ = await writer_redis_conn.zadd(
-                    key=retrieval_files_key,
-                    member=block_file_path,
-                    score=int(block_height)
+                    name=retrieval_files_key,
+                    mapping={block_file_path: int(block_height)}
                 )
                 retrieval_logger.debug(f"Block {block_cid} is saved")
 

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 import json
 from config import settings
 import asyncio
-import aioredis
+from redis import asyncio as aioredis
 from utils.ipfs_async import client as ipfs_client
 import ipfshttpclient
 from data_models import ContainerData, SiaSkynetData
@@ -195,8 +195,6 @@ async def unpin_cids(
             deal_logger.warning(warning_message)
 
 
-@provide_async_reader_conn_inst
-@provide_async_writer_conn_inst
 async def start(
         reader_redis_conn=None,
         writer_redis_conn=None

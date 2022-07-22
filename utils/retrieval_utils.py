@@ -1,15 +1,15 @@
-import aioredis
+from eth_utils import keccak
+from utils.ipfs_async import client as ipfs_client
+from utils import redis_keys
+from utils import helper_functions
+from utils import dag_utils
+from redis import asyncio as aioredis
 import json
 import logging
 import sys
 from config import settings
 from bloom_filter import BloomFilter
-from eth_utils import keccak
-
-from utils import redis_keys
-from utils import helper_functions
-from utils import dag_utils
-from utils.redis_conn import provide_async_reader_conn_inst
+from tenacity import wait_random_exponential, stop_after_attempt, retry
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
@@ -39,7 +39,6 @@ def check_intersection(span_a, span_b):
     return result
 
 
-@provide_async_reader_conn_inst
 async def check_overlap(
         from_height: int,
         to_height: int,
@@ -114,7 +113,7 @@ async def get_container_id(
     """
 
     target_containers = await reader_redis_conn.zrangebyscore(
-        key=redis_keys.get_containers_created_key(project_id),
+        name=redis_keys.get_containers_created_key(project_id),
         max=settings.container_height * 2 + dag_block_height + 1,
         min=dag_block_height - settings.container_height * 2 - 1
     )
@@ -144,36 +143,34 @@ async def check_container_cached(
     """
 
     cached_container_key = redis_keys.get_cached_containers_key(container_id)
-    out = await reader_redis_conn.exists(key=cached_container_key)
+    out = await reader_redis_conn.exists(cached_container_key)
     if out is 1:
         return True
     else:
         return False
 
 
-@provide_async_reader_conn_inst
 async def check_containers(
         from_height,
         to_height,
         project_id: str,
         reader_redis_conn: aioredis.Redis,
-        each_height_spans: dict = {},
+        each_height_spans: dict
 
 ):
     """
         - Given the from_height and to_height, check for each dag_cid, what container is required
         and if that container is cached
     """
-
     # Get the dag cid's for the span
     out = await reader_redis_conn.zrangebyscore(
-        key=redis_keys.get_dag_cids_key(project_id=project_id),
+        name=redis_keys.get_dag_cids_key(project_id=project_id),
         max=to_height,
         min=from_height,
         withscores=True
     )
 
-    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=project_id)
+    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=project_id, reader_redis_conn=reader_redis_conn)
 
     containers_required = []
     cached = {}
@@ -252,14 +249,14 @@ async def save_span(
     span_data['dag_blocks'] = dag_blocks
     live_span_key = redis_keys.get_live_spans_key(project_id=project_id, span_id=span_id)
     _ = await writer_redis_conn.set(live_span_key, json.dumps(span_data))
-    _ = await writer_redis_conn.expire(live_span_key, timeout=settings.span_expire_timeout)
+    _ = await writer_redis_conn.expire(live_span_key, settings.span_expire_timeout)
 
 
-@provide_async_reader_conn_inst
 async def fetch_blocks(
         from_height: int,
         to_height: int,
         project_id: str,
+        data_flag: bool,
         reader_redis_conn: aioredis.Redis
 ):
     """
@@ -271,16 +268,19 @@ async def fetch_blocks(
             project_id=project_id,
             from_height=from_height,
             to_height=to_height,
+            reader_redis_conn=reader_redis_conn
     )
 
     current_height = to_height
     dag_blocks = {}
     while current_height >= from_height:
-        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
+        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height, reader_redis_conn=reader_redis_conn)
         if each_height_spans.get(current_height) is None:
-            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height)
+            # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
+            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height, reader_redis_conn=reader_redis_conn)
             dag_block = await dag_utils.get_dag_block(dag_cid)
-
+            if data_flag:
+                dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
         else:
             dag_block: list = await fetch_from_span(
                 from_height=current_height,
@@ -293,9 +293,78 @@ async def fetch_blocks(
         dag_blocks[dag_cid] = dag_block
         current_height = current_height - 1
 
-        retrieval_utils_logger.debug(dag_blocks)
+        # retrieval_utils_logger.debug(dag_blocks)
 
     return dag_blocks
+
+
+# TODO: refactor function or introduce an enum/pydantic model against data_flag param for readability/maintainability
+# passing ints against a flag is terrible coding practice
+@retry(
+    reraise=True,
+    wait=wait_random_exponential(multiplier=1, max=30),
+    stop=stop_after_attempt(3),
+)
+async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0):
+    """
+        A function which will get dag block from ipfs and also increment its hits
+        Args:
+            block_dag_cid:str - The cid of the dag block that needs to be retrieved
+            writer_redis_conn: redis.Redis - To increase hitcount to dag cid, do not pass args if caching is not desired
+            data_flag:int - This is a flag which can take three values:
+                0 - Return only the dag block and not its payload data
+                1 - Return the dag block along with its payload data
+                2 - Return only the payload data
+    """
+
+    assert data_flag in range(0, 3), \
+        f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
+
+    """ TODO: Increment hits on block, to be used for some caching purpose """
+    # block_dag_hits_key = redis_keys.get_hits_dag_block_key()
+    # if writer_redis_conn:
+    #     r = await writer_redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag_cid)
+    #     retrieval_utils_logger.debug("Block hit for: ")
+    #     retrieval_utils_logger.debug(block_dag_cid)
+    #     retrieval_utils_logger.debug(r)
+
+    """ Retrieve the DAG block from ipfs """
+    _block = await ipfs_client.dag.get(block_dag_cid)
+    block = _block.as_json()
+    # block = preprocess_dag(block)
+    if data_flag == 0:
+        return block
+
+    payload = dict()
+
+    """ Get the payload Data """
+    payload_data = await ipfs_client.cat(block['data']['cid']['/'])
+    payload_data = json.loads(payload_data)
+    payload['payload'] = payload_data
+    payload['cid'] = block['data']['cid']['/']
+
+    if data_flag == 1:
+        block['data'] = payload
+        return block
+
+    if data_flag == 2:
+        return payload
+
+
+async def retrieve_payload_data(payload_cid,  writer_redis_conn=None):
+    """
+        - Given a payload_cid, get its data from ipfs, at the same time increase its hit
+    """
+    payload_key = redis_keys.get_hits_payload_data_key()
+    if writer_redis_conn:
+        r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
+        retrieval_utils_logger.debug("Payload Data hit for: ")
+        retrieval_utils_logger.debug(payload_cid)
+
+    """ Get the payload Data from ipfs """
+    _payload_data = await ipfs_client.cat(payload_cid)
+    payload_data = _payload_data.decode('utf-8')
+    return payload_data
 
 
 async def get_blocks_from_container(container_id, dag_cids: list):

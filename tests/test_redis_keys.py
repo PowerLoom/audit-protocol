@@ -1,6 +1,6 @@
 from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
 from utils import redis_keys
-import aioredis
+from redis import asyncio as aioredis
 import asyncio
 
 

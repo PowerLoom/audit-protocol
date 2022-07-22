@@ -69,8 +69,7 @@ The request and responses for each of these endpoints can be found in [main_endp
     		"height":25,
     		"prevCid":"bafyreibnzumzfc4gdqya7gf6riw5eu2agywgxl2zdvjooyv3g57n4yprea",
     		"data": {
-    				"cid":"QmeXAxrFAV2TZV8uDWRLWukGHwXgh7i5sCZGUEr1dqjd2X",
-    				"type":"HOT_IPFS"
+    				"cid":"QmeXAxrFAV2TZV8uDWRLWukGHwXgh7i5sCZGUEr1dqjd2X"
     			},
     		"txHash":"0x58f240f9953962473fb6d7d8bfbc4453927f8d9bf5db6e5f36ffca57e5efa5ed",
     		"timestamp":"1610106076"

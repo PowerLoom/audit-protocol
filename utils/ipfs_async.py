@@ -1,9 +1,10 @@
-import ipfshttpclient
+from IPFS_API import ipfshttpclient
 import asyncio
 from greenletio import async_
 from config import settings
 import io
 import json
+
 
 
 class AsyncIpfsClient:

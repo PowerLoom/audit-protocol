@@ -6,7 +6,6 @@ settings.json
 .python-version
 __pycache__/
 *.db
-static/**
 *.swp
 files/
 .env
@@ -24,3 +23,5 @@ temp_files/
 
 docker/account_info.json
 docker/settings.json
+
+test.py

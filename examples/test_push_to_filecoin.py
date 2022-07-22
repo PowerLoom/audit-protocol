@@ -1,6 +1,6 @@
 from pygate_grpc.client import PowerGateClient
 import logging
-import aioredis
+from redis import asyncio as aioredis
 import sys
 from config import settings
 

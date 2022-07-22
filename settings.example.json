@@ -1,24 +1,51 @@
 {
 	"host": "127.0.0.1",
 	"port": 9000,
+	"keepalive_secs": 600,
 	"webhook_listener": {
 		"host": "127.0.0.1",
-		"port": 9002
+		"port": 9002,
+		"validate_header_sig": false,
+		"keepalive_secs": 600,
+		"redis_lock_lifetime": 30,
+		"rate_limit" :{
+			"req_per_sec": 50,
+			"burst": 20
+		}
+	},
+	"rabbitmq": {
+		"user": "guest",
+		"password": "guest",
+		"host": "localhost",
+		"port": 5672,
+		"setup": {
+			"core": {
+				"exchange": "audit-protocol-backend"
+			}
+		}
+	},
+	"contract_addresses": {
+		"iuniswap_v2_factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+		"iuniswap_v2_router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+		"iuniswap_v2_pair": "0x3356c9A8f40F8E9C1d192A4347A76D18243fABC5",
+		"USDT": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+		"DAI": "0x6b175474e89094c44da98b954eedeac495271d0f",
+		"USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+		"WETH": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
 	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
-	"snapshot_interval": 4,
-	"dag_table_name": "DAG_CID",
-	"seed": "THISISRANDOMSEED",
-	"dag_structure" : {
-		"height":-1,
-		"prevCid":"",
-		"data": {
-				"cid":"",
-				"type":""
-			},
-		"txHash":"",
-		"timestamp":""
+	"ipfs_rate_limit" :{
+		"req_per_sec": 100,
+		"burst": 100
 	},
+	"snapshot_interval": 4,
+	"contract_call_backend": "http://127.0.0.1:8888/writer",
+	"contract_rate_limit" :{
+		"req_per_sec": 50,
+		"burst": 50
+	},
+	"seed": "THISISRANDOMSEED",
 	"REDIS": {
 		"HOST": "127.0.0.1",
 		"PORT": 6379,
@@ -31,14 +58,16 @@
       "db": 0,
       "password": null
     },
+	"rlimit": {
+		"file_descriptors": 2048
+	},
 	"table_names": {
 		"api_keys": "api_keys",
 		"accounting_records": "accounting_records",
 		"retreivals_single":"retreivals_single",
 		"retreivals_bulk":"retreivals_bulk"
 	},
-    "audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
-	"app_name" : "auditrecords",
+	"audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
 	"powergate_client_addr"	: "127.0.0.1:5002",
 	"max_ipfs_blocks" : 30,
 	"max_pending_payload_commits": 5,
@@ -56,6 +85,7 @@
 		"connect": 5
 	},
 	"payload_commit_interval": 2,
+	"payload_commit_concurrency": 20,
 	"pruning_service_interval": 10,
 	"retrieval_service_interval": 3,
 	"deal_watcher_service_interval": 3,
@@ -65,5 +95,17 @@
 	"max_pending_events": 2,
 	"max_payload_commits": 4,
 	"ipfs_timeout": 20,
-	"span_expire_timeout": 600
+	"span_expire_timeout": 600,
+	"calculate_diff": false,
+	"web3_storage":{
+		"url":"https://api.web3.storage",
+		"api_token":"",
+		"timeout_secs": 30,
+		"max_idle_conns": 5,
+		"idle_conn_timeout":0,
+		"rate_limit" :{
+			"req_per_sec": 3,
+			"burst": 6
+		}
+	}
 }

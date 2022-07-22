@@ -1,17 +1,30 @@
-import json
-from copy import deepcopy
-import logging
-from config import settings
-
 from utils import dag_utils
 from utils import redis_keys
-from utils.redis_conn import provide_async_reader_conn_inst, provide_async_writer_conn_inst
+from config import settings
+from copy import deepcopy
+from data_models import DAGBlock
+from tenacity import retry, wait_random_exponential, stop_after_attempt
+import redis
+import json
+import logging.handlers
+import sys
 
 utils_logger = logging.getLogger(__name__)
 utils_logger.setLevel(level="DEBUG")
+formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.setFormatter(formatter)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.ERROR)
+stderr_handler.setFormatter(formatter)
+
+utils_logger.addHandler(stdout_handler)
+utils_logger.addHandler(stderr_handler)
 
 
-@provide_async_reader_conn_inst
 async def get_diff_rules(
         project_id: str,
         reader_redis_conn
@@ -30,11 +43,10 @@ async def get_diff_rules(
     return diff_rules
 
 
-async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict):
-    # load diff rules
-    diff_rules = await get_diff_rules(project_id)
+def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: dict, diff_rules):
     key_rules = dict()
     compare_rules = dict()
+    # TODO: refactor logic into another helper that solely preprocesses key rules into an accepted structure
     for rule in diff_rules:
         if rule['ruleType'] == 'ignore':
             if rule['fieldType'] == 'list':
@@ -42,9 +54,14 @@ async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: 
                                             ['ignoreMemberFields', 'fieldType', 'ruleType', 'listMemberType']}
             elif rule['fieldType'] == 'map':
                 key_rules[rule['field']] = {k: rule[k] for k in ['ignoreMemberFields', 'fieldType', 'ruleType']}
+            else:
+                key_rules[rule['field']] = {k: rule[k] for k in ['fieldType', 'ruleType']}
+
         elif rule['ruleType'] == 'compare':
             if rule['fieldType'] == 'map':
                 compare_rules[rule['field']] = {k: rule[k] for k in ['fieldType', 'operation', 'memberFields']}
+        else:
+            key_rules[rule['field']] = {'fieldType': rule['fieldType']}
     prev_copy = clean_map_members(prev_data, key_rules)
     cur_copy = clean_map_members(cur_data, key_rules)
     payload_changed = compare_members(prev_copy, cur_copy, compare_rules)
@@ -57,9 +74,17 @@ async def process_payloads_for_diff(project_id: str, prev_data: dict, cur_data: 
 
 def clean_map_members(data, key_rules):
     data_copy = deepcopy(data)
+    top_level_keys_to_be_deleted = set()
     for k in data_copy.keys():
         if k and k in key_rules.keys():
+            # print(f'Processing key rule for {k}')
             if key_rules[k]['ruleType'] == 'ignore':
+                # TODO: add support for elementary data types. Support typing module for standardized config?
+                if key_rules[k]['fieldType'] in ['str', 'int', 'float']:
+                    # collect to be deleted later, we can not delete keys while iterating over the dict
+                    top_level_keys_to_be_deleted.add(k)
+                    # print(f'Adding key {k} in set of top level keys to be deleted from data_copy')
+                    continue
                 to_be_ignored_fields = key_rules[k]['ignoreMemberFields']
                 if key_rules[k]['fieldType'] == 'list':
                     if key_rules[k]['listMemberType'] == 'map' and k in data_copy.keys():
@@ -107,6 +132,10 @@ def clean_map_members(data, key_rules):
                                 data_copy[k].pop(del_k)
                             except :
                                 pass
+    for tbd_k in top_level_keys_to_be_deleted:
+        # print(f'Deleting key {tbd_k} from data_copy')
+        del data_copy[tbd_k]
+        # print(f'Cur data copy: {data_copy}')
     return data_copy
 
 
@@ -125,41 +154,54 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
         # collect data fields
         prev_data_comparable_values = list()
         cur_data_comparable_values = list()
+        collect_comparable_values = True
         # TODO: expand on checks for field type: map, list etc
         if compare_rules[field_name]['fieldType'] == 'map':
             pass
         else:
             continue
-        for each_comparable_member in compare_rules[field_name]['memberFields']:
-            print('=' * 40 + '\nCollecting value for field')
-            print(each_comparable_member)
-            if '.' in each_comparable_member:
-                path_trail = each_comparable_member.split('.')
-                prev_data_member_field = prev_data_field.get(path_trail[0], 0)
-                cur_data_member_field = cur_data_field.get(path_trail[0], 0)
-                print('Before iterating over path')
-                print('prev data member field value')
-                print(prev_data_member_field)
-                print('cur data member field value')
-                print(cur_data_member_field)
-                for idx, sub_k in enumerate(path_trail):
-                    if idx > 0:
-                        prev_data_member_field = prev_data_member_field.get(path_trail[idx], 0)
-                        cur_data_member_field = cur_data_member_field.get(path_trail[idx], 0)
-                        if idx == len(path_trail) - 1:
-                            prev_data_comparable_values.append(prev_data_member_field)
-                            cur_data_comparable_values.append(cur_data_member_field)
-            else:
-                prev_data_comparable_values.append(prev_data_field.get(each_comparable_member, 0))
-                cur_data_comparable_values.append(cur_data_field.get(each_comparable_member, 0))
-        if compare_rules[field_name]['operation'] == 'add':
+        if compare_rules[field_name]['operation'] == 'listSlice':
+            collect_comparable_values = False
+        if collect_comparable_values:
+            for each_comparable_member in compare_rules[field_name]['memberFields']:
+                print('=' * 40 + '\nCollecting value for field')
+                print(each_comparable_member)
+                if '.' in each_comparable_member:
+                    path_trail = each_comparable_member.split('.')
+                    prev_data_member_field = prev_data_field.get(path_trail[0], 0)
+                    cur_data_member_field = cur_data_field.get(path_trail[0], 0)
+                    print('Before iterating over path')
+                    print('prev data member field value')
+                    print(prev_data_member_field)
+                    print('cur data member field value')
+                    print(cur_data_member_field)
+                    for idx, sub_k in enumerate(path_trail):
+                        if idx > 0:
+                            prev_data_member_field = prev_data_member_field.get(path_trail[idx], 0)
+                            cur_data_member_field = cur_data_member_field.get(path_trail[idx], 0)
+                            if idx == len(path_trail) - 1:
+                                prev_data_comparable_values.append(prev_data_member_field)
+                                cur_data_comparable_values.append(cur_data_member_field)
+                else:
+                    prev_data_comparable_values.append(prev_data_field.get(each_comparable_member, 0))
+                    cur_data_comparable_values.append(cur_data_field.get(each_comparable_member, 0))
+            if compare_rules[field_name]['operation'] == 'add':
+                print('Prev data')
+                print(prev_data_comparable_values)
+                print('Cur data')
+                print(cur_data_comparable_values)
+                collated_prev_comparable = sum(prev_data_comparable_values)
+                collated_cur_comparable = sum(cur_data_comparable_values)
+                comparison_results[field_name] = collated_prev_comparable != collated_cur_comparable
+        else:
+            map_keys_arr_index = compare_rules[field_name]['memberFields']
+            prev_data_comparable_value = prev_data_field.get(list(prev_data_field.keys())[map_keys_arr_index])
+            cur_data_comparable_value = cur_data_field.get(list(cur_data_field.keys())[map_keys_arr_index])
             print('Prev data')
-            print(prev_data_comparable_values)
+            print(prev_data_comparable_value)
             print('Cur data')
-            print(cur_data_comparable_values)
-            collated_prev_comparable = sum(prev_data_comparable_values)
-            collated_cur_comparable = sum(cur_data_comparable_values)
-            comparison_results[field_name] = collated_prev_comparable != collated_cur_comparable
+            print(cur_data_comparable_value)
+            comparison_results[field_name] = prev_data_comparable_value != cur_data_comparable_value
         keys_compared_for_rules.add(field_name)
         print('*' * 40)
     if type(prev_data) is dict and type(cur_data) is dict:
@@ -178,82 +220,99 @@ def compare_members(prev_data, cur_data, compare_rules: dict):
     return comparison_results
 
 
-@provide_async_writer_conn_inst
-async def calculate_diff(
-        dag_cid: str,
-        dag: dict,
+@retry(
+    reraise=True,
+    wait=wait_random_exponential(multiplier=1, max=30),
+    stop=stop_after_attempt(3)
+)
+def calculate_diff(
+        dag_cid,
+        dag: DAGBlock,
         project_id: str,
         ipfs_client,
-        writer_redis_conn
+        writer_redis_conn: redis.Redis
 ):
+    # parse if audit-protocol require diff calculation
+    calculate_diff_setting = settings.calculate_diff
+
     # cache last seen diffs
-    dag_height = dag['height']
-    if dag['prevCid']:
-        payload_cid = dag['data']['cid']
-        prev_dag = await dag_utils.get_dag_block(dag['prevCid'])
-        prev_payload_cid = prev_dag['data']['cid']
-        if prev_payload_cid != payload_cid:
-            diff_map = dict()
-            _prev_data = await ipfs_client.cat(prev_payload_cid)
-            prev_data = _prev_data.decode('utf-8')
-            prev_data = json.loads(prev_data)
-            _payload = await ipfs_client.cat(payload_cid)
-            payload = _payload.decode('utf-8')
-            payload = json.loads(payload)
-            utils_logger.debug('Before payload clean up')
-            utils_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
-            result = await process_payloads_for_diff(
-                project_id,
-                prev_data,
-                payload,
+    dag_height = dag.height
+    payload_cid = dag.data.cid['/']
+    prev_dag = ipfs_client.dag.get(dag.prevCid['/'])
+    prev_dag = prev_dag.as_json()
+    prev_payload_cid = prev_dag['data']['cid']['/']
+    if prev_payload_cid != payload_cid and calculate_diff_setting:
+        diff_map = dict()
+        _prev_data = ipfs_client.cat(prev_payload_cid)
+        prev_data = json.loads(_prev_data)
+        _payload = ipfs_client.cat(payload_cid)
+        payload = json.loads(_payload)
+        utils_logger.debug('Before payload clean up')
+        utils_logger.debug({'cur_payload': payload, 'prev_payload': prev_data})
+        # load diff rules
+        diff_rules_key = redis_keys.get_diff_rules_key(project_id=project_id)
+        out: bytes = writer_redis_conn.get(diff_rules_key)
+        diff_rules = list()
+        if out:
+            diff_rules = out.decode('utf-8')
+            try:
+                diff_rules = json.loads(diff_rules)
+            except json.JSONDecodeError as jerr:
+                utils_logger.error(jerr, exc_info=True)
+                diff_rules = list()
+        # pass diff rules
+        result = process_payloads_for_diff(
+            project_id,
+            prev_data,
+            payload,
+            diff_rules
+        )
+        utils_logger.debug('After payload clean up and comparison if any')
+        utils_logger.debug(result)
+        cur_data_copy = result['cur_copy']
+        prev_data_copy = result['prev_copy']
+
+        for k, v in cur_data_copy.items():
+            if k in result['payload_changed'] and result['payload_changed'][k]:
+                diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
+
+        if diff_map:
+            # rest_logger.debug("DAG at point B:")
+            # rest_logger.debug(dag)
+            diff_data = {
+                'cur': {
+                    'height': dag_height,
+                    'payloadCid': payload_cid,
+                    'dagCid': dag_cid,
+                    'txHash': dag.txHash,
+                    'timestamp': dag.timestamp
+                },
+                'prev': {
+                    'height': prev_dag['height'],
+                    'payloadCid': prev_payload_cid,
+                    'dagCid': dag.prevCid['/']
+                    # this will be used to fetch the previous block timestamp from the DAG
+                },
+                'diff': diff_map
+            }
+            diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(project_id)
+            writer_redis_conn.zadd(
+                name=diff_snapshots_cache_zset,
+                mapping={json.dumps(diff_data): int(dag.height)}
             )
-            utils_logger.debug('After payload clean up and comparison if any')
-            utils_logger.debug(result)
-            cur_data_copy = result['cur_copy']
-            prev_data_copy = result['prev_copy']
-
-            for k, v in cur_data_copy.items():
-                if k in result['payload_changed'] and result['payload_changed'][k]:
-                    diff_map[k] = {'old': prev_data.get(k), 'new': payload.get(k)}
-
-            if diff_map:
-                # rest_logger.debug("DAG at point B:")
-                # rest_logger.debug(dag)
-                diff_data = {
-                    'cur': {
-                        'height': dag_height,
-                        'payloadCid': payload_cid,
-                        'dagCid': dag_cid,
-                        'txHash': dag['txHash'],
-                        'timestamp': dag['timestamp']
-                    },
-                    'prev': {
-                        'height': prev_dag['height'],
-                        'payloadCid': prev_payload_cid,
-                        'dagCid': dag['prevCid']
-                        # this will be used to fetch the previous block timestamp from the DAG
-                    },
-                    'diff': diff_map
-                }
-                diff_snapshots_cache_zset = f'projectID:{project_id}:diffSnapshots'
-                await writer_redis_conn.zadd(
-                    diff_snapshots_cache_zset,
-                    score=int(dag['height']),
-                    member=json.dumps(diff_data)
-                )
-                latest_seen_snapshots_htable = 'auditprotocol:lastSeenSnapshots'
-                await writer_redis_conn.hset(
-                    latest_seen_snapshots_htable,
-                    project_id,
-                    json.dumps(diff_data)
-                )
-
-                return diff_data
+            latest_seen_snapshots_htable = redis_keys.get_last_seen_snapshots_key()
+            writer_redis_conn.hset(
+                latest_seen_snapshots_htable,
+                project_id,
+                json.dumps(diff_data)
+            )
+            return diff_data
 
     return {}
 
 
 def preprocess_dag(block):
+    # legacy clean up for DAG blocks with an older data structure, most likely not necessary
     if 'Height' in block.keys():
         _block = deepcopy(block)
         dag_structure = settings.dag_structure
