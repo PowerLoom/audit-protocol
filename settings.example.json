@@ -13,6 +13,7 @@
 			"burst": 20
 		}
 	},
+	"rpc_url": "https://rpc-eth-lb.blockvigil.com/v1/****",
 	"rabbitmq": {
 		"user": "guest",
 		"password": "guest",

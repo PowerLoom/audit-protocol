@@ -37,3 +37,4 @@ rich
 cardinality
 httpx==0.22.0
 typer==0.3.2
+safe-eth-py==4.1.3
