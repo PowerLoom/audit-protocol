@@ -18,6 +18,7 @@ import json
 import logging.config
 import os
 import sys
+from gnosis.eth import EthereumClient
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -35,8 +36,8 @@ logger.debug("Initialized logger")
 
 NAMESPACE = 'UNISWAPV2'
 
-#TODO: put rpc url in settings
-w3 = Web3(Web3.HTTPProvider("https://rpc-eth-arch.blockvigil.com/v1/2b3e1495cc8d5f27178974aab3f815c24ad4e201"))
+
+ethereum_client = EthereumClient(settings.rpc_url)
 # TODO: Use async http provider once it is considered stable by the web3.py project maintainers
 # web3_async = Web3(Web3.AsyncHTTPProvider(settings.RPC.MATIC[0]))
 
@@ -85,7 +86,7 @@ def read_json_file(file_path: str):
 pair_contract_abi = read_json_file(f"abis/UniswapV2Pair.json")
 erc20_abi = read_json_file('abis/IERC20.json')
 
-async def get_maker_pair_data(prop):
+def get_maker_pair_data(prop):
     prop = prop.lower()
     if prop.lower() == "name":
         return "Maker"
@@ -139,116 +140,126 @@ async def get_oldest_block_and_timestamp(pair_contract_address):
         "begin_block_timestamp_7d": int(liquidity_data_7d['data']['payload']['timestamp']),
     }
 
-async def get_pair_tokens_metadata(pair_contract_obj, pair_address, loop, writer_redis_conn):
+async def get_pair_tokens_metadata(
+    pair_address, redis_conn: aioredis.Redis
+):
     """
         returns information on the tokens contained within a pair contract - name, symbol, decimals of token0 and token1
         also returns pair symbol by concatenating {token0Symbol}-{token1Symbol}
     """
-    pair_address = Web3.toChecksumAddress(pair_address)
+    try:
+        pair_address = Web3.toChecksumAddress(pair_address)
 
-    pairTokensAddresses = await writer_redis_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_addresses(pair_address))
-    if pairTokensAddresses:
-        token0Addr = Web3.toChecksumAddress(pairTokensAddresses[b"token0Addr"].decode('utf-8'))
-        token1Addr = Web3.toChecksumAddress(pairTokensAddresses[b"token1Addr"].decode('utf-8'))
-    else:
-        # run in loop's default executor
-        pfunc_0 = partial(pair_contract_obj.functions.token0().call)
-        token0Addr = await loop.run_in_executor(func=pfunc_0, executor=None)
-        pfunc_1 = partial(pair_contract_obj.functions.token1().call)
-        token1Addr = await loop.run_in_executor(func=pfunc_1, executor=None)
-        token0Addr = Web3.toChecksumAddress(token0Addr)
-        token1Addr = Web3.toChecksumAddress(token1Addr)
-        await writer_redis_conn.hmset(redis_keys.get_uniswap_pair_contract_tokens_addresses(pair_address),
-                                        mapping={
-                                            'token0Addr': token0Addr,
-                                            'token1Addr': token1Addr
-                                    })
-    # token0 contract
-    token0 = w3.eth.contract(
-        address=Web3.toChecksumAddress(token0Addr),
-        abi=erc20_abi
-    )
-    # token1 contract
-    token1 = w3.eth.contract(
-        address=Web3.toChecksumAddress(token1Addr),
-        abi=erc20_abi
-    )
-    pair_tokens_data = await writer_redis_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(pair_address))
+        # check if cache exist
+        pair_tokens_metadata_cache = await redis_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(pair_address))
 
-    if pair_tokens_data:
-        token0_decimals = pair_tokens_data[b"token0_decimals"].decode('utf-8')
-        token1_decimals = pair_tokens_data[b"token1_decimals"].decode('utf-8')
-        token0_symbol = pair_tokens_data[b"token0_symbol"].decode('utf-8')
-        token1_symbol = pair_tokens_data[b"token1_symbol"].decode('utf-8')
-        token0_name = pair_tokens_data[b"token0_name"].decode('utf-8')
-        token1_name = pair_tokens_data[b"token1_name"].decode('utf-8')
-    else:
-        executor_gather = list()
-        if(Web3.toChecksumAddress(settings.contract_addresses.MAKER) == Web3.toChecksumAddress(token0Addr)):
-            executor_gather.append(get_maker_pair_data('name'))
-            executor_gather.append(get_maker_pair_data('symbol'))
+        # parse addresses cache or call eth rpc
+        token0Addr = None
+        token1Addr = None
+        if pair_tokens_metadata_cache:
+            token0Addr = Web3.toChecksumAddress(pair_tokens_metadata_cache[b"token0Addr"].decode('utf-8'))
+            token1Addr = Web3.toChecksumAddress(pair_tokens_metadata_cache[b"token1Addr"].decode('utf-8'))
+            token0_decimals = pair_tokens_metadata_cache[b"token0_decimals"].decode('utf-8')
+            token1_decimals = pair_tokens_metadata_cache[b"token1_decimals"].decode('utf-8')
+            token0_symbol = pair_tokens_metadata_cache[b"token0_symbol"].decode('utf-8')
+            token1_symbol = pair_tokens_metadata_cache[b"token1_symbol"].decode('utf-8')
+            token0_name = pair_tokens_metadata_cache[b"token0_name"].decode('utf-8')
+            token1_name = pair_tokens_metadata_cache[b"token1_name"].decode('utf-8')
         else:
-            executor_gather.append(loop.run_in_executor(func=token0.functions.name().call, executor=None))
-            executor_gather.append(loop.run_in_executor(func=token0.functions.symbol().call, executor=None))
-        executor_gather.append(loop.run_in_executor(func=token0.functions.decimals().call, executor=None))
+            # get token0 and token1 addresses
+            pair_contract_obj = ethereum_client.w3.eth.contract(
+                address=Web3.toChecksumAddress(pair_address),
+                abi=pair_contract_abi
+            )
+            token0Addr, token1Addr = ethereum_client.batch_call([
+                pair_contract_obj.functions.token0(),
+                pair_contract_obj.functions.token1()
+            ])
 
 
-        if(Web3.toChecksumAddress(settings.contract_addresses.MAKER) == Web3.toChecksumAddress(token1Addr)):
-            executor_gather.append(get_maker_pair_data('name'))
-            executor_gather.append(get_maker_pair_data('symbol'))
-        else:
-            executor_gather.append(loop.run_in_executor(func=token1.functions.name().call, executor=None))
-            executor_gather.append(loop.run_in_executor(func=token1.functions.symbol().call, executor=None))
-        executor_gather.append(loop.run_in_executor(func=token1.functions.decimals().call, executor=None))
+            # get token0 and token1 metadata:
+            token0 = ethereum_client.w3.eth.contract(
+                address=Web3.toChecksumAddress(token0Addr),
+                abi=erc20_abi
+            )
+            token1 = ethereum_client.w3.eth.contract(
+                address=Web3.toChecksumAddress(token1Addr),
+                abi=erc20_abi
+            )
 
-        [
-            token0_name, token0_symbol, token0_decimals,
-            token1_name, token1_symbol, token1_decimals
-        ] = await asyncio.gather(*executor_gather)
+            tasks = list()
+            
+            #special case to handle maker token
+            maker_token0 = None
+            maker_token1 = None
+            if(Web3.toChecksumAddress(settings.contract_addresses.MAKER) == Web3.toChecksumAddress(token0Addr)):
+                token0_name = get_maker_pair_data('name')
+                token0_symbol = get_maker_pair_data('symbol')
+                maker_token0 = True
+            else:
+                tasks.append(token0.functions.name())
+                tasks.append(token0.functions.symbol())
+            tasks.append(token0.functions.decimals())
 
-        await writer_redis_conn.hmset(
-            redis_keys.get_uniswap_pair_contract_tokens_data(pair_address),
-            mapping={
-            "token0_name", token0_name,
-            "token0_symbol", token0_symbol,
-            "token0_decimals", token0_decimals,
-            "token1_name", token1_name,
-            "token1_symbol", token1_symbol,
-            "token1_decimals", token1_decimals,
-            "pair_symbol", f"{token0_symbol}-{token1_symbol}"
-        })
-    return {
-        'token0': {
-            'address': token0Addr,
-            'name': token0_name,
-            'symbol': token0_symbol,
-            'decimals': token0_decimals
-        },
-        'token1': {
-            'address': token1Addr,
-            'name': token1_name,
-            'symbol': token1_symbol,
-            'decimals': token1_decimals
-        },
-        'pair': {
-            'symbol': f'{token0_symbol}-{token1_symbol}'
+
+            if(Web3.toChecksumAddress(settings.contract_addresses.MAKER) == Web3.toChecksumAddress(token1Addr)):
+                token1_name = get_maker_pair_data('name')
+                token1_symbol = get_maker_pair_data('symbol')
+                maker_token1 = True
+            else:
+                tasks.append(token1.functions.name())
+                tasks.append(token1.functions.symbol())
+            tasks.append(token1.functions.decimals())
+
+            if maker_token1:
+                [token0_name, token0_symbol, token0_decimals, token1_decimals] = ethereum_client.batch_call(
+                    tasks
+                )
+            elif maker_token0:
+                [token0_decimals, token1_name, token1_symbol, token1_decimals] = ethereum_client.batch_call(
+                    tasks
+                )
+            else:
+                [
+                    token0_name, token0_symbol, token0_decimals, token1_name, token1_symbol, token1_decimals
+                ] = ethereum_client.batch_call(tasks)
+            
+            await redis_conn.hset(
+                name=redis_keys.get_uniswap_pair_contract_tokens_data(pair_address),
+                mapping={
+                    "token0_name": token0_name,
+                    "token0_symbol": token0_symbol,
+                    "token0_decimals": token0_decimals,
+                    "token1_name": token1_name,
+                    "token1_symbol": token1_symbol,
+                    "token1_decimals": token1_decimals,
+                    "pair_symbol": f"{token0_symbol}-{token1_symbol}",
+                    'token0Addr': token0Addr,
+                    'token1Addr': token1Addr
+                }
+            )
+
+        return {
+            'token0': {
+                'address': token0Addr,
+                'name': token0_name,
+                'symbol': token0_symbol,
+                'decimals': token0_decimals
+            },
+            'token1': {
+                'address': token1Addr,
+                'name': token1_name,
+                'symbol': token1_symbol,
+                'decimals': token1_decimals
+            },
+            'pair': {
+                'symbol': f'{token0_symbol}-{token1_symbol}'
+            }
         }
-    }
-
-async def get_pair_metadata_and_tokens_price(writer_redis_conn: aioredis.Redis, pair_contract_address):
-    pair_contract_obj = w3.eth.contract(
-        address=Web3.toChecksumAddress(pair_contract_address),
-        abi=pair_contract_abi
-    )
-
-    pair_token_metadata = await get_pair_tokens_metadata(
-        pair_contract_obj=pair_contract_obj,
-        pair_address=Web3.toChecksumAddress(pair_contract_address),
-        loop=asyncio.get_event_loop(),
-        writer_redis_conn=writer_redis_conn
-    )
-
-    return pair_token_metadata
+    except Exception as err:
+        # this will be retried in next cycle
+        logger.error(f"RPC error while fetcing metadata for pair {pair_address}, error_msg:{err}", exc_info=True)
+        raise err
 
 def calculate_pair_trade_volume(dag_chain):
     # calculate / sum trade volume
@@ -424,7 +435,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         cids_volume_7d = ''
 
 
-        pair_token_metadata = await get_pair_metadata_and_tokens_price(writer_redis_conn, pair_contract_address)
+        pair_token_metadata = await get_pair_tokens_metadata(
+            pair_address=Web3.toChecksumAddress(pair_contract_address),
+            writer_redis_conn=writer_redis_conn
+        )
 
         [
             total_liquidity,

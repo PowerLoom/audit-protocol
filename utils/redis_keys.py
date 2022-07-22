@@ -192,12 +192,9 @@ def get_projects_registered_for_cache_indexing_key():
 NAMESPACE = 'UNISWAPV2'
 
 
-def get_uniswap_pair_contract_tokens_addresses(pair_address):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensAddresses'.format(pair_address)
-
 
 def get_uniswap_pair_contract_tokens_data(pair_address):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractTokensData'.format(pair_address)
+    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractMetaData'.format(pair_address)
 
 
 def get_uniswap_pair_contract_V2_pair_data(pair_address):
