@@ -226,6 +226,7 @@ async def get_pair_tokens_metadata(
                     token0_name, token0_symbol, token0_decimals, token1_name, token1_symbol, token1_decimals
                 ] = ethereum_client.batch_call(tasks)
             
+        if not pair_tokens_metadata_cache:
             await redis_conn.hset(
                 name=redis_keys.get_uniswap_pair_contract_tokens_data(pair_address),
                 mapping={
