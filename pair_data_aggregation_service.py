@@ -159,7 +159,14 @@ async def get_pair_tokens_metadata(
         if pair_tokens_metadata_cache:
             token0Addr = Web3.toChecksumAddress(pair_tokens_metadata_cache[b"token0Addr"].decode('utf-8'))
             token1Addr = Web3.toChecksumAddress(pair_tokens_metadata_cache[b"token1Addr"].decode('utf-8'))
+            token0_decimals = pair_tokens_metadata_cache[b"token0_decimals"].decode('utf-8')
+            token1_decimals = pair_tokens_metadata_cache[b"token1_decimals"].decode('utf-8')
+            token0_symbol = pair_tokens_metadata_cache[b"token0_symbol"].decode('utf-8')
+            token1_symbol = pair_tokens_metadata_cache[b"token1_symbol"].decode('utf-8')
+            token0_name = pair_tokens_metadata_cache[b"token0_name"].decode('utf-8')
+            token1_name = pair_tokens_metadata_cache[b"token1_name"].decode('utf-8')
         else:
+            # get token0 and token1 addresses
             pair_contract_obj = ethereum_client.w3.eth.contract(
                 address=Web3.toChecksumAddress(pair_address),
                 abi=pair_contract_abi
@@ -169,26 +176,17 @@ async def get_pair_tokens_metadata(
                 pair_contract_obj.functions.token1()
             ])
 
-        # token0 contract
-        token0 = ethereum_client.w3.eth.contract(
-            address=Web3.toChecksumAddress(token0Addr),
-            abi=erc20_abi
-        )
-        # token1 contract
-        token1 = ethereum_client.w3.eth.contract(
-            address=Web3.toChecksumAddress(token1Addr),
-            abi=erc20_abi
-        )
 
-        # parse token data cache or call eth rpc
-        if pair_tokens_metadata_cache:
-            token0_decimals = pair_tokens_metadata_cache[b"token0_decimals"].decode('utf-8')
-            token1_decimals = pair_tokens_metadata_cache[b"token1_decimals"].decode('utf-8')
-            token0_symbol = pair_tokens_metadata_cache[b"token0_symbol"].decode('utf-8')
-            token1_symbol = pair_tokens_metadata_cache[b"token1_symbol"].decode('utf-8')
-            token0_name = pair_tokens_metadata_cache[b"token0_name"].decode('utf-8')
-            token1_name = pair_tokens_metadata_cache[b"token1_name"].decode('utf-8')
-        else:
+            # get token0 and token1 metadata:
+            token0 = ethereum_client.w3.eth.contract(
+                address=Web3.toChecksumAddress(token0Addr),
+                abi=erc20_abi
+            )
+            token1 = ethereum_client.w3.eth.contract(
+                address=Web3.toChecksumAddress(token1Addr),
+                abi=erc20_abi
+            )
+
             tasks = list()
             
             #special case to handle maker token
@@ -226,7 +224,6 @@ async def get_pair_tokens_metadata(
                     token0_name, token0_symbol, token0_decimals, token1_name, token1_symbol, token1_decimals
                 ] = ethereum_client.batch_call(tasks)
             
-        if not pair_tokens_metadata_cache:
             await redis_conn.hset(
                 name=redis_keys.get_uniswap_pair_contract_tokens_data(pair_address),
                 mapping={
