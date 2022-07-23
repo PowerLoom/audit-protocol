@@ -33,7 +33,7 @@ web3==5.23.1
 aio_pika==6.8.0
 pika==1.2.0
 psutil
-rich
+rich==12.5.1
 cardinality
 httpx==0.22.0
 typer==0.3.2

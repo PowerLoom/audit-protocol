@@ -439,7 +439,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
         pair_token_metadata = await get_pair_tokens_metadata(
             pair_address=Web3.toChecksumAddress(pair_contract_address),
             redis_conn=writer_redis_conn
-        )
+        ) 
 
         [
             total_liquidity,
