@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 
 	log "github.com/sirupsen/logrus"
@@ -37,10 +38,13 @@ type SettingsObj struct {
 			} `json:"core"`
 		} `json:"setup"`
 	} `json:"rabbitmq"`
-	ContractCallBackend string        `json:"contract_call_backend"`
-	ContractRateLimiter *_RateLimiter `json:"contract_rate_limit,omitempty"`
-	RPCMatic            string        `json:"rpc_matic"`
-	ContractAddresses   struct {
+	ContractCallBackend   string        `json:"contract_call_backend"`
+	ContractRateLimiter   *_RateLimiter `json:"contract_rate_limit,omitempty"`
+	RetryCount            *int          `json:"retry_count"`
+	RetryIntervalSecs     int           `json:"retry_interval_secs"`
+	HttpClientTimeoutSecs int           `json:"http_client_timeout_secs"`
+	RPCMatic              string        `json:"rpc_matic"`
+	ContractAddresses     struct {
 		IuniswapV2Factory string `json:"iuniswap_v2_factory"`
 		IuniswapV2Router  string `json:"iuniswap_v2_router"`
 		IuniswapV2Pair    string `json:"iuniswap_v2_pair"`
@@ -111,6 +115,7 @@ type SettingsObj struct {
 		MaxIdleConns    int           `json:"max_idle_conns"`
 		IdleConnTimeout int           `json:"idle_conn_timeout"`
 		RateLimiter     *_RateLimiter `json:"rate_limit,omitempty"`
+		UploadURLSuffix string        `json:"upload_url_suffix"`
 	} `json:"web3_storage"`
 }
 
@@ -129,5 +134,29 @@ func ParseSettings(settingsFile string) SettingsObj {
 		log.Error("Cannot unmarshal the settings json ", err)
 		panic(err)
 	}
+	SetDefaults(&settingsObj)
+	log.Infof("Final Settings Object being used %+v", settingsObj)
 	return settingsObj
+}
+
+func SetDefaults(settingsObj *SettingsObj) {
+	//Set defaults for settings that are not configured.
+	if settingsObj.RetryCount == nil {
+		settingsObj.RetryCount = new(int)
+		*settingsObj.RetryCount = 15
+	} else if *settingsObj.RetryCount == 0 { //This means retry unlimited number of times.
+		*settingsObj.RetryCount = math.MaxInt
+	}
+	if settingsObj.RetryIntervalSecs == 0 {
+		settingsObj.RetryIntervalSecs = 5
+	}
+	if settingsObj.HttpClientTimeoutSecs == 0 {
+		settingsObj.HttpClientTimeoutSecs = 10
+	}
+	if settingsObj.PayloadCommitConcurrency == 0 {
+		settingsObj.PayloadCommitConcurrency = 20
+	}
+	if settingsObj.Web3Storage.UploadURLSuffix == "" {
+		settingsObj.Web3Storage.UploadURLSuffix = "/upload"
+	}
 }
