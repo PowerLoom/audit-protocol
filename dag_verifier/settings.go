@@ -7,6 +7,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+type _DagVerifierSettings_ struct {
+	SlackNotifyURL               string `json:"slack_notify_URL"`
+	RunIntervalSecs              int    `json:"run_interval_secs"`
+	SuppressNotificationTimeSecs int64  `json:"suppress_notification_for_secs"`
+}
+
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
@@ -34,7 +40,7 @@ type SettingsObj struct {
 	MetadataCache string `json:"metadata_cache"`
 	DagTableName  string `json:"dag_table_name"`
 	Seed          string `json:"seed"`
-	Redis struct {
+	Redis         struct {
 		Host     string      `json:"host"`
 		Port     int         `json:"port"`
 		Db       int         `json:"db"`
@@ -82,9 +88,10 @@ type SettingsObj struct {
 		SockConnect int `json:"sock_connect"`
 		Connect     int `json:"connect"`
 	} `json:"aiohtttp_timeouts"`
+	DagVerifierSettings _DagVerifierSettings_ `json:"dag_verifier"`
 }
 
-func ParseSettings(settingsFile string) SettingsObj {
+func ParseSettings(settingsFile string) *SettingsObj {
 	var settingsObj SettingsObj
 	log.Info("Reading Settings:", settingsFile)
 	data, err := os.ReadFile(settingsFile)
@@ -99,6 +106,20 @@ func ParseSettings(settingsFile string) SettingsObj {
 		log.Error("Cannot unmarshal the settings json ", err)
 		panic(err)
 	}
-	return settingsObj
+	SetDefaults(&settingsObj)
+	log.Infof("Final Settings Object being used %+v", settingsObj)
+	return &settingsObj
 	//log.Info("Settings for namespace", settingsObj.Development.Namespace)
+}
+
+func SetDefaults(settings *SettingsObj) {
+	if settings.DagVerifierSettings.RunIntervalSecs == 0 {
+		settings.DagVerifierSettings.RunIntervalSecs = 300
+	}
+	if settings.DagVerifierSettings.SlackNotifyURL == "" {
+		log.Warnf("Slack Notification URL is not set, any issues observed by this service will not be notified.")
+	}
+	if settings.DagVerifierSettings.SuppressNotificationTimeSecs == 0 {
+		settings.DagVerifierSettings.SuppressNotificationTimeSecs = 1800
+	}
 }
