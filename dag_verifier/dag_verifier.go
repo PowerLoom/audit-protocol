@@ -26,6 +26,7 @@ type ProjectIndexedState struct {
 type DagVerifier struct {
 	redisClient                      *redis.Client
 	projects                         []string
+	SummaryProjects                  []string
 	settings                         *SettingsObj
 	lastVerifiedDagBlockHeights      map[string]string
 	ProjectsIndexedState             map[string]*ProjectIndexedState
@@ -43,7 +44,9 @@ type DagVerifier struct {
 const NAMESPACE string = "UNISWAPV2"
 const PAIR_TRADEVOLUME_PROJECTID string = "projectID:uniswap_pairContract_trade_volume_%s_%s"
 const PAIR_TOTALRESERVE_PROJECTID string = "projectID:uniswap_pairContract_pair_total_reserves_%s_%s"
+const REDIS_KEY_PROJECT_BLOCK_HEIGHT string = "%s:blockHeight"
 
+const SUMMARY_PROJECT_ID string = "projectID:%s_%s"
 const DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT string = "DUPLICATE_HEIGHT_IN_CHAIN"
 const DAG_CHAIN_ISSUE_GAP_IN_CHAIN string = "GAP_IN_CHAIN"
 
@@ -78,6 +81,10 @@ func (verifier *DagVerifier) PopulateProjects(pairContractAddresses *[]string) {
 		pairTotalReserveProjectId := fmt.Sprintf(PAIR_TOTALRESERVE_PROJECTID, pairAddresses[i], NAMESPACE)
 		verifier.projects = append(verifier.projects, pairTotalReserveProjectId)
 		verifier.projects = append(verifier.projects, pairTradeVolumeProjectId)
+	}
+	for j := range verifier.settings.DagVerifierSettings.SummaryProjectsToTrack {
+		summaryProjectID := fmt.Sprintf(SUMMARY_PROJECT_ID, verifier.settings.DagVerifierSettings.SummaryProjectsToTrack[j], NAMESPACE)
+		verifier.SummaryProjects = append(verifier.SummaryProjects, summaryProjectID)
 	}
 }
 
@@ -185,6 +192,9 @@ func (verifier *DagVerifier) FetchLastVerificationStatusFromRedis() {
 			//TODO: do we need to change this to be based on some timeDuration like last 24h etc instead of starting from 1??
 			verifier.lastVerifiedDagBlockHeights[verifier.projects[i]] = "0"
 		}
+		for i := range verifier.SummaryProjects {
+			verifier.lastVerifiedDagBlockHeights[verifier.SummaryProjects[i]] = "0"
+		}
 		return
 	}
 	if res.Err() != nil {
@@ -247,9 +257,8 @@ func (verifier *DagVerifier) Run() {
 	for {
 		if len(verifier.projects) > 0 {
 			verifier.VerifyAllProjects() //Projects are pairContracts
-			//TODO: Do we need to track other projects?
-			verifier.UpdateLastStatusToRedis()
 			verifier.SummarizeDAGIssuesAndNotifySlack()
+			verifier.UpdateLastStatusToRedis()
 		} else {
 			log.Info("No projects to be verified. Have to check in next run.")
 		}
@@ -270,7 +279,23 @@ func (verifier *DagVerifier) VerifyAllProjects() {
 		}(i)
 
 	}
+
 	wg.Wait()
+}
+
+func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string) string {
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_BLOCK_HEIGHT, projectId)
+	for i := 0; i < 3; i++ {
+		res := verifier.redisClient.Get(ctx, key)
+		if res.Err() != nil {
+			log.Errorf("Failed to fetch blockHeight for project %s from redis due to error %+v", projectId, res.Err())
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		log.Debugf("Retrieved BlockHeight for project %s from redis is %s", projectId, res.Val())
+		return res.Val()
+	}
+	return ""
 }
 
 func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
@@ -395,6 +420,27 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 				projectId, currentCycleDAGchainHeight[projectId])
 		}
 	}
+	isDagchainStuckForSummaryProject := 0
+	for j := range verifier.SummaryProjects {
+		projectId := verifier.SummaryProjects[j]
+		currentDagHeight := verifier.GetProjectDAGBlockHeightFromRedis(projectId)
+		if verifier.lastVerifiedDagBlockHeights[projectId] != "" {
+			if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
+				verifier.noOfCyclesSinceChainStuck[projectId]++
+				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+					log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
+					isDagchainStuckForSummaryProject++
+					var summaryProject SummaryProjectState
+					summaryProject.ProjectHeight = currentDagHeight
+					summaryProject.ProjectId = projectId
+					dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
+				}
+			}
+		}
+		verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
+		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
+	}
+
 	//Check if dagChain has issues for any project.
 	if verifier.dagChainHasIssues {
 		dagSummary.ProjectsTrackedCount = len(verifier.projects)
@@ -415,6 +461,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 		}
 		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
 	} else if verifier.dagCacheIssues > 0 {
+		var dagSummary DagChainReport
+		dagSummary.Namespace = NAMESPACE
 		dagSummary.ProjectsTrackedCount = len(verifier.projects)
 		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_LOW
 		dagSummary.ProjectsWithCacheIssueCount = verifier.dagCacheIssues
@@ -431,7 +479,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	//TODO: Rough suppression logic, not very elegant.
 	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
 	//As of now the workaround is to restart dag-verifier once issues are resolved.
-	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
+	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 || isDagchainStuckForSummaryProject > 0 {
 		if time.Now().Unix()-verifier.lastNotifyTime > verifier.settings.DagVerifierSettings.SuppressNotificationTimeSecs {
 			err := verifier.NotifySlackOfDAGSummary(dagSummary)
 			if err != nil {
@@ -440,14 +488,14 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 			verifier.lastNotifyTime = time.Now().Unix()
 		}
 	}
-	//Cleanup reported issues, because they are not recoverable and only way to recover
-	//is to clean-slate or truncate chains and resume.
+	//Cleanup reported issues, because either they auto-recover or a manual recovery is needed.
 	verifier.dagChainHasIssues = false
 	verifier.dagChainIssues = make(map[string][]DagChainIssue)
 
 	for _, projectId := range verifier.projects {
 		verifier.previousCycleDagChainHeight[projectId] = currentCycleDAGchainHeight[projectId]
 	}
+
 }
 
 func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) error {

@@ -8,9 +8,10 @@ import (
 )
 
 type _DagVerifierSettings_ struct {
-	SlackNotifyURL               string `json:"slack_notify_URL"`
-	RunIntervalSecs              int    `json:"run_interval_secs"`
-	SuppressNotificationTimeSecs int64  `json:"suppress_notification_for_secs"`
+	SlackNotifyURL               string   `json:"slack_notify_URL"`
+	RunIntervalSecs              int      `json:"run_interval_secs"`
+	SuppressNotificationTimeSecs int64    `json:"suppress_notification_for_secs"`
+	SummaryProjectsToTrack       []string `json:"additional_projects_to_track_prefixes"`
 }
 
 type SettingsObj struct {

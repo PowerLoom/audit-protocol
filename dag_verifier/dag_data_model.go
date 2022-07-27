@@ -13,17 +13,23 @@ type SlackNotifyReq struct {
 	DAGsummary string `json:"dagChainSummary"`
 }
 
+type SummaryProjectState struct {
+	ProjectId     string `json:"projectId"`
+	ProjectHeight string `json:"chainHeight"`
+}
+
 type DagChainReport struct {
-	Namespace                   string `json:"namespace"`
-	Severity                    string `json:"severity"`                               //HIGH,MEDIUM, LOW
-	ProjectsWithCacheIssueCount int    `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
-	ProjectsTrackedCount        int    `json:"projectsTrackedCount"`
-	ProjectsWithIssuesCount     int    `json:"projectsWithIssuesCount"`
-	ProjectsWithStuckChainCount int    `json:"projectsWithStuckChainCount"`
-	CurrentMinChainHeight       int64  `json:"currentMinChainHeight"`
-	OverallIssueCount           int    `json:"overallIssueCount"`
-	OverallDAGChainGaps         int    `json:"overallDAGChainGaps"`
-	OverallDAGChainDuplicates   int    `json:"overallDAGChainDuplicates"`
+	Namespace                   string                `json:"namespace"`
+	Severity                    string                `json:"severity"`                               //HIGH,MEDIUM, LOW
+	ProjectsWithCacheIssueCount int                   `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
+	ProjectsTrackedCount        int                   `json:"projectsTrackedCount"`
+	ProjectsWithIssuesCount     int                   `json:"projectsWithIssuesCount"`
+	ProjectsWithStuckChainCount int                   `json:"projectsWithStuckChainCount"`
+	CurrentMinChainHeight       int64                 `json:"currentMinChainHeight"`
+	OverallIssueCount           int                   `json:"overallIssueCount"`
+	OverallDAGChainGaps         int                   `json:"overallDAGChainGaps"`
+	OverallDAGChainDuplicates   int                   `json:"overallDAGChainDuplicates"`
+	SummaryProjectsStuckDetails []SummaryProjectState `json:"summaryProjectsStuck"`
 }
 
 type SlackResp struct {
