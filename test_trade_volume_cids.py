@@ -5,7 +5,7 @@ from web3 import Web3
 import asyncio
 import json
 from datetime import datetime
-import sys
+import os
 from rich.console import Console
 from rich.table import Table
 
@@ -39,21 +39,46 @@ async def get_payload_cid_output(cid):
         return {}
     return json.loads(out.decode('utf-8'))
 
+def write_json_file(directory:str, file_name: str, data):
+    try:
+        file_path = directory + file_name
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        f_ = open(file_path, 'w')
+    except Exception as e:
+        print(f"Unable to open the {file_path} file")
+        raise e
+    else:
+        json.dump(data, f_, ensure_ascii=False, indent=4)
+
+def read_json_file(directory:str, file_name: str):
+    try:
+        file_path = directory + file_name
+        f_ = open(file_path, 'r')
+    except Exception as e:
+        print(f"Unable to open the {file_path} file")
+        raise e
+    else:
+        json_data = json.loads(f_.read())
+    return json_data
+
         
 
-async def verify_trade_volume_cids(data_cid):
+async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
 
     data = await get_payload_cid_output(data_cid)
-    trade_volume_24h_cids = data['resultant']['trade_volume_24h_cids']
+    timePeriod = 'trade_volume_24h_cids' if timePeriod == '24h' else 'trade_volume_7d_cids'
+    trade_volume_cids = data['resultant'][timePeriod]
 
     aioredis_pool = RedisPool()
     await aioredis_pool.populate()
     redis_read_conn = aioredis_pool.reader_redis_pool
 
     #TODO: proceed only CID has dagCids and payload cids
-    payloadCid_0 = trade_volume_24h_cids[0]['payloadCid']
-    payloadData_0 = await get_payload_cid_output(payloadCid_0)
-    pair_tokens_data = await redis_read_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(Web3.toChecksumAddress(payloadData_0['contract'])))
+    latestDagCid = trade_volume_cids['latest_dag_cid']
+    latestDagData = await get_dag_cid_output(latestDagCid)
+    lastestPayloadData = await get_payload_cid_output(latestDagData['data']['cid']['/'])
+    pair_tokens_data = await redis_read_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(Web3.toChecksumAddress(lastestPayloadData['contract'])))
     token0_symbol = pair_tokens_data[b"token0_symbol"].decode('utf-8') if pair_tokens_data else "Token0"
     token1_symbol = pair_tokens_data[b"token1_symbol"].decode('utf-8') if pair_tokens_data else "Token1"
 
@@ -66,13 +91,15 @@ async def verify_trade_volume_cids(data_cid):
     table.add_column("Timestamp / Calculation Age", justify="center")
     total_trade_volume_usd = 0
 
-    for i in range(len(trade_volume_24h_cids)):
-        dag_cid = trade_volume_24h_cids[i]['dagCid']
+    dag_cid = trade_volume_cids['latest_dag_cid']
+    raw_event_logs = []
+    dag_block_count = 1
+    while (trade_volume_cids['oldest_dag_cid'] != dag_cid):
         dagBlockData = await get_dag_cid_output(dag_cid)
 
-        payload_cid = dagBlockData['data']['cid']
+        payload_cid = dagBlockData['data']['cid']['/']
         payloadData = await get_payload_cid_output(payload_cid)
-        
+
         ts = int(round(datetime.now().timestamp())) - payloadData["timestamp"]
         table.add_row(
             f"{payloadData['chainHeightRange']['begin']} - {payloadData['chainHeightRange']['end']}", 
@@ -82,24 +109,53 @@ async def verify_trade_volume_cids(data_cid):
             str(round(payloadData["totalTrade"], 2)),
             pretty_relative_time(ts)
         )
-            
+
+        if storeLogsInFile:
+            raw_event_logs.append({
+                "logs": payloadData['events']['Swap']['logs'] + payloadData['events']['Mint']['logs'] + payloadData['events']['Burn']['logs'],
+                "totalTrade": payloadData["totalTrade"],
+                "totalFee": payloadData["totalFee"],
+                "token0TradeVolume": payloadData["token0TradeVolume"],
+                "token1TradeVolume": payloadData["token1TradeVolume"],
+                "token0TradeVolumeUSD": payloadData["token0TradeVolumeUSD"],
+                "token1TradeVolumeUSD": payloadData["token1TradeVolumeUSD"]
+            })
 
         total_trade_volume_usd += float(payloadData["totalTrade"])
+
+        if dag_block_count % 500 == 0:
+            print(f"fetched dag block count: {dag_block_count}")
+
+        dag_cid = dagBlockData['prevCid']["/"]
+        dag_block_count += 1
     
     console.print("\n")
     console.print(table)
     console.print("\n")
     console.print("[bold magenta]MASTER CID:[/bold magenta]", f"[bold bright_cyan]{data_cid}[/bold bright_cyan]")
-    console.print("[bold magenta]Contract:[/bold magenta]", payloadData_0['contract'])
+    console.print("[bold magenta]Contract:[/bold magenta]", lastestPayloadData['contract'])
     console.print("[bold magenta]Pair:[/bold magenta]", f"{token0_symbol} - {token1_symbol}")
     console.print("[bold magenta]Total Trade Volume Combined:[/bold magenta]", f"{total_trade_volume_usd}")
     console.print("\n")
+
+    if storeLogsInFile:
+        write_json_file('./', storeLogsInFile, raw_event_logs)
     
 
 
 if __name__ == "__main__":
-    trade_volume_24h_cid = str(sys.argv[1]) if len(sys.argv) > 1 else 'QmTDH4txPmx49UQtDuNb16pGXXBCr2n4atnBDSzbapHYtx'
+
+    # This script recalculate trade volume in 7d or 24h dag block range,
+    # using IPFS dag block data (this won't call rpc again) 
+    # this require internal cid of v2-pair contract
+    
+    #################### CHANGE BELOW ARGUMENTS ######################
+    cid = 'bafkreibzpt3bnt6hux4vydor3xrqljx5vvw27gh3bo2zylhm6lvjdjhsk4'
+    timePeriod = '7d' # e.g.: 24h, 7d 
+    storeLogsInFile = 'trade_volume_test.json' # e.g.: None, '<file_name>.json'
+    ##################################################################
+    
     tasks = asyncio.gather(
-        verify_trade_volume_cids(trade_volume_24h_cid)
+        verify_trade_volume_cids(cid, timePeriod, storeLogsInFile)
     )
     asyncio.get_event_loop().run_until_complete(tasks)
