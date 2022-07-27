@@ -14,7 +14,7 @@ type IpfsClient struct {
 	ipfsClient *shell.Shell
 }
 
-func (client *IpfsClient) Init(settingsObj SettingsObj) {
+func (client *IpfsClient) Init(settingsObj *SettingsObj) {
 	url := settingsObj.IpfsURL
 	// Convert the URL from /ip4/172.31.16.206/tcp/5001 to IP:Port format.
 	//TODO: this is a very dirty way of doing it, better to take the IP and port from settings directly by adding new fields.
