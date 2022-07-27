@@ -287,6 +287,10 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 	key := fmt.Sprintf(REDIS_KEY_PROJECT_BLOCK_HEIGHT, projectId)
 	for i := 0; i < 3; i++ {
 		res := verifier.redisClient.Get(ctx, key)
+		if res.Err() == redis.Nil {
+			log.Errorf("No blockHeight key for the project %s is present in redis", projectId)
+			return ""
+		}
 		if res.Err() != nil {
 			log.Errorf("Failed to fetch blockHeight for project %s from redis due to error %+v", projectId, res.Err())
 			time.Sleep(5 * time.Second)

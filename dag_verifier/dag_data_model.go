@@ -22,13 +22,13 @@ type DagChainReport struct {
 	Namespace                   string                `json:"namespace"`
 	Severity                    string                `json:"severity"`                               //HIGH,MEDIUM, LOW
 	ProjectsWithCacheIssueCount int                   `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
-	ProjectsTrackedCount        int                   `json:"projectsTrackedCount"`
-	ProjectsWithIssuesCount     int                   `json:"projectsWithIssuesCount"`
-	ProjectsWithStuckChainCount int                   `json:"projectsWithStuckChainCount"`
-	CurrentMinChainHeight       int64                 `json:"currentMinChainHeight"`
-	OverallIssueCount           int                   `json:"overallIssueCount"`
-	OverallDAGChainGaps         int                   `json:"overallDAGChainGaps"`
-	OverallDAGChainDuplicates   int                   `json:"overallDAGChainDuplicates"`
+	ProjectsTrackedCount        int                   `json:"projectsTrackedCount,omitempty"`
+	ProjectsWithIssuesCount     int                   `json:"projectsWithIssuesCount,omitempty"`
+	ProjectsWithStuckChainCount int                   `json:"projectsWithStuckChainCount,omitempty"`
+	CurrentMinChainHeight       int64                 `json:"currentMinChainHeight,omitempty"`
+	OverallIssueCount           int                   `json:"overallIssueCount,omitempty"`
+	OverallDAGChainGaps         int                   `json:"overallDAGChainGaps,omitempty"`
+	OverallDAGChainDuplicates   int                   `json:"overallDAGChainDuplicates,omitempty"`
 	SummaryProjectsStuckDetails []SummaryProjectState `json:"summaryProjectsStuck"`
 }
 
