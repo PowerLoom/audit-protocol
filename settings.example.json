@@ -108,5 +108,15 @@
 			"req_per_sec": 3,
 			"burst": 6
 		}
+	},
+	"dag_verifier":{
+		"slack_notify_URL":"",
+		"notify_suppress_time_secs":1800,
+		"run_interval_secs": 300,
+		"additional_projects_to_track_prefixes" :[
+			"uniswap_V2PairsSummarySnapshot",
+			"uniswap_V2TokensSummarySnapshot",
+			"uniswap_V2DailyStatsSnapshot"
+		]
 	}
 }

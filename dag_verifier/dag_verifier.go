@@ -26,7 +26,8 @@ type ProjectIndexedState struct {
 type DagVerifier struct {
 	redisClient                      *redis.Client
 	projects                         []string
-	periodicRetrievalInterval        time.Duration
+	SummaryProjects                  []string
+	settings                         *SettingsObj
 	lastVerifiedDagBlockHeights      map[string]string
 	ProjectsIndexedState             map[string]*ProjectIndexedState
 	lastVerifiedDagBlockHeightsMutex *sync.RWMutex
@@ -43,7 +44,9 @@ type DagVerifier struct {
 const NAMESPACE string = "UNISWAPV2"
 const PAIR_TRADEVOLUME_PROJECTID string = "projectID:uniswap_pairContract_trade_volume_%s_%s"
 const PAIR_TOTALRESERVE_PROJECTID string = "projectID:uniswap_pairContract_pair_total_reserves_%s_%s"
+const REDIS_KEY_PROJECT_BLOCK_HEIGHT string = "%s:blockHeight"
 
+const SUMMARY_PROJECT_ID string = "projectID:%s_%s"
 const DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT string = "DUPLICATE_HEIGHT_IN_CHAIN"
 const DAG_CHAIN_ISSUE_GAP_IN_CHAIN string = "GAP_IN_CHAIN"
 
@@ -51,10 +54,11 @@ const DAG_CHAIN_REPORT_SEVERITY_HIGH = "High"
 const DAG_CHAIN_REPORT_SEVERITY_MEDIUM = "Medium"
 const DAG_CHAIN_REPORT_SEVERITY_LOW = "Low"
 
-func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddresses *[]string) {
-	verifier.InitIPFSClient(settings)
-	verifier.InitRedisClient(settings)
-	verifier.InitSlackClient(settings)
+func (verifier *DagVerifier) Initialize(settings *SettingsObj, pairContractAddresses *[]string) {
+	verifier.settings = settings
+	verifier.InitIPFSClient()
+	verifier.InitRedisClient()
+	verifier.InitSlackClient()
 	noOfProjects := len(*pairContractAddresses)
 	verifier.projects = make([]string, 0, noOfProjects)
 	verifier.noOfCyclesSinceChainStuck = make(map[string]int, noOfProjects)
@@ -62,7 +66,7 @@ func (verifier *DagVerifier) Initialize(settings SettingsObj, pairContractAddres
 	verifier.dagChainIssues = make(map[string][]DagChainIssue)
 
 	verifier.PopulateProjects(pairContractAddresses)
-	verifier.periodicRetrievalInterval = 300 * time.Second
+
 	//Fetch DagChain verification status from redis for all projects.
 	verifier.FetchLastVerificationStatusFromRedis()
 	verifier.FetchLastProjectIndexedStatusFromRedis()
@@ -77,6 +81,10 @@ func (verifier *DagVerifier) PopulateProjects(pairContractAddresses *[]string) {
 		pairTotalReserveProjectId := fmt.Sprintf(PAIR_TOTALRESERVE_PROJECTID, pairAddresses[i], NAMESPACE)
 		verifier.projects = append(verifier.projects, pairTotalReserveProjectId)
 		verifier.projects = append(verifier.projects, pairTradeVolumeProjectId)
+	}
+	for j := range verifier.settings.DagVerifierSettings.SummaryProjectsToTrack {
+		summaryProjectID := fmt.Sprintf(SUMMARY_PROJECT_ID, verifier.settings.DagVerifierSettings.SummaryProjectsToTrack[j], NAMESPACE)
+		verifier.SummaryProjects = append(verifier.SummaryProjects, summaryProjectID)
 	}
 }
 
@@ -184,6 +192,9 @@ func (verifier *DagVerifier) FetchLastVerificationStatusFromRedis() {
 			//TODO: do we need to change this to be based on some timeDuration like last 24h etc instead of starting from 1??
 			verifier.lastVerifiedDagBlockHeights[verifier.projects[i]] = "0"
 		}
+		for i := range verifier.SummaryProjects {
+			verifier.lastVerifiedDagBlockHeights[verifier.SummaryProjects[i]] = "0"
+		}
 		return
 	}
 	if res.Err() != nil {
@@ -221,10 +232,10 @@ func (verifier *DagVerifier) UpdateLastStatusToRedis() {
 	}
 }
 
-func (*DagVerifier) InitIPFSClient(settingsObj SettingsObj) {
+func (verifier *DagVerifier) InitIPFSClient() {
 
 	//Initialize and do a basic test to see if IPFS client is connected to IPFS server and is able to fetch.
-	ipfsClient.Init(settingsObj)
+	ipfsClient.Init(verifier.settings)
 	//TODO: Add  a way to verify IPFS client initialization is sucess and connection to IPFS node?
 	/*dagCid := "bafyreidiweqijqgiaaitzyktovv3zpiuqh7sbk5rmbrjxupgg7dhfcehvu"
 
@@ -242,18 +253,17 @@ func (*DagVerifier) InitIPFSClient(settingsObj SettingsObj) {
 }
 
 func (verifier *DagVerifier) Run() {
-
+	periodicRetrievalInterval := time.Duration(verifier.settings.DagVerifierSettings.RunIntervalSecs) * time.Second
 	for {
 		if len(verifier.projects) > 0 {
 			verifier.VerifyAllProjects() //Projects are pairContracts
-			//TODO: Do we need to track other projects?
-			verifier.UpdateLastStatusToRedis()
 			verifier.SummarizeDAGIssuesAndNotifySlack()
+			verifier.UpdateLastStatusToRedis()
 		} else {
 			log.Info("No projects to be verified. Have to check in next run.")
 		}
-		log.Info("Sleeping for " + verifier.periodicRetrievalInterval.String() + " secs")
-		time.Sleep(verifier.periodicRetrievalInterval)
+		log.Info("Sleeping for " + periodicRetrievalInterval.String())
+		time.Sleep(periodicRetrievalInterval)
 	}
 }
 
@@ -269,7 +279,27 @@ func (verifier *DagVerifier) VerifyAllProjects() {
 		}(i)
 
 	}
+
 	wg.Wait()
+}
+
+func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string) string {
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_BLOCK_HEIGHT, projectId)
+	for i := 0; i < 3; i++ {
+		res := verifier.redisClient.Get(ctx, key)
+		if res.Err() == redis.Nil {
+			log.Errorf("No blockHeight key for the project %s is present in redis", projectId)
+			return ""
+		}
+		if res.Err() != nil {
+			log.Errorf("Failed to fetch blockHeight for project %s from redis due to error %+v", projectId, res.Err())
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		log.Debugf("Retrieved BlockHeight for project %s from redis is %s", projectId, res.Val())
+		return res.Val()
+	}
+	return ""
 }
 
 func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
@@ -394,6 +424,27 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 				projectId, currentCycleDAGchainHeight[projectId])
 		}
 	}
+	isDagchainStuckForSummaryProject := 0
+	for j := range verifier.SummaryProjects {
+		projectId := verifier.SummaryProjects[j]
+		currentDagHeight := verifier.GetProjectDAGBlockHeightFromRedis(projectId)
+		if verifier.lastVerifiedDagBlockHeights[projectId] != "" {
+			if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
+				verifier.noOfCyclesSinceChainStuck[projectId]++
+				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+					log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
+					isDagchainStuckForSummaryProject++
+					var summaryProject SummaryProjectState
+					summaryProject.ProjectHeight = currentDagHeight
+					summaryProject.ProjectId = projectId
+					dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
+				}
+			}
+		}
+		verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
+		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
+	}
+
 	//Check if dagChain has issues for any project.
 	if verifier.dagChainHasIssues {
 		dagSummary.ProjectsTrackedCount = len(verifier.projects)
@@ -414,6 +465,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 		}
 		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
 	} else if verifier.dagCacheIssues > 0 {
+		var dagSummary DagChainReport
+		dagSummary.Namespace = NAMESPACE
 		dagSummary.ProjectsTrackedCount = len(verifier.projects)
 		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_LOW
 		dagSummary.ProjectsWithCacheIssueCount = verifier.dagCacheIssues
@@ -430,8 +483,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	//TODO: Rough suppression logic, not very elegant.
 	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
 	//As of now the workaround is to restart dag-verifier once issues are resolved.
-	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
-		if time.Now().Unix()-verifier.lastNotifyTime > 1800 {
+	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 || isDagchainStuckForSummaryProject > 0 {
+		if time.Now().Unix()-verifier.lastNotifyTime > verifier.settings.DagVerifierSettings.SuppressNotificationTimeSecs {
 			err := verifier.NotifySlackOfDAGSummary(dagSummary)
 			if err != nil {
 				log.Errorf("Slack Notify failed with error %+v", err)
@@ -439,19 +492,19 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 			verifier.lastNotifyTime = time.Now().Unix()
 		}
 	}
-	//Cleanup reported issues, because they are not recoverable and only way to recover
-	//is to clean-slate or truncate chains and resume.
+	//Cleanup reported issues, because either they auto-recover or a manual recovery is needed.
 	verifier.dagChainHasIssues = false
 	verifier.dagChainIssues = make(map[string][]DagChainIssue)
 
 	for _, projectId := range verifier.projects {
 		verifier.previousCycleDagChainHeight[projectId] = currentCycleDAGchainHeight[projectId]
 	}
+
 }
 
 func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) error {
-	//TODO: Move this to settings
-	reqURL := "https://hooks.slack.com/workflows/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"
+
+	reqURL := verifier.settings.DagVerifierSettings.SlackNotifyURL
 	var slackReq SlackNotifyReq
 	dagSummaryStr, _ := json.MarshalIndent(dagSummary, "", "\t")
 
@@ -666,9 +719,9 @@ func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, [
 	}
 }
 
-func (verifier *DagVerifier) InitRedisClient(settingsObj SettingsObj) {
-	redisURL := settingsObj.Redis.Host + ":" + strconv.Itoa(settingsObj.Redis.Port)
-	redisDb := settingsObj.Redis.Db
+func (verifier *DagVerifier) InitRedisClient() {
+	redisURL := verifier.settings.Redis.Host + ":" + strconv.Itoa(verifier.settings.Redis.Port)
+	redisDb := verifier.settings.Redis.Db
 	//redisURL = "localhost:6379"
 	//redisDb = 0
 	log.Info("Connecting to redis at:", redisURL)
@@ -685,7 +738,8 @@ func (verifier *DagVerifier) InitRedisClient(settingsObj SettingsObj) {
 	log.Info("Connected successfully to Redis and received ", pong, " back")
 }
 
-func (verifier *DagVerifier) InitSlackClient(settingsObj SettingsObj) {
+func (verifier *DagVerifier) InitSlackClient() {
+
 	verifier.slackClient = &http.Client{
 		Timeout: 10 * time.Second,
 	}
