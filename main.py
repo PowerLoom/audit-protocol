@@ -714,7 +714,7 @@ async def get_block(
 
 
 @app.get('/{projectId}/payload/{block_height}/status')
-async def get_block(
+async def get_block_status(
         request: Request,
         response: Response,
         projectId: str,
@@ -739,13 +739,13 @@ async def get_block(
         return {'error': 'Project does not have any blocks'}
     rest_logger.debug(max_block_height)
 
-    block_status = retrieval_utils.retrieve_block_status(projectId=projectId,
+    block_status = await retrieval_utils.retrieve_block_status(projectId=projectId,
                                             project_block_height=max_block_height,
                                             block_height=block_height,
                                             reader_redis_conn=reader_redis_conn,
                                             writer_redis_conn=writer_redis_conn)
 
-    return {block_status}
+    return block_status.dict()
 
 
 @app.get('/{projectId:str}/payload/{block_height:int}/data')

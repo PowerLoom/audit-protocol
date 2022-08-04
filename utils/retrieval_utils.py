@@ -10,7 +10,7 @@ import sys
 from config import settings
 from bloom_filter import BloomFilter
 from tenacity import wait_random_exponential, stop_after_attempt, retry
-from data_models import BlockStatus, ProjectBlockHeightStatus, PendingTransaction
+from data_models import ProjectBlockHeightStatus, PendingTransaction
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
@@ -298,6 +298,11 @@ async def fetch_blocks(
 
     return dag_blocks
 
+#BLOCK_STATUS_SNAPSHOT_COMMIT_PENDING = 1
+#TX_ACK_PENDING=2
+#TX_CONFIRMATION_PENDING = 3,
+#TX_CONFIRMED=4,
+
 async def retrieve_block_status(projectId: str,
                                 project_block_height: int,
                                 block_height: int,
@@ -322,7 +327,7 @@ async def retrieve_block_status(projectId: str,
             withscores=False
         )
         if len(r) == 0:
-            return {block_status}
+            return block_status
         payload_cid = r[0].decode('utf-8')
 
         project_pending_txns_key_zset = redis_keys.get_pending_transactions_key(projectId)
@@ -333,12 +338,12 @@ async def retrieve_block_status(projectId: str,
             withscores=False
         )
         if len(r) == 0:
-            block_status.status = BlockStatus.TX_ACK_PENDING
+            block_status.status = 2
             return block_status
         block_status.payload_cid = payload_cid
         pending_txn = PendingTransaction.parse_raw(r[0])
         block_status.tx_hash = pending_txn.txHash
-        block_status.status = BlockStatus.TX_CONFIRMATION_PENDING
+        block_status.status = 3
 
     else:
         """ Access the DAG CID at block_height """
@@ -355,7 +360,7 @@ async def retrieve_block_status(projectId: str,
         block = await retrieve_block_data(dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
         block_status.payload_cid = block['data']['cid']['/']
         block_status.tx_hash = block['txHash']
-        block_status.status = BlockStatus.TX_CONFIRMED
+        block_status.status = 4
     return block_status
 
 

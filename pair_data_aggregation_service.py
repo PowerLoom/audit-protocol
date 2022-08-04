@@ -5,7 +5,7 @@ from functools import partial
 from time import time
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
-from data_models import BlockStatus, liquidityProcessedData, uniswapPairsSnapshotZset, uniswapPairSummary7dCidRange, uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant
+from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, uniswapPairSummary7dCidRange, uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant
 from utils import helper_functions
 from utils import redis_keys
 from utils import retrieval_utils
@@ -870,7 +870,7 @@ async def v2_pairs_data():
                 block_status = await retrieval_utils.retrieve_block_status(
                                     redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
                                     0,updated_audit_project_block_height,redis_conn,redis_conn)
-                if block_status == BlockStatus.SNAPSHOT_COMMIT_PENDING or block_status ==BlockStatus.TX_ACK_PENDING:
+                if block_status.status < 3:
                     continue
                 logger.info(
                     'Audit project height against V2 pairs summary snapshot is %s | Moved from %s',

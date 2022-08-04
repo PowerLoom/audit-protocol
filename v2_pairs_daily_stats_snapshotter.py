@@ -8,7 +8,7 @@ import json
 from httpx import AsyncClient, Timeout, Limits
 from utils.retrieval_utils import retrieve_block_data, retrieve_block_status
 import logging.config
-from data_models import uniswapDailyStatsSnapshotZset, ProjectBlockHeightStatus, BlockStatus
+from data_models import uniswapDailyStatsSnapshotZset, ProjectBlockHeightStatus
 import sys
 
 logger = logging.getLogger(__name__)
@@ -254,7 +254,7 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                                 redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
                                 0,updated_audit_project_block_height,redis_conn,redis_conn
                                 )
-                if block_status == BlockStatus.SNAPSHOT_COMMIT_PENDING or block_status ==BlockStatus.TX_ACK_PENDING:
+                if block_status.status < 3:
                     continue
                 logger.debug(
                         'Audit project height against V2 pairs daily stats snapshot is %s | Moved from %s',
