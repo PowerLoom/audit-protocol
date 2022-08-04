@@ -5,9 +5,10 @@ from functools import partial
 from time import time
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
-from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, uniswapPairSummary7dCidRange, uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant
+from data_models import BlockStatus, liquidityProcessedData, uniswapPairsSnapshotZset, uniswapPairSummary7dCidRange, uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant
 from utils import helper_functions
 from utils import redis_keys
+from utils import retrieval_utils
 from utils.ipfs_async import client as ipfs_client
 from utils.redis_conn import RedisPool, provide_redis_conn
 from utils.retrieval_utils import retrieve_block_data
@@ -188,7 +189,7 @@ async def get_pair_tokens_metadata(
             )
 
             tasks = list()
-            
+
             #special case to handle maker token
             maker_token0 = None
             maker_token1 = None
@@ -223,7 +224,7 @@ async def get_pair_tokens_metadata(
                 [
                     token0_name, token0_symbol, token0_decimals, token1_name, token1_symbol, token1_decimals
                 ] = ethereum_client.batch_call(tasks)
-            
+
             await redis_conn.hset(
                 name=redis_keys.get_uniswap_pair_contract_tokens_data(pair_address),
                 mapping={
@@ -854,6 +855,7 @@ async def v2_pairs_data():
                         )
                     else:
                         wait_for_snapshot_project_new_commit = True
+                        updated_audit_project_block_height = current_audit_project_block_height+1
         if wait_for_snapshot_project_new_commit:
             waitCycles = 0
             while True:
@@ -864,79 +866,67 @@ async def v2_pairs_data():
                     break
                 logger.debug('Waiting for 10 seconds to check if latest v2 pairs summary snapshot was committed...')
                 await asyncio.sleep(10)
-                updated_audit_project_block_height = await helper_functions.get_block_height(
-                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
-                    reader_redis_conn=redis_conn
+
+                block_status = retrieval_utils.retrieve_block_status(
+                                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                                    0,updated_audit_project_block_height,redis_conn,redis_conn)
+                if block_status == BlockStatus.SNAPSHOT_COMMIT_PENDING or block_status ==BlockStatus.TX_ACK_PENDING:
+                    continue
+                logger.info(
+                    'Audit project height against V2 pairs summary snapshot is %s | Moved from %s',
+                    updated_audit_project_block_height, current_audit_project_block_height
                 )
-                if updated_audit_project_block_height > current_audit_project_block_height:
-                    logger.info(
-                        'Audit project height against V2 pairs summary snapshot is %s | Moved from %s',
-                        updated_audit_project_block_height, current_audit_project_block_height
-                    )
-                    # get head DAG CID retrieve_block_data
-                    head_dag_cid = await helper_functions.get_dag_cid(
-                        project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
-                        block_height=updated_audit_project_block_height,
-                        reader_redis_conn=redis_conn
-                    )
-                    dag_block_payload_prefilled = await retrieve_block_data(
-                        block_dag_cid=head_dag_cid,
-                        writer_redis_conn=redis_conn,
-                        data_flag=1
-                    )
+                begin_block_data = await get_oldest_block_and_timestamp(pair_contract_address)
 
-                    begin_block_data = await get_oldest_block_and_timestamp(pair_contract_address)
+                snapshotZsetEntry = uniswapPairsSnapshotZset(
+                    cid=block_status.payload_cid,
+                    txHash=block_status.tx_hash,
+                    begin_block_height_24h=begin_block_data["begin_block_height_24h"],
+                    begin_block_timestamp_24h=begin_block_data["begin_block_timestamp_24h"],
+                    begin_block_height_7d=begin_block_data["begin_block_height_7d"],
+                    begin_block_timestamp_7d=begin_block_data["begin_block_timestamp_7d"]
+                )
 
-                    snapshotZsetEntry = uniswapPairsSnapshotZset(
-                        cid=dag_block_payload_prefilled['data']['cid'],
-                        txHash=dag_block_payload_prefilled['txHash'],
-                        begin_block_height_24h=begin_block_data["begin_block_height_24h"],
-                        begin_block_timestamp_24h=begin_block_data["begin_block_timestamp_24h"],
-                        begin_block_height_7d=begin_block_data["begin_block_height_7d"],
-                        begin_block_timestamp_7d=begin_block_data["begin_block_timestamp_7d"]
-                    )
-
-                    # store in snapshots zset
-                    await asyncio.gather(
-                        redis_conn.zadd(
-                            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
-                            mapping={snapshotZsetEntry.json(): common_blockheight_reached}),
-                        redis_conn.zadd(
-                            name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
-                            mapping={dag_block_payload_prefilled['data']['cid']: common_block_timestamp}),
-                        redis_conn.set(
-                            name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(common_blockheight_reached),
-                            value=json.dumps(dag_block_payload_prefilled['data']['payload']),
-                            ex=1800  # TTL of 30 minutes?
-                        ),
-                        redis_conn.set(
-                            redis_keys.get_uniswap_pair_snapshot_last_block_height(),
-                            common_blockheight_reached)
-                    )
-
-                    #prune zset
-                    block_height_zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_snapshot_summary_zset())
-
-                    # TODO: snapshot history zset size limit configurable
-                    if block_height_zset_len > 20:
-                        _ = await redis_conn.zremrangebyrank(
-                            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
-                            min=0,
-                            max=-1 * (block_height_zset_len - 20) + 1
-                        )
-                        logger.debug('Pruned snapshot summary CID zset by %s elements', _)
-
-                    pruning_timestamp = int(time()) - (60 * 60 * 24 + 60 * 60 * 2) # now - 26 hours
-                    _ = await redis_conn.zremrangebyscore(
+                # store in snapshots zset
+                await asyncio.gather(
+                    redis_conn.zadd(
+                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                        mapping={snapshotZsetEntry.json(): common_blockheight_reached}),
+                    redis_conn.zadd(
                         name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                        mapping={block_status.payload_cid: common_block_timestamp}),
+                    redis_conn.set(
+                        name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(common_blockheight_reached),
+                        value=json.dumps(summarized_payload),
+                        ex=1800  # TTL of 30 minutes?
+                    ),
+                    redis_conn.set(
+                        redis_keys.get_uniswap_pair_snapshot_last_block_height(),
+                        common_blockheight_reached)
+                )
+
+                #prune zset
+                block_height_zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_snapshot_summary_zset())
+
+                # TODO: snapshot history zset size limit configurable
+                if block_height_zset_len > 20:
+                    _ = await redis_conn.zremrangebyrank(
+                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
                         min=0,
-                        max=pruning_timestamp
+                        max=-1 * (block_height_zset_len - 20) + 1
                     )
-                    logger.debug('Pruned snapshot summary Timestamp zset by %s elements', _)
+                    logger.debug('Pruned snapshot summary CID zset by %s elements', _)
 
-                    logger.info('V2 pairs summary snapshot updated...')
+                pruning_timestamp = int(time()) - (60 * 60 * 24 + 60 * 60 * 2) # now - 26 hours
+                _ = await redis_conn.zremrangebyscore(
+                    name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                    min=0,
+                    max=pruning_timestamp
+                )
+                logger.debug('Pruned snapshot summary Timestamp zset by %s elements', _)
+                logger.info('V2 pairs summary snapshot updated...')
 
-                    break
+                break
 
         return final_results
 

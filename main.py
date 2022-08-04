@@ -713,6 +713,41 @@ async def get_block(
     return {prev_dag_cid: block}
 
 
+@app.get('/{projectId}/payload/{block_height}/status')
+async def get_block(
+        request: Request,
+        response: Response,
+        projectId: str,
+        block_height: int
+
+):
+    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
+    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
+    if out == 0:
+        return {'error': 'The projectId provided does not exist'}
+    if (block_height <= 0):
+        response.status_code = 400
+        return {'error': 'Invalid Block Height'}
+    """ This endpoint is responsible for retrieving the blockHeight status along with required data """
+    max_block_height = await helper_functions.get_block_height(
+        project_id=projectId,
+        reader_redis_conn=reader_redis_conn
+    )
+    if max_block_height == 0:
+        response.status_code = 400
+        return {'error': 'Project does not have any blocks'}
+    rest_logger.debug(max_block_height)
+
+    block_status = retrieval_utils.retrieve_block_status(projectId=projectId,
+                                            project_block_height=max_block_height,
+                                            block_height=block_height,
+                                            reader_redis_conn=reader_redis_conn,
+                                            writer_redis_conn=writer_redis_conn)
+
+    return {block_status}
+
+
 @app.get('/{projectId:str}/payload/{block_height:int}/data')
 async def get_block_data(
         request: Request,
