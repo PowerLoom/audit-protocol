@@ -250,7 +250,7 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                 logger.debug('Waiting for 10 seconds to check if latest v2 pairs daily stats snapshot was committed...')
                 await asyncio.sleep(10)
 
-                block_status = retrieve_block_status(
+                block_status = await retrieve_block_status(
                                 redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
                                 0,updated_audit_project_block_height,redis_conn,redis_conn
                                 )

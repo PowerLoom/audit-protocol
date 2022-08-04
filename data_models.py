@@ -198,7 +198,7 @@ class BlockStatus(Enum):
     TX_CONFIRMATION_PENDING = 3,
     TX_CONFIRMED=4,
 
-class ProjectBlockHeightStatus:
+class ProjectBlockHeightStatus(BaseModel):
     project_id: str
     block_height: int
     payload_cid: Optional[str] = None

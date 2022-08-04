@@ -867,7 +867,7 @@ async def v2_pairs_data():
                 logger.debug('Waiting for 10 seconds to check if latest v2 pairs summary snapshot was committed...')
                 await asyncio.sleep(10)
 
-                block_status = retrieval_utils.retrieve_block_status(
+                block_status = await retrieval_utils.retrieve_block_status(
                                     redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
                                     0,updated_audit_project_block_height,redis_conn,redis_conn)
                 if block_status == BlockStatus.SNAPSHOT_COMMIT_PENDING or block_status ==BlockStatus.TX_ACK_PENDING:
