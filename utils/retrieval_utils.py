@@ -10,6 +10,7 @@ import sys
 from config import settings
 from bloom_filter import BloomFilter
 from tenacity import wait_random_exponential, stop_after_attempt, retry
+from data_models import ProjectBlockHeightStatus, PendingTransaction
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
@@ -296,6 +297,71 @@ async def fetch_blocks(
         # retrieval_utils_logger.debug(dag_blocks)
 
     return dag_blocks
+
+#BLOCK_STATUS_SNAPSHOT_COMMIT_PENDING = 1
+#TX_ACK_PENDING=2
+#TX_CONFIRMATION_PENDING = 3,
+#TX_CONFIRMED=4,
+
+async def retrieve_block_status(projectId: str,
+                                project_block_height: int,
+                                block_height: int,
+                                reader_redis_conn: aioredis.Redis,
+                                writer_redis_conn: aioredis.Redis)->ProjectBlockHeightStatus:
+    block_status = ProjectBlockHeightStatus(project_id=projectId,
+                                        block_height=block_height,
+                                        )
+    if project_block_height == 0:
+        project_block_height = await helper_functions.get_block_height(
+            project_id=projectId,
+            reader_redis_conn=reader_redis_conn
+        )
+    if (block_height > project_block_height):
+        """This means the queried blockHeight is not yet finalized. """
+        """ Access the payloadCId at block_height """
+        project_payload_cids_key_zset = redis_keys.get_payload_cids_key(projectId)
+        r = await reader_redis_conn.zrangebyscore(
+            name=project_payload_cids_key_zset,
+            min=block_height,
+            max=block_height,
+            withscores=False
+        )
+        if len(r) == 0:
+            return block_status
+        payload_cid = r[0].decode('utf-8')
+
+        project_pending_txns_key_zset = redis_keys.get_pending_transactions_key(projectId)
+        r = await reader_redis_conn.zrangebyscore(
+            name=project_pending_txns_key_zset,
+            min=block_height,
+            max=block_height,
+            withscores=False
+        )
+        if len(r) == 0:
+            block_status.status = 2
+            return block_status
+        block_status.payload_cid = payload_cid
+        pending_txn = PendingTransaction.parse_raw(r[0])
+        block_status.tx_hash = pending_txn.txHash
+        block_status.status = 3
+
+    else:
+        """ Access the DAG CID at block_height """
+        project_payload_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
+        r = await reader_redis_conn.zrangebyscore(
+            name=project_payload_cids_key_zset,
+            min=block_height,
+            max=block_height,
+            withscores=False
+        )
+
+        dag_cid = r[0].decode('utf-8')
+
+        block = await retrieve_block_data(dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+        block_status.payload_cid = block['data']['cid']['/']
+        block_status.tx_hash = block['txHash']
+        block_status.status = 4
+    return block_status
 
 
 # TODO: refactor function or introduce an enum/pydantic model against data_flag param for readability/maintainability

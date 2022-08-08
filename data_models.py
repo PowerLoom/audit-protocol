@@ -1,6 +1,7 @@
 from pydantic import BaseModel, validator
 from typing import Union, List, Optional, Any, Dict
 import json
+from enum import Enum
 
 
 class AuditRecordTxEventData(BaseModel):
@@ -190,3 +191,10 @@ class uniswapPairSummaryCid24hResultant(BaseModel):
 
 class uniswapPairSummary24hCidRange(BaseModel):
     resultant: uniswapPairSummaryCid24hResultant
+
+class ProjectBlockHeightStatus(BaseModel):
+    project_id: str
+    block_height: int
+    payload_cid: Optional[str] = None
+    tx_hash: Optional[str] = None
+    status: int = 1 #BLOCK_STATUS_SNAPSHOT_COMMIT_PENDING

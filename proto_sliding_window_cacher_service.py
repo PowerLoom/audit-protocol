@@ -192,8 +192,8 @@ async def build_primary_indexes():
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
     project_id_to_register_series = dict(zip(registered_project_ids, registered_projects_ts))
     project_source_height_map = {}
-    
-    
+
+
     tasks = list()
     semaphore = asyncio.BoundedSemaphore(20)
     for project_id, ts_arr in project_id_to_register_series.items():
@@ -232,11 +232,11 @@ async def build_primary_indexes():
 
 async def periodic_retrieval():
     while True:
+        await build_primary_indexes()
         await asyncio.gather(
-            build_primary_indexes(),
             v2_pairs_data(),
             v2_pairs_daily_stats_snapshotter(),
-            asyncio.sleep(60)
+            asyncio.sleep(30)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')
 
