@@ -20,7 +20,7 @@ type SummaryProjectState struct {
 
 type DagChainReport struct {
 	Namespace                   string                `json:"namespace"`
-	Severity                    string                `json:"severity"`                               //HIGH,MEDIUM, LOW
+	Severity                    string                `json:"severity"`                               //HIGH,MEDIUM, LOW, CLEAR
 	ProjectsWithCacheIssueCount int                   `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
 	ProjectsTrackedCount        int                   `json:"projectsTrackedCount,omitempty"`
 	ProjectsWithIssuesCount     int                   `json:"projectsWithIssuesCount,omitempty"`
@@ -29,7 +29,9 @@ type DagChainReport struct {
 	OverallIssueCount           int                   `json:"overallIssueCount,omitempty"`
 	OverallDAGChainGaps         int                   `json:"overallDAGChainGaps,omitempty"`
 	OverallDAGChainDuplicates   int                   `json:"overallDAGChainDuplicates,omitempty"`
-	SummaryProjectsStuckDetails []SummaryProjectState `json:"summaryProjectsStuck"`
+	SummaryProjectsStuckDetails []SummaryProjectState `json:"summaryProjectsStuck,omitempty"`
+	SummaryProjectsRecovered    []SummaryProjectState `json:"summaryProjectsRecovered,omitempty"`
+	IssurResolvedMessage        string                `json:"issueResolvedMessage,omitempty"`
 }
 
 type SlackResp struct {

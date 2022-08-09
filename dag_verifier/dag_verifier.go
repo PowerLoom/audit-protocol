@@ -53,6 +53,7 @@ const DAG_CHAIN_ISSUE_GAP_IN_CHAIN string = "GAP_IN_CHAIN"
 const DAG_CHAIN_REPORT_SEVERITY_HIGH = "High"
 const DAG_CHAIN_REPORT_SEVERITY_MEDIUM = "Medium"
 const DAG_CHAIN_REPORT_SEVERITY_LOW = "Low"
+const DAG_CHAIN_REPORT_SEVERITY_CLEAR = "Cleared"
 
 func (verifier *DagVerifier) Initialize(settings *SettingsObj, pairContractAddresses *[]string) {
 	verifier.settings = settings
@@ -346,7 +347,9 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 		log.Infof("Dag chain has issues for projectID %s. Issues are: %+v", projectId, chainIssues)
 		verifier.updateDagIssuesInRedis(projectId, chainIssues)
 		verifier.dagChainHasIssues = true
+		verifier.lastVerifiedDagBlockHeightsMutex.Lock()
 		verifier.dagChainIssues[projectId] = chainIssues
+		verifier.lastVerifiedDagBlockHeightsMutex.Unlock()
 	}
 	//Store last verified blockHeight so that in next run, we just need to verify from the same.
 	//Use single hash key in redis to store the same against contractAddress.
@@ -398,7 +401,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	var currentMinChainHeight int64
 	currentMinChainHeight, _ = strconv.ParseInt(verifier.lastVerifiedDagBlockHeights[verifier.projects[0]], 10, 64)
 	isDagchainStuckForAnyProject := 0
-
+	summaryProjectsMovingAheadAfterStuck := false
 	//Check if dag chain is stuck for any project.
 	for _, projectId := range verifier.projects {
 		var err error
@@ -437,12 +440,23 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 					var summaryProject SummaryProjectState
 					summaryProject.ProjectHeight = currentDagHeight
 					summaryProject.ProjectId = projectId
+					dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
 					dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
 				}
+				summaryProjectsMovingAheadAfterStuck = false
+			} else {
+				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+					summaryProjectsMovingAheadAfterStuck = true
+					var summaryProject SummaryProjectState
+					summaryProject.ProjectId = projectId
+					summaryProject.ProjectHeight = currentDagHeight
+					dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
+					dagSummary.SummaryProjectsRecovered = append(dagSummary.SummaryProjectsRecovered, summaryProject)
+				}
+				verifier.noOfCyclesSinceChainStuck[projectId] = 0
 			}
+			verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
 		}
-		verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
-		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
 	}
 
 	//Check if dagChain has issues for any project.
@@ -491,6 +505,9 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 			}
 			verifier.lastNotifyTime = time.Now().Unix()
 		}
+	}
+	if summaryProjectsMovingAheadAfterStuck {
+		verifier.NotifySlackOfDAGSummary(dagSummary)
 	}
 	//Cleanup reported issues, because either they auto-recover or a manual recovery is needed.
 	verifier.dagChainHasIssues = false
