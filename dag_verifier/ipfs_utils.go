@@ -2,35 +2,85 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
 	shell "github.com/ipfs/go-ipfs-api"
+	ma "github.com/multiformats/go-multiaddr"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 type IpfsClient struct {
-	ipfsClient *shell.Shell
+	ipfsClient            *shell.Shell
+	ipfsClientRateLimiter *rate.Limiter
 }
 
 func (client *IpfsClient) Init(settingsObj *SettingsObj) {
 	url := settingsObj.IpfsURL
-	// Convert the URL from /ip4/172.31.16.206/tcp/5001 to IP:Port format.
-	//TODO: this is a very dirty way of doing it, better to take the IP and port from settings directly by adding new fields.
-	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
-	log.Debug("Initializing the IPFS client with IPFS Daemon URL:", connectUrl)
-	client.ipfsClient = shell.NewShell(connectUrl)
+	_, err := ma.NewMultiaddr(url)
+	if err == nil {
+		// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
+		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+	}
+
+	t := http.Transport{
+		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+		MaxIdleConns:        settingsObj.DagVerifierSettings.Concurrency,
+		MaxConnsPerHost:     settingsObj.DagVerifierSettings.Concurrency,
+		MaxIdleConnsPerHost: settingsObj.DagVerifierSettings.Concurrency,
+		IdleConnTimeout:     0,
+		DisableCompression:  true,
+	}
+
+	ipfsHttpClient := http.Client{
+		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
+		Transport: &t,
+	}
+	log.Debug("Initializing the IPFS client with IPFS Daemon URL:", url)
+	client.ipfsClient = shell.NewShellWithClient(url, &ipfsHttpClient)
 	timeout := time.Duration(settingsObj.IpfsTimeout * 1000000000)
 	client.ipfsClient.SetTimeout(timeout)
 	log.Debugf("Setting IPFS timeout of %d seconds", timeout.Seconds())
+	tps := rate.Limit(10) //10 TPS
+	burst := 10
+	if settingsObj.DagVerifierSettings.IPFSRateLimiter != nil {
+		burst = settingsObj.DagVerifierSettings.IPFSRateLimiter.Burst
+		if settingsObj.DagVerifierSettings.IPFSRateLimiter.RequestsPerSec == -1 {
+			tps = rate.Inf
+			burst = 0
+		} else {
+			tps = rate.Limit(settingsObj.IPFSRateLimiter.RequestsPerSec)
+		}
+	}
+	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
+	client.ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
 }
 
 func (client *IpfsClient) DagGet(dagCid string) (DagChainBlock, error) {
 	var dagBlock DagChainBlock
-	err := client.ipfsClient.DagGet(dagCid, &dagBlock)
-	if err != nil {
-		log.Error("Error in getting Dag block from IPFS, Dag-CID:", dagCid, ", error:", err)
+	var err error
+	var i int
+	for i = 0; i < 3; i++ {
+
+		err = client.ipfsClientRateLimiter.Wait(context.Background())
+		if err != nil {
+			log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		err = client.ipfsClient.DagGet(dagCid, &dagBlock)
+		if err != nil {
+			log.Error("Error in getting Dag block from IPFS, Dag-CID:", dagCid, ", error:", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+	}
+	if i >= 3 {
+		log.Error("Failed to fetch even after retrying.")
 		return dagBlock, err
 	}
 	log.Tracef("Fetched the dag Block with CID %s, BlockInfo:%+v", dagCid, dagBlock)
@@ -42,10 +92,16 @@ func (client *IpfsClient) GetPayload(payloadCid string, retryCount int) (DagPayl
 	var err error
 	var i int
 	for i = 0; i < retryCount; i++ {
+		err := client.ipfsClientRateLimiter.Wait(context.Background())
+		if err != nil {
+			log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
 		data, err := client.ipfsClient.Cat(payloadCid)
 		if err != nil {
 			log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
-			//TODO": fin-grain handling needed that in case of network error, retry with exponential backoff
+			time.Sleep(5 * time.Second)
 			continue
 		}
 
