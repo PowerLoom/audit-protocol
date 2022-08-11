@@ -576,12 +576,15 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, txHash string) error {
 		return err
 	}
 	for retryCount := 0; ; {
-
-		res := redisClient.ZAdd(ctx, key,
-			&redis.Z{
-				Score:  float64(payload.TentativeBlockHeight),
-				Member: pendingtxnBytes,
-			})
+		var zAddArgs redis.ZAddArgs
+		zAddArgs.GT = true
+		zAddArgs.Members = append(zAddArgs.Members, redis.Z{
+			Score:  float64(payload.TentativeBlockHeight),
+			Member: pendingtxnBytes,
+		})
+		res := redisClient.ZAddArgs(ctx, key,
+			zAddArgs,
+		)
 		if res.Err() != nil {
 			if retryCount == MAX_RETRY_COUNT {
 				log.Errorf("Failed to add payloadCid %s for project %s with commitID %s to pendingTxns in redis with err %+v after max retries of %d",
