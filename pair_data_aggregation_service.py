@@ -337,7 +337,8 @@ def patch_cids_obj(dag_chain, patch_type, patch):
 async def store_recent_transactions_logs(writer_redis_conn: aioredis.Redis, dag_chain, pair_contract_address):
     recent_logs = []
     for log in dag_chain:
-        recent_logs.extend(log['data']['payload']['recent_logs'])
+        event_logs = log['data']['payload']['events']['Swap']['logs'] + log['data']['payload']['events']['Mint']['logs'] + log['data']['payload']['events']['Burn']['logs']
+        recent_logs.extend(event_logs)
     recent_logs = sorted(recent_logs, key=lambda log: log['timestamp'], reverse=True)
 
     oldLogs = await writer_redis_conn.get(redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"))
@@ -771,7 +772,7 @@ async def v2_pairs_data():
         await aioredis_pool.populate()
         redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
 
-        logger.debug("Create threads to process trade volume data")
+        logger.debug("Create threads to aggregate trade volume and liquidity for pairs")
         process_data_list = []
         for pair_contract_address in pairs:
             t = process_pairs_trade_volume_and_reserves(aioredis_pool.writer_redis_pool, pair_contract_address)
@@ -787,11 +788,14 @@ async def v2_pairs_data():
         # logger.debug('Final results from running v2 pairs coroutines: %s', final_results)
         # logger.debug('Filtered heights from running v2 pairs coroutines: %s', collected_heights)
         if cardinality.count(final_results) != cardinality.count(collected_heights):
-            logger.error(
-                         'In V2 pairs overall summary snapshot creation: '
-                         'No common block height found among all summarized contracts. Some results returned exception.'
-                         'Block heights found: %s', list(collected_heights)
-            )
+            if len(collected_heights) == 0:
+                 logger.error(f'Got empty result for all pairs, either pair chains didn\'t move ahead or there is an error while fetching dag-blocks data')
+            else:
+                logger.error(
+                    'In V2 pairs overall summary snapshot creation: '
+                    'No common block height found among all summarized contracts. Some results returned exception.'
+                    f'Block heights found: {collected_heights}'
+                )
             common_blockheight_reached = False
         else:
             if all(collected_heights[0] == y for y in collected_heights):
