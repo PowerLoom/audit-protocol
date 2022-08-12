@@ -12,13 +12,13 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/go-redis/redis/v8"
 	shell "github.com/ipfs/go-ipfs-api"
-	"github.com/ipfs/go-ipfs-api/options"
 	log "github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/writer"
 	"github.com/streadway/amqp"
@@ -249,7 +249,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 
 	if !payloadCommit.Resubmitted {
 		if d.Redelivered {
-			log.Infof("Message got redelivered from rabbitmq for project %s and commitId %s",
+			log.Warnf("Message got redelivered from rabbitmq for project %s and commitId %s",
 				payloadCommit.ProjectId, payloadCommit.CommitId)
 		}
 		lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
@@ -271,47 +271,52 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				return true
 			}
 		}
+		var ipfsStatus bool
 		if payloadCommit.Web3Storage {
-			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Uploading payload to web3.storage.",
+			var wg sync.WaitGroup
+			var w3sStatus bool
+			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Uploading payload to web3.storage and IPFS.",
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
-			snapshotCid, opStatus := UploadToWeb3Storage(payloadCommit)
-			if !opStatus {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ipfsStatus = UploadSnapshotToIPFS(&payloadCommit)
+				if !ipfsStatus {
+					return
+				}
+				log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
+					payloadCommit.SnapshotCID, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
+			}()
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var snapshotCid string
+				snapshotCid, w3sStatus = UploadToWeb3Storage(&payloadCommit)
+				if !w3sStatus {
+					return
+				}
+				log.Debugf("web3.storage upload Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
+					snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
+				//SnapshotCID from web3.storage is not used directly.
+				//payloadCommit.SnapshotCID = snapshotCid
+			}()
+
+			wg.Wait()
+			if !ipfsStatus {
+				log.Errorf("Failed to add to IPFS. IPFSStatus %b , web3.storage status %b", ipfsStatus, w3sStatus)
 				return false
 			}
-			log.Debugf("web3.storage upload Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
-				snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-			payloadCommit.SnapshotCID = snapshotCid
+			if !w3sStatus {
+				//Since web3.storage is only used as a backup, we proceed even if web3.storage upload fails as IPFS upload is successful
+				log.Errorf("Failed to upload to web3.storage status %b. Continuing with processing.", w3sStatus)
+			}
 		} else {
 			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Adding payload to IPFS.",
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
-			for retryCount := 0; ; {
-				options.DagPutOptions()
-
-				err := ipfsClientRateLimiter.Wait(context.Background())
-				if err != nil {
-					log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
-					time.Sleep(1 * time.Second)
-					continue
-				}
-				snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
-				/*snapshotCid, err := ipfsClient.DagPutWithOpts(bytes.NewReader(payloadCommit.Payload),
-				options.Dag.InputCodec("dag-json"),
-				options.Dag.StoreCodec("dag-cbor"),
-				options.Dag.Pin("true"))*/
-				if err != nil {
-					if retryCount == MAX_RETRY_COUNT {
-						log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, MAX_RETRY_COUNT, err)
-						return false
-					}
-					time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
-					retryCount++
-					log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", payloadCommit, err, retryCount)
-					continue
-				}
-				log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
-					snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-				payloadCommit.SnapshotCID = snapshotCid
-				break
+			ipfsStatus = UploadSnapshotToIPFS(&payloadCommit)
+			if !ipfsStatus {
+				return false
 			}
 		}
 
@@ -391,6 +396,35 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	return true
 }
 
+func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
+	for retryCount := 0; ; {
+
+		err := ipfsClientRateLimiter.Wait(context.Background())
+		if err != nil {
+			log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
+
+		if err != nil {
+			if retryCount == MAX_RETRY_COUNT {
+				log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, MAX_RETRY_COUNT, err)
+				return false
+			}
+			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
+			retryCount++
+			log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", payloadCommit, err, retryCount)
+			continue
+		}
+		log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
+			snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
+		payloadCommit.SnapshotCID = snapshotCid
+		break
+	}
+	return true
+}
+
 func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) (*PayloadData, error) {
 	payloadCid, err := GetPayloadCidAtProjectHeightFromRedis(projectId, strconv.Itoa(lastTentativeBlockHeight))
 	if err != nil {
@@ -446,8 +480,19 @@ func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) 
 				startScore, projectId)
 			payloadCid = fmt.Sprintf("%v", res[0].Member)
 		} else {
-			log.Errorf("Found no payloadCID at %s for project %s in redis", startScore, projectId)
-			return "", err
+			log.Errorf("Could not find a payloadCid at height %s for project %s. Trying with lower height.", startScore, projectId)
+			prevHeight, err := strconv.Atoi(startScore)
+			if err != nil {
+				log.Errorf("CRITICAL! Height passed in startScore is not int, hence failed to convert due to error %+v", err)
+				return "", err
+			}
+			startScore = strconv.Itoa(prevHeight - 1)
+			if prevHeight < 2 { //Safety check
+				log.Errorf("Could not find any payloadCid at min height.Continuing with current snapshot processing in this case.")
+				return "", errors.New(SKIP_SNAPSHOT_VALIDATION_ERR_STR)
+			}
+			i++
+			continue
 		}
 		break
 	}
@@ -797,7 +842,7 @@ func InvokeWebhookCallback(payload *PayloadCommit) retryType {
 	}
 }
 
-func UploadToWeb3Storage(payload PayloadCommit) (string, bool) {
+func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 
 	reqURL := settingsObj.Web3Storage.URL + WEB3_STORAGE_UPLOAD_URL_SUFFIX
 	for retryCount := 0; ; {
