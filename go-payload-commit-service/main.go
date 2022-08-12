@@ -49,6 +49,8 @@ var REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT = "projectID:%s:tentativeBlockHeigh
 
 var WEB3_STORAGE_UPLOAD_URL_SUFFIX = "/upload"
 
+var SKIP_SNAPSHOT_VALIDATION_ERR_STR = "skip validation"
+
 //TODO: Move all these to settings.
 const MAX_RETRY_COUNT = 3
 const SECONDS_BETWEEN_RETRY = 5
@@ -246,6 +248,10 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	}
 
 	if !payloadCommit.Resubmitted {
+		if d.Redelivered {
+			log.Infof("Message got redelivered from rabbitmq for project %s and commitId %s",
+				payloadCommit.ProjectId, payloadCommit.CommitId)
+		}
 		lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
 		if err != nil {
 			return false
@@ -385,20 +391,20 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	return true
 }
 
-func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) *PayloadData {
+func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) (*PayloadData, error) {
 	payloadCid, err := GetPayloadCidAtProjectHeightFromRedis(projectId, strconv.Itoa(lastTentativeBlockHeight))
 	if err != nil {
 		log.Errorf("Failed to fetch payloadCid for project %s at height %d from redis due to error %+v",
 			projectId, lastTentativeBlockHeight, err)
-		return nil
+		return nil, err
 	}
 	payload, err := GetPayloadFromIPFS(payloadCid, 3)
 	if err != nil {
 		log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
 			payloadCid, projectId, lastTentativeBlockHeight, err)
-		return nil
+		return nil, err
 	}
-	return payload
+	return payload, nil
 }
 
 func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) (string, error) {
@@ -429,15 +435,19 @@ func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) 
 		}
 
 		res := zRangeByScore.Val()
+
 		//dagPayloadsInfo = make([]DagPayload, len(res))
 		log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
 		if len(res) == 1 {
 			payloadCid = fmt.Sprintf("%v", res[0].Member)
 			log.Debugf("PayloadCID %s fetched for project %s at height %s from redis", payloadCid, projectId, startScore)
-		} else {
+		} else if len(res) > 1 {
 			log.Errorf("Found more than 1 payload CIDS at height %d for project %s which means project state is messed up due to an issue that has occured while previous snapshot processing, considering the first one so that current snapshot processing can proceed",
 				startScore, projectId)
 			payloadCid = fmt.Sprintf("%v", res[0].Member)
+		} else {
+			log.Errorf("Found no payloadCID at %s for project %s in redis", startScore, projectId)
+			return "", err
 		}
 		break
 	}
@@ -452,7 +462,7 @@ func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error)
 		if err != nil {
 			if i >= retryCount {
 				log.Errorf("Failed to fetch Payload with CID %s from IPFS even after max retries due to error %+v.", payloadCid, err)
-				return &payload, err
+				return &payload, errors.New(SKIP_SNAPSHOT_VALIDATION_ERR_STR)
 			}
 			log.Errorf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
 			time.Sleep(SECONDS_BETWEEN_RETRY * time.Second)
@@ -477,22 +487,32 @@ func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error)
 }
 
 func validSnapshot(payloadCommit *PayloadCommit, lastTentativeBlockHeight int) (bool, error) {
-	// Check if this is a duplicate snapshot of previously submitted one and ignore if so.
-	// We could've used snapshotCID to compare with previous one, but a snapshotter can submit incorrect snapshot at same chainHeightRange?
-	// Fetch previously submitted payLoad and compare chainHeight to confirm duplicate.
-	previousSnapshot := GetPreviousSnapshot(payloadCommit.ProjectId, lastTentativeBlockHeight)
-	if previousSnapshot == nil {
-		log.Warnf("Could not get previous snapshot for project %s with commitId %s, sending NACK to rabbitmq",
-			payloadCommit.ProjectId, payloadCommit.CommitId)
-		return false, errors.New("could not get previous snapshot for project")
-	}
 	var currentSnapshotData PayloadData
 	err := json.Unmarshal(payloadCommit.Payload, &currentSnapshotData)
 	if err != nil {
-		log.Warnf("Unable to decode current snapshot for project %s with commitId %s as payload due to error %+v",
+		log.Warnf("CRITICAL:Unable to decode current snapshot for project %s with commitId %s as payload due to error %+v",
 			payloadCommit.ProjectId, payloadCommit.CommitId, err)
 		return false, nil
 	}
+	if currentSnapshotData.ChainHeightRange == nil {
+		//If chainHeightRange is not present(like for summary projects), don't look for previousSnapshot.
+		log.Debugf("Skip validating with previousSnapshot as chainHeightrange is not present in the snapshot for projectID %s", payloadCommit.ProjectId)
+		return true, nil
+	}
+	// Check if this is a duplicate snapshot of previously submitted one and ignore if so.
+	// We could've used snapshotCID to compare with previous one, but a snapshotter can submit incorrect snapshot at same chainHeightRange?
+	// Fetch previously submitted payLoad and compare chainHeight to confirm duplicate.
+	previousSnapshot, err := GetPreviousSnapshot(payloadCommit.ProjectId, lastTentativeBlockHeight)
+	if previousSnapshot == nil {
+		log.Warnf("Could not get previous snapshot for project %s with commitId %s, sending NACK to rabbitmq",
+			payloadCommit.ProjectId, payloadCommit.CommitId)
+		if err.Error() == SKIP_SNAPSHOT_VALIDATION_ERR_STR {
+			log.Debugf("Skip validating with previousSnapshot as unable to fetch it")
+			return true, nil
+		}
+		return false, errors.New("could not get previous snapshot for project")
+	}
+
 	if currentSnapshotData.ChainHeightRange != nil && previousSnapshot.ChainHeightRange != nil {
 		if (currentSnapshotData.ChainHeightRange.Begin == previousSnapshot.ChainHeightRange.Begin) &&
 			(currentSnapshotData.ChainHeightRange.End == previousSnapshot.ChainHeightRange.End) {
@@ -556,12 +576,15 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, txHash string) error {
 		return err
 	}
 	for retryCount := 0; ; {
-
-		res := redisClient.ZAdd(ctx, key,
-			&redis.Z{
-				Score:  float64(payload.TentativeBlockHeight),
-				Member: pendingtxnBytes,
-			})
+		var zAddArgs redis.ZAddArgs
+		zAddArgs.GT = true
+		zAddArgs.Members = append(zAddArgs.Members, redis.Z{
+			Score:  float64(payload.TentativeBlockHeight),
+			Member: pendingtxnBytes,
+		})
+		res := redisClient.ZAddArgs(ctx, key,
+			zAddArgs,
+		)
 		if res.Err() != nil {
 			if retryCount == MAX_RETRY_COUNT {
 				log.Errorf("Failed to add payloadCid %s for project %s with commitID %s to pendingTxns in redis with err %+v after max retries of %d",
