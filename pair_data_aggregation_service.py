@@ -36,6 +36,12 @@ logger.addHandler(stderr_handler)
 logger.debug("Initialized logger")
 
 NAMESPACE = 'UNISWAPV2'
+SNAPSHOT_STATUS_MAP = {
+    "SNAPSHOT_COMMIT_PENDING": 1,
+	"TX_ACK_PENDING": 2,
+	"TX_CONFIRMATION_PENDING": 3,
+	"TX_CONFIRMED": 4
+}
 
 
 ethereum_client = EthereumClient(settings.rpc_url)
@@ -339,7 +345,8 @@ async def store_recent_transactions_logs(writer_redis_conn: aioredis.Redis, dag_
     for log in dag_chain:
         event_logs = log['data']['payload']['events']['Swap']['logs'] + log['data']['payload']['events']['Mint']['logs'] + log['data']['payload']['events']['Burn']['logs']
         recent_logs.extend(event_logs)
-    recent_logs = sorted(recent_logs, key=lambda log: log['timestamp'], reverse=True)
+
+    recent_logs = sorted(recent_logs, key=lambda log: log['blockNumber'], reverse=True)
 
     oldLogs = await writer_redis_conn.get(redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"))
     if oldLogs:
@@ -367,6 +374,58 @@ async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contrac
         max=float(now - 60 * 60 * 25)
     )
 
+
+async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis=None):
+    # Fetch all entries in snapshotZSet
+	# Any entry that has a txStatus as TX_CONFIRM_PENDING, query its updated status and update ZSet
+	# If txHash changes, store old one in prevTxhash and update the new one in txHash
+    if not redis_conn:
+        aioredis_pool = RedisPool()
+        await aioredis_pool.populate()
+        redis_conn = aioredis_pool.writer_redis_pool
+
+    storedSnapshots = await redis_conn.zrangebyscore(
+        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+        min=float('-inf'),
+        max=float('+inf'),
+        withscores=True
+    )
+    for snapshotMeta, score  in storedSnapshots:
+        snapshotMeta = json.loads(snapshotMeta.decode('utf-8'))
+        score = int(score)
+        if snapshotMeta.get('dagHeight', 0) == 0:
+            # skip processing of blockHeight snapshots if DAGheight is not available to fetch status.
+            continue
+        
+        snapshotMeta = uniswapPairsSnapshotZset(**snapshotMeta) 
+        if snapshotMeta.txStatus <= SNAPSHOT_STATUS_MAP["TX_CONFIRMATION_PENDING"]:
+            
+            block_status = await retrieval_utils.retrieve_block_status(
+                redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                0, snapshotMeta.dagHeight, redis_conn, redis_conn
+            )
+
+            # remove snapshot entry from zset
+            await redis_conn.zremrangebyscore(
+                name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                min=score,
+                max=score
+            )
+            
+            # update new status fields
+            if block_status.tx_hash != snapshotMeta.txHash:
+                snapshotMeta.prevTxHash = snapshotMeta.txHash
+            
+            snapshotMeta.txHash = block_status.tx_hash
+            snapshotMeta.txStatus = block_status.status
+
+            # add new snapshot entry to zset
+            await redis_conn.zadd(
+                name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                mapping={snapshotMeta.json(): score}
+            )
+
+    return None
 
 async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Redis, pair_contract_address):
     try:
@@ -888,7 +947,9 @@ async def v2_pairs_data():
                     begin_block_height_24h=begin_block_data["begin_block_height_24h"],
                     begin_block_timestamp_24h=begin_block_data["begin_block_timestamp_24h"],
                     begin_block_height_7d=begin_block_data["begin_block_height_7d"],
-                    begin_block_timestamp_7d=begin_block_data["begin_block_timestamp_7d"]
+                    begin_block_timestamp_7d=begin_block_data["begin_block_timestamp_7d"],
+                    txStatus=block_status.status,
+                    dagHeight=updated_audit_project_block_height
                 )
 
                 # store in snapshots zset
@@ -927,6 +988,9 @@ async def v2_pairs_data():
                     min=0,
                     max=pruning_timestamp
                 )
+                
+                await fetch_and_update_status_of_older_snapshots(redis_conn)
+
                 logger.debug('Pruned snapshot summary Timestamp zset by %s elements', _)
                 logger.info('V2 pairs summary snapshot updated...')
 
@@ -943,6 +1007,6 @@ async def v2_pairs_data():
 if __name__ == '__main__':
     print("", "")
     # loop = asyncio.get_event_loop()
-    # data = loop.run_until_complete(v2_pairs_data())
+    # data = loop.run_until_complete(fetch_and_update_status_of_older_snapshots())
     # print("## ##", "")
     # print(data)
