@@ -5,6 +5,7 @@ from utils import helper_functions, dag_utils, retrieval_utils
 from functools import wraps
 from pair_data_aggregation_service import v2_pairs_data
 from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
+from httpx import AsyncClient, Timeout, Limits
 from redis import asyncio as aioredis
 import asyncio
 import json
@@ -230,12 +231,19 @@ async def build_primary_indexes():
             tasks.append(fn)
     await asyncio.gather(*tasks)
 
+
 async def periodic_retrieval():
+    # TODO: make these configurable
+    async_httpx_client = AsyncClient(
+        timeout=Timeout(timeout=5.0),
+        follow_redirects=False,
+        limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
+    )
     while True:
         await build_primary_indexes()
         await asyncio.gather(
-            v2_pairs_data(),
-            v2_pairs_daily_stats_snapshotter(),
+            v2_pairs_data(async_httpx_client),
+            v2_pairs_daily_stats_snapshotter(async_httpx_client),
             asyncio.sleep(30)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')

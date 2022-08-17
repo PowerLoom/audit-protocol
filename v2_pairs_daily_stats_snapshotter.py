@@ -3,10 +3,12 @@ from utils.redis_conn import RedisPool
 from utils import helper_functions
 from utils.retrieval_utils import retrieve_payload_data
 from redis import asyncio as aioredis
+from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
+from utils import retrieval_utils
 import asyncio
 import json
 from httpx import AsyncClient, Timeout, Limits
-from utils.retrieval_utils import retrieve_block_data, retrieve_block_status
+from utils.retrieval_utils import retrieve_block_data, retrieve_block_status, SNAPSHOT_STATUS_MAP
 import logging.config
 from data_models import uniswapDailyStatsSnapshotZset, ProjectBlockHeightStatus
 import sys
@@ -24,6 +26,7 @@ stderr_handler.setFormatter(formatter)
 stderr_handler.setLevel(logging.ERROR)
 logger.addHandler(stderr_handler)
 logger.debug("Initialized logger")
+
 
 def get_nearest_v2_pair_summary_snapshot(list_of_zset_entries, exact_score):
     """
@@ -43,10 +46,12 @@ def get_nearest_v2_pair_summary_snapshot(list_of_zset_entries, exact_score):
 
     return nearest_value
 
+
 def v2_pair_data_unpack(prop):
     prop = prop.replace("US$", "")
     prop = prop.replace(",", "")
     return int(prop)
+
 
 def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pairs_snapshot):
     linked_contract_snapshot = {}
@@ -61,7 +66,63 @@ def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pai
 
     return linked_contract_snapshot
 
-async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
+
+@retry(reraise=True, wait=wait_random(min=1, max=3), stop=stop_after_attempt(3))
+async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis = None):
+    # Fetch all entries in snapshotZSet
+    # Any entry that has a txStatus as TX_CONFIRM_PENDING, query its updated status and update ZSet
+    # If txHash changes, store old one in prevTxhash and update the new one in txHash
+    stored_snapshots = await redis_conn.zrangebyscore(
+        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+        min=float('-inf'),
+        max=float('+inf'),
+        withscores=True
+    )
+    for snapshot_meta, score in stored_snapshots:
+        snapshot_meta = json.loads(snapshot_meta.decode('utf-8'))
+        score = int(score)
+        if snapshot_meta.get('dagHeight', 0) == 0:
+            # skip processing of blockHeight snapshots if DAGheight is not available to fetch status.
+            continue
+
+        snapshot_meta = uniswapDailyStatsSnapshotZset(**snapshot_meta)
+        if snapshot_meta.txStatus <= SNAPSHOT_STATUS_MAP["TX_CONFIRMATION_PENDING"]:
+
+            block_status = await retrieval_utils.retrieve_block_status(
+                redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                0, snapshot_meta.dagHeight, redis_conn, redis_conn
+            )
+
+            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3),
+                                               stop=stop_after_attempt(3)):
+                with attempt:
+                    # remove snapshot entry from zset
+                    await redis_conn.zremrangebyscore(
+                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                        min=score,
+                        max=score
+                    )
+
+            # update new status fields
+            if block_status.tx_hash != snapshot_meta.txHash:
+                snapshot_meta.prevTxHash = snapshot_meta.txHash
+
+            snapshot_meta.txHash = block_status.tx_hash
+            snapshot_meta.txStatus = block_status.status
+
+            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3),
+                                               stop=stop_after_attempt(3)):
+                with attempt:
+                    # add new snapshot entry to zset
+                    await redis_conn.zadd(
+                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                        mapping={snapshot_meta.json(): score}
+                    )
+
+    return None
+
+
+async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redis_conn=None):
     try:
         if not redis_conn:
             aioredis_pool = RedisPool()
@@ -83,7 +144,6 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
         latest_pair_summary_payloadCID = latest_pair_summary_payload.get('cid')
         latest_pair_summary_block_height = int(latest_pair_summary_block_height)
 
-
         # latest snapshot of v2 pair daily stats
         pair_daily_stats_latest_snapshot = await redis_conn.zrevrange(
             name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
@@ -97,7 +157,6 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
             _, pair_daily_stats_latest_block_height = pair_daily_stats_latest_snapshot[0]
             pair_daily_stats_latest_block_height = int(pair_daily_stats_latest_block_height)
 
-
         # if current hieght of pair snapshot is greater than height of pair daily stats
         if latest_pair_summary_block_height > pair_daily_stats_latest_block_height:
             latest_pair_summary_timestamp = await redis_conn.zscore(
@@ -105,19 +164,19 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                 value=latest_pair_summary_payloadCID
             )
             if not latest_pair_summary_timestamp:
-                logger.error(f"Error v2 pairs summary timestamp zset doesn't have any entry for payloadCID: {latest_pair_summary_payloadCID}")
+                logger.error(
+                    f"Error v2 pairs summary timestamp zset doesn't have any entry for payloadCID: {latest_pair_summary_payloadCID}")
                 return
 
             latest_pair_summary_timestamp_payloadCID = latest_pair_summary_payloadCID
             latest_pair_summary_timestamp = int(latest_pair_summary_timestamp)
 
-
             # evaluate 24h old timestamp
             pair_summary_timestamp_24h = latest_pair_summary_timestamp - 60 * 60 * 24
             list_of_zset_entries = await redis_conn.zrangebyscore(
                 name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
-                min=pair_summary_timestamp_24h - 60 * 30, # 24h_timestap - 30min
-                max=pair_summary_timestamp_24h + 60 * 30, # 24h_timestap + 30min
+                min=pair_summary_timestamp_24h - 60 * 30,  # 24h_timestap - 30min
+                max=pair_summary_timestamp_24h + 60 * 30,  # 24h_timestap + 30min
                 withscores=True
             )
 
@@ -127,7 +186,8 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
             )
 
             if pair_snapshot_payloadCID_24h == "":
-                logger.error(f"Error v2 pairs summary snapshots don't have enough data to get 24h old entry, so taking oldest available entry")
+                logger.error(
+                    f"Error v2 pairs summary snapshots don't have enough data to get 24h old entry, so taking oldest available entry")
                 last_entry_of_summary_snapshot = await redis_conn.zrange(
                     name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
                     start=0,
@@ -164,9 +224,9 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                 # init daily stats snapshot
                 daily_stats = {
                     "contract": addr,
-                    "volume24": { "currentValue": 0, "previousValue": 0, "change": 0},
-                    "tvl": { "currentValue": 0, "previousValue": 0, "change": 0},
-                    "fees24": { "currentValue": 0, "previousValue": 0, "change": 0},
+                    "volume24": {"currentValue": 0, "previousValue": 0, "change": 0},
+                    "tvl": {"currentValue": 0, "previousValue": 0, "change": 0},
+                    "fees24": {"currentValue": 0, "previousValue": 0, "change": 0},
                     "block_height": 0,
                     "block_timestamp": 0
                 }
@@ -182,16 +242,22 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
 
                 # calculate percentage change
                 if daily_stats["volume24"]["previousValue"] != 0:
-                    daily_stats["volume24"]["change"] = daily_stats["volume24"]["currentValue"] - daily_stats["volume24"]["previousValue"]
-                    daily_stats["volume24"]["change"] = daily_stats["volume24"]["change"] / daily_stats["volume24"]["previousValue"] * 100
+                    daily_stats["volume24"]["change"] = daily_stats["volume24"]["currentValue"] - \
+                                                        daily_stats["volume24"]["previousValue"]
+                    daily_stats["volume24"]["change"] = daily_stats["volume24"]["change"] / daily_stats["volume24"][
+                        "previousValue"] * 100
 
                 if daily_stats["tvl"]["previousValue"] != 0:
-                    daily_stats["tvl"]["change"] = daily_stats["tvl"]["currentValue"] - daily_stats["tvl"]["previousValue"]
-                    daily_stats["tvl"]["change"] = daily_stats["tvl"]["change"] / daily_stats["tvl"]["previousValue"] * 100
+                    daily_stats["tvl"]["change"] = daily_stats["tvl"]["currentValue"] - daily_stats["tvl"][
+                        "previousValue"]
+                    daily_stats["tvl"]["change"] = daily_stats["tvl"]["change"] / daily_stats["tvl"][
+                        "previousValue"] * 100
 
                 if daily_stats["fees24"]["previousValue"] != 0:
-                    daily_stats["fees24"]["change"] = daily_stats["fees24"]["currentValue"] - daily_stats["fees24"]["previousValue"]
-                    daily_stats["fees24"]["change"] = daily_stats["fees24"]["change"] / daily_stats["fees24"]["previousValue"] * 100
+                    daily_stats["fees24"]["change"] = daily_stats["fees24"]["currentValue"] - daily_stats["fees24"][
+                        "previousValue"]
+                    daily_stats["fees24"]["change"] = daily_stats["fees24"]["change"] / daily_stats["fees24"][
+                        "previousValue"] * 100
 
                 daily_stats["block_height"] = contract_obj["recent"]["block_height"]
                 daily_stats["block_timestamp"] = contract_obj["recent"]["block_timestamp"]
@@ -201,15 +267,8 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
         else:
             logger.debug(f"v2 pair summary & daily stats snapshots are already in sync with block height")
             return
-
-
+        wait_for_snapshot_project_new_commit = False
         if daily_stats_contracts:
-            # TODO: make these configurable
-            async_httpx_client = AsyncClient(
-                timeout=Timeout(timeout=5.0),
-                follow_redirects=False,
-                limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
-            )
             summarized_payload = {'data': daily_stats_contracts}
             current_audit_project_block_height = await helper_functions.get_block_height(
                 project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
@@ -237,40 +296,46 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                     )
                 else:
                     wait_for_snapshot_project_new_commit = True
-                    updated_audit_project_block_height =current_audit_project_block_height+1
+                    updated_audit_project_block_height = current_audit_project_block_height + 1
 
         if wait_for_snapshot_project_new_commit:
-            waitCycles = 0
+            wait_cycles = 0
             while True:
                 # introduce a break condition if something goes wrong and snapshot daily stats does not move ahead
-                waitCycles+=1
-                if waitCycles > 18: # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot daily stats submission
-                    logger.debug(f"Waited for {waitCycles} cycles, daily stats project has not moved ahead. Stopped waiting to retry in next cycle.")
+                wait_cycles += 1
+                # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot daily stats submission
+                if wait_cycles > 18:
+                    logger.debug(
+                        "Waited for %s cycles, daily stats project has not moved ahead. Stopped waiting to "
+                        "retry in next cycle.", wait_cycles
+                    )
                     break
                 logger.debug('Waiting for 10 seconds to check if latest v2 pairs daily stats snapshot was committed...')
                 await asyncio.sleep(10)
 
                 block_status = await retrieve_block_status(
-                                redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
-                                0,updated_audit_project_block_height,redis_conn,redis_conn
-                                )
+                    redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                    0, updated_audit_project_block_height, redis_conn, redis_conn
+                )
                 if block_status.status < 3:
                     continue
                 logger.debug(
-                        'Audit project height against V2 pairs daily stats snapshot is %s | Moved from %s',
-                        updated_audit_project_block_height, current_audit_project_block_height
-                    )
+                    'Audit project height against V2 pairs daily stats snapshot is %s | Moved from %s',
+                    updated_audit_project_block_height, current_audit_project_block_height
+                )
 
-                snapshotZsetEntry = uniswapDailyStatsSnapshotZset(
+                snapshot_zset_entry = uniswapDailyStatsSnapshotZset(
                     cid=block_status.payload_cid,
-                    txHash=block_status.tx_hash
+                    txHash=block_status.tx_hash,
+                    txStatus=block_status.status,
+                    dagHeight=updated_audit_project_block_height
                 )
 
                 # store in snapshots zset
                 await asyncio.gather(
                     redis_conn.zadd(
                         name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                        mapping={snapshotZsetEntry.json(): common_blockheight_reached}),
+                        mapping={snapshot_zset_entry.json(): common_blockheight_reached}),
                     redis_conn.set(
                         name=redis_keys.get_uniswap_pair_daily_stats_payload_at_blockheight(common_blockheight_reached),
                         value=json.dumps(summarized_payload),
@@ -278,8 +343,9 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                     )
                 )
 
-                #prune zset
-                block_height_zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset())
+                # prune zset
+                block_height_zset_len = await redis_conn.zcard(
+                    name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset())
 
                 if block_height_zset_len > 20:
                     _ = await redis_conn.zremrangebyrank(
@@ -288,6 +354,8 @@ async def v2_pairs_daily_stats_snapshotter(redis_conn=None):
                         max=-1 * (block_height_zset_len - 20) + 1
                     )
                     logger.debug('Pruned pairs daily stats CID zset by %s elements', _)
+
+                await fetch_and_update_status_of_older_snapshots(redis_conn)
 
                 logger.debug('V2 pairs daily stats snapshot updated...')
 
