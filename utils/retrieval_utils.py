@@ -20,10 +20,11 @@ retrieval_utils_logger.addHandler(stdout_handler)
 
 SNAPSHOT_STATUS_MAP = {
     "SNAPSHOT_COMMIT_PENDING": 1,
-	"TX_ACK_PENDING": 2,
-	"TX_CONFIRMATION_PENDING": 3,
-	"TX_CONFIRMED": 4
+    "TX_ACK_PENDING": 2,
+    "TX_CONFIRMATION_PENDING": 3,
+    "TX_CONFIRMED": 4
 }
+
 
 async def check_ipfs_pinned(from_height: int, to_height: int):
     """
@@ -38,8 +39,8 @@ def check_intersection(span_a, span_b):
         - Given two spans, check the intersection between them
     """
 
-    set_a = set(range(span_a[0], span_a[1]+1))
-    set_b = set(range(span_b[0], span_b[1]+1))
+    set_a = set(range(span_a[0], span_a[1] + 1))
+    set_b = set(range(span_b[0], span_b[1] + 1))
     overlap = set_a & set_b
     result = float(len(overlap)) / len(set_a)
     result = result * 100
@@ -177,7 +178,8 @@ async def check_containers(
         withscores=True
     )
 
-    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=project_id, reader_redis_conn=reader_redis_conn)
+    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=project_id,
+                                                                       reader_redis_conn=reader_redis_conn)
 
     containers_required = []
     cached = {}
@@ -272,19 +274,21 @@ async def fetch_blocks(
     """
 
     max_overlap, max_span_id, each_height_spans = await check_overlap(
-            project_id=project_id,
-            from_height=from_height,
-            to_height=to_height,
-            reader_redis_conn=reader_redis_conn
+        project_id=project_id,
+        from_height=from_height,
+        to_height=to_height,
+        reader_redis_conn=reader_redis_conn
     )
 
     current_height = to_height
     dag_blocks = {}
     while current_height >= from_height:
-        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height, reader_redis_conn=reader_redis_conn)
+        dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height,
+                                                     reader_redis_conn=reader_redis_conn)
         if each_height_spans.get(current_height) is None:
             # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
-            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height, reader_redis_conn=reader_redis_conn)
+            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height,
+                                                         reader_redis_conn=reader_redis_conn)
             dag_block = await dag_utils.get_dag_block(dag_cid)
             if data_flag:
                 dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
@@ -304,28 +308,32 @@ async def fetch_blocks(
 
     return dag_blocks
 
-#BLOCK_STATUS_SNAPSHOT_COMMIT_PENDING = 1
-#TX_ACK_PENDING=2
-#TX_CONFIRMATION_PENDING = 3,
-#TX_CONFIRMED=4,
 
-async def retrieve_block_status(projectId: str,
-                                project_block_height: int,
-                                block_height: int,
-                                reader_redis_conn: aioredis.Redis,
-                                writer_redis_conn: aioredis.Redis)->ProjectBlockHeightStatus:
-    block_status = ProjectBlockHeightStatus(project_id=projectId,
-                                        block_height=block_height,
-                                        )
+# BLOCK_STATUS_SNAPSHOT_COMMIT_PENDING = 1
+# TX_ACK_PENDING=2
+# TX_CONFIRMATION_PENDING = 3,
+# TX_CONFIRMED=4,
+
+async def retrieve_block_status(
+        project_id: str,
+        project_block_height: int,  # supplying 0 indicates finalized height of project should be fetched separately
+        block_height: int,
+        reader_redis_conn: aioredis.Redis,
+        writer_redis_conn: aioredis.Redis
+) -> ProjectBlockHeightStatus:
+    block_status = ProjectBlockHeightStatus(
+        project_id=project_id,
+        block_height=block_height,
+    )
     if project_block_height == 0:
         project_block_height = await helper_functions.get_block_height(
-            project_id=projectId,
+            project_id=project_id,
             reader_redis_conn=reader_redis_conn
         )
-    if (block_height > project_block_height):
+    if block_height > project_block_height:
         """This means the queried blockHeight is not yet finalized. """
         """ Access the payloadCId at block_height """
-        project_payload_cids_key_zset = redis_keys.get_payload_cids_key(projectId)
+        project_payload_cids_key_zset = redis_keys.get_payload_cids_key(project_id)
         r = await reader_redis_conn.zrangebyscore(
             name=project_payload_cids_key_zset,
             min=block_height,
@@ -336,7 +344,7 @@ async def retrieve_block_status(projectId: str,
             return block_status
         payload_cid = r[0].decode('utf-8')
 
-        project_pending_txns_key_zset = redis_keys.get_pending_transactions_key(projectId)
+        project_pending_txns_key_zset = redis_keys.get_pending_transactions_key(project_id)
         r = await reader_redis_conn.zrangebyscore(
             name=project_pending_txns_key_zset,
             min=block_height,
@@ -344,16 +352,16 @@ async def retrieve_block_status(projectId: str,
             withscores=False
         )
         if len(r) == 0:
-            block_status.status = 2
+            block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
             return block_status
         block_status.payload_cid = payload_cid
         pending_txn = PendingTransaction.parse_raw(r[0])
         block_status.tx_hash = pending_txn.txHash
-        block_status.status = 3
+        block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMATION_PENDING']
 
     else:
         """ Access the DAG CID at block_height """
-        project_payload_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
+        project_payload_cids_key_zset = redis_keys.get_dag_cids_key(project_id)
         r = await reader_redis_conn.zrangebyscore(
             name=project_payload_cids_key_zset,
             min=block_height,
@@ -366,7 +374,7 @@ async def retrieve_block_status(projectId: str,
         block = await retrieve_block_data(dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
         block_status.payload_cid = block['data']['cid']['/']
         block_status.tx_hash = block['txHash']
-        block_status.status = 4
+        block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
     return block_status
 
 
@@ -423,7 +431,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
         return payload
 
 
-async def retrieve_payload_data(payload_cid,  writer_redis_conn=None):
+async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
     """
         - Given a payload_cid, get its data from ipfs, at the same time increase its hit
     """
