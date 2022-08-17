@@ -18,6 +18,12 @@ stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setLevel(logging.DEBUG)
 retrieval_utils_logger.addHandler(stdout_handler)
 
+SNAPSHOT_STATUS_MAP = {
+    "SNAPSHOT_COMMIT_PENDING": 1,
+	"TX_ACK_PENDING": 2,
+	"TX_CONFIRMATION_PENDING": 3,
+	"TX_CONFIRMED": 4
+}
 
 async def check_ipfs_pinned(from_height: int, to_height: int):
     """

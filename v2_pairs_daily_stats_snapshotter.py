@@ -3,11 +3,12 @@ from utils.redis_conn import RedisPool
 from utils import helper_functions
 from utils.retrieval_utils import retrieve_payload_data
 from redis import asyncio as aioredis
+from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
 from utils import retrieval_utils
 import asyncio
 import json
 from httpx import AsyncClient, Timeout, Limits
-from utils.retrieval_utils import retrieve_block_data, retrieve_block_status
+from utils.retrieval_utils import retrieve_block_data, retrieve_block_status, SNAPSHOT_STATUS_MAP
 import logging.config
 from data_models import uniswapDailyStatsSnapshotZset, ProjectBlockHeightStatus
 import sys
@@ -25,13 +26,6 @@ stderr_handler.setFormatter(formatter)
 stderr_handler.setLevel(logging.ERROR)
 logger.addHandler(stderr_handler)
 logger.debug("Initialized logger")
-
-SNAPSHOT_STATUS_MAP = {
-    "SNAPSHOT_COMMIT_PENDING": 1,
-	"TX_ACK_PENDING": 2,
-	"TX_CONFIRMATION_PENDING": 3,
-	"TX_CONFIRMED": 4
-}
 
 
 def get_nearest_v2_pair_summary_snapshot(list_of_zset_entries, exact_score):
@@ -70,6 +64,7 @@ def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pai
 
     return linked_contract_snapshot
 
+@retry(reraise=True,wait=wait_random(min=1, max=3),stop=stop_after_attempt(3))
 async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis=None):
     # Fetch all entries in snapshotZSet
 	# Any entry that has a txStatus as TX_CONFIRM_PENDING, query its updated status and update ZSet
@@ -95,12 +90,14 @@ async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis=
                 0, snapshotMeta.dagHeight, redis_conn, redis_conn
             )
 
-            # remove snapshot entry from zset
-            await redis_conn.zremrangebyscore(
-                name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                min=score,
-                max=score
-            )
+            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3), stop=stop_after_attempt(3)):
+                with attempt: 
+                    # remove snapshot entry from zset
+                    await redis_conn.zremrangebyscore(
+                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                        min=score,
+                        max=score
+                    )
             
             # update new status fields
             if block_status.tx_hash != snapshotMeta.txHash:
@@ -109,11 +106,13 @@ async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis=
             snapshotMeta.txHash = block_status.tx_hash
             snapshotMeta.txStatus = block_status.status
 
-            # add new snapshot entry to zset
-            await redis_conn.zadd(
-                name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                mapping={snapshotMeta.json(): score}
-            )
+            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3), stop=stop_after_attempt(3)):
+                with attempt: 
+                    # add new snapshot entry to zset
+                    await redis_conn.zadd(
+                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                        mapping={snapshotMeta.json(): score}
+                    )
 
     return None
 
