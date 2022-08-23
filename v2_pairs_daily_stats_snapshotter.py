@@ -137,7 +137,7 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
             withscores=True
         )
         if len(latest_pair_summary_snapshot) < 1:
-            logger.error(f"Error v2 pairs summary snapshot zset doesn't have any entry")
+            logger.debug(f"V3 pairs summary snapshot zset is empty, sleeping till first snapshot is added")
             return
         latest_pair_summary_payload, latest_pair_summary_block_height = latest_pair_summary_snapshot[0]
         latest_pair_summary_payload = json.loads(latest_pair_summary_payload.decode("utf-8"))
