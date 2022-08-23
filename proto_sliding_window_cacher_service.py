@@ -206,7 +206,6 @@ async def build_primary_indexes():
             'writer_redis_conn': writer_redis_conn
         })
         tasks.append(fn)
-    await asyncio.gather(*tasks, return_exceptions=True)
     max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
     res_exceptions = list(map(lambda r: r, filter(lambda y: isinstance(y, Exception), max_height_array)))
     
