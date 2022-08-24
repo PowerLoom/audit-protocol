@@ -210,7 +210,7 @@ async def build_primary_indexes():
     res_exceptions = list(map(lambda r: r, filter(lambda y: isinstance(y, Exception), max_height_array)))
     
     if len(res_exceptions) == len(project_id_to_register_series):
-        sliding_cacher_logger.debug('block-height for all projectId has not been intialized yet, sleeping till next cycle')
+        sliding_cacher_logger.debug('block-height for all projects has not been intialized yet, sleeping till next cycle')
         return
     elif len(res_exceptions) > 0:
         sliding_cacher_logger.warning('Can\'t find projects max height for some projects, sleeping till next cycle | error_objs: %s', res_exceptions)
