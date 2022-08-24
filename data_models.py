@@ -173,10 +173,17 @@ class uniswapPairsSnapshotZset(BaseModel):
     begin_block_timestamp_24h: int
     begin_block_height_7d: int
     begin_block_timestamp_7d: int
+    txStatus: int
+    dagHeight: int
+    prevTxHash: str = None
+
 
 class uniswapDailyStatsSnapshotZset(BaseModel):
     cid: str
     txHash: str
+    txStatus: int
+    dagHeight: int
+    prevTxHash: str = None
 
 class uniswapPairSummaryCid7dResultant(BaseModel):
     trade_volume_7d_cids: Dict[str, str]
