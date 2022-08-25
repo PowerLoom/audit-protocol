@@ -528,7 +528,9 @@ func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) 
 	dagSummaryStr, _ := json.MarshalIndent(dagSummary, "", "\t")
 
 	slackReq.DAGsummary = string(dagSummaryStr)
+	slackReq.IssueSeverity = dagSummary.Severity
 	body, err := json.Marshal(slackReq)
+
 	if err != nil {
 		log.Fatalf("Failed to marshal request %+v towards Slack Webhook with error %+v", dagSummary, err)
 		return err
