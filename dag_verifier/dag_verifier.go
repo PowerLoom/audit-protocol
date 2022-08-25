@@ -257,6 +257,8 @@ func (verifier *DagVerifier) Run() {
 	periodicRetrievalInterval := time.Duration(verifier.settings.DagVerifierSettings.RunIntervalSecs) * time.Second
 	for {
 		if len(verifier.projects) > 0 {
+			verifier.FetchLastProjectIndexedStatusFromRedis()
+			verifier.FetchLastVerificationStatusFromRedis()
 			verifier.VerifyAllProjects() //Projects are pairContracts
 			verifier.SummarizeDAGIssuesAndNotifySlack()
 			verifier.UpdateLastStatusToRedis()
@@ -290,7 +292,7 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 		res := verifier.redisClient.Get(ctx, key)
 		if res.Err() == redis.Nil {
 			log.Errorf("No blockHeight key for the project %s is present in redis", projectId)
-			return ""
+			return "0"
 		}
 		if res.Err() != nil {
 			log.Errorf("Failed to fetch blockHeight for project %s from redis due to error %+v", projectId, res.Err())
@@ -300,7 +302,7 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 		log.Debugf("Retrieved BlockHeight for project %s from redis is %s", projectId, res.Val())
 		return res.Val()
 	}
-	return ""
+	return "0"
 }
 
 func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
@@ -431,7 +433,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	for j := range verifier.SummaryProjects {
 		projectId := verifier.SummaryProjects[j]
 		currentDagHeight := verifier.GetProjectDAGBlockHeightFromRedis(projectId)
-		if verifier.lastVerifiedDagBlockHeights[projectId] != "" {
+		if verifier.lastVerifiedDagBlockHeights[projectId] != "0" {
 			if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
 				verifier.noOfCyclesSinceChainStuck[projectId]++
 				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
@@ -526,7 +528,9 @@ func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) 
 	dagSummaryStr, _ := json.MarshalIndent(dagSummary, "", "\t")
 
 	slackReq.DAGsummary = string(dagSummaryStr)
+	slackReq.IssueSeverity = dagSummary.Severity
 	body, err := json.Marshal(slackReq)
+
 	if err != nil {
 		log.Fatalf("Failed to marshal request %+v towards Slack Webhook with error %+v", dagSummary, err)
 		return err

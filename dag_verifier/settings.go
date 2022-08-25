@@ -8,26 +8,47 @@ import (
 )
 
 type _DagVerifierSettings_ struct {
-	SlackNotifyURL               string   `json:"slack_notify_URL"`
-	RunIntervalSecs              int      `json:"run_interval_secs"`
-	SuppressNotificationTimeSecs int64    `json:"suppress_notification_for_secs"`
-	SummaryProjectsToTrack       []string `json:"additional_projects_to_track_prefixes"`
+	SlackNotifyURL               string        `json:"slack_notify_URL"`
+	RunIntervalSecs              int           `json:"run_interval_secs"`
+	SuppressNotificationTimeSecs int64         `json:"suppress_notification_for_secs"`
+	SummaryProjectsToTrack       []string      `json:"additional_projects_to_track_prefixes"`
+	IPFSRateLimiter              *_RateLimiter `json:"ipfs_rate_limit,omitempty"`
+	Concurrency                  int           `json:"concurrency"`
+}
+
+type _RateLimiter struct {
+	Burst          int `json:"burst"`
+	RequestsPerSec int `json:"req_per_sec"`
 }
 
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
 	WebhookListener struct {
-		Host string `json:"host"`
-		Port int    `json:"port"`
+		Host        string        `json:"host"`
+		Port        int           `json:"port"`
+		RateLimiter *_RateLimiter `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
 	IpfsURL          string `json:"ipfs_url"`
 	SnapshotInterval int    `json:"snapshot_interval"`
 	Rlimit           struct {
 		FileDescriptors int `json:"file_descriptors"`
 	} `json:"rlimit"`
-	RPCMatic          string `json:"rpc_matic"`
-	ContractAddresses struct {
+	Rabbitmq struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Setup    struct {
+			Core struct {
+				Exchange string `json:"exchange"`
+			} `json:"core"`
+		} `json:"setup"`
+	} `json:"rabbitmq"`
+	ContractCallBackend string        `json:"contract_call_backend"`
+	ContractRateLimiter *_RateLimiter `json:"contract_rate_limit,omitempty"`
+	RPCMatic            string        `json:"rpc_matic"`
+	ContractAddresses   struct {
 		IuniswapV2Factory string `json:"iuniswap_v2_factory"`
 		IuniswapV2Router  string `json:"iuniswap_v2_router"`
 		IuniswapV2Pair    string `json:"iuniswap_v2_pair"`
@@ -42,16 +63,16 @@ type SettingsObj struct {
 	DagTableName  string `json:"dag_table_name"`
 	Seed          string `json:"seed"`
 	Redis         struct {
-		Host     string      `json:"host"`
-		Port     int         `json:"port"`
-		Db       int         `json:"db"`
-		Password interface{} `json:"password"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Db       int    `json:"db"`
+		Password string `json:"password"`
 	} `json:"redis"`
 	RedisReader struct {
-		Host     string      `json:"host"`
-		Port     int         `json:"port"`
-		Db       int         `json:"db"`
-		Password interface{} `json:"password"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Db       int    `json:"db"`
+		Password string `json:"password"`
 	} `json:"redis_reader"`
 	TableNames struct {
 		APIKeys           string `json:"api_keys"`
@@ -73,22 +94,32 @@ type SettingsObj struct {
 		ErrorRate   float64     `json:"error_rate"`
 		Filename    interface{} `json:"filename"`
 	} `json:"bloom_filter_settings"`
-	PayloadCommitInterval      int      `json:"payload_commit_interval"`
-	PruningServiceInterval     int      `json:"pruning_service_interval"`
-	RetrievalServiceInterval   int      `json:"retrieval_service_interval"`
-	DealWatcherServiceInterval int      `json:"deal_watcher_service_interval"`
-	BackupTargets              []string `json:"backup_targets"`
-	MaxPayloadCommits          int      `json:"max_payload_commits"`
-	UnpinMode                  string   `json:"unpin_mode"`
-	MaxPendingEvents           int      `json:"max_pending_events"`
-	IpfsTimeout                int      `json:"ipfs_timeout"`
-	SpanExpireTimeout          int      `json:"span_expire_timeout"`
-	APIKey                     string   `json:"api_key"`
+	PayloadCommitInterval      int           `json:"payload_commit_interval"`
+	PayloadCommitConcurrency   int           `json:"payload_commit_concurrency"`
+	PruningServiceInterval     int           `json:"pruning_service_interval"`
+	RetrievalServiceInterval   int           `json:"retrieval_service_interval"`
+	DealWatcherServiceInterval int           `json:"deal_watcher_service_interval"`
+	BackupTargets              []string      `json:"backup_targets"`
+	MaxPayloadCommits          int           `json:"max_payload_commits"`
+	UnpinMode                  string        `json:"unpin_mode"`
+	MaxPendingEvents           int           `json:"max_pending_events"`
+	IpfsTimeout                int           `json:"ipfs_timeout"`
+	IPFSRateLimiter            *_RateLimiter `json:"ipfs_rate_limit,omitempty"`
+	SpanExpireTimeout          int           `json:"span_expire_timeout"`
+	APIKey                     string        `json:"api_key"`
 	AiohtttpTimeouts           struct {
 		SockRead    int `json:"sock_read"`
 		SockConnect int `json:"sock_connect"`
 		Connect     int `json:"connect"`
 	} `json:"aiohtttp_timeouts"`
+	Web3Storage struct {
+		URL             string        `json:"url"`
+		APIToken        string        `json:"api_token"`
+		TimeoutSecs     int           `json:"timeout_secs"`
+		MaxIdleConns    int           `json:"max_idle_conns"`
+		IdleConnTimeout int           `json:"idle_conn_timeout"`
+		RateLimiter     *_RateLimiter `json:"rate_limit,omitempty"`
+	} `json:"web3_storage"`
 	DagVerifierSettings _DagVerifierSettings_ `json:"dag_verifier"`
 }
 
@@ -122,5 +153,8 @@ func SetDefaults(settings *SettingsObj) {
 	}
 	if settings.DagVerifierSettings.SuppressNotificationTimeSecs == 0 {
 		settings.DagVerifierSettings.SuppressNotificationTimeSecs = 1800
+	}
+	if settings.DagVerifierSettings.Concurrency == 0 {
+		settings.DagVerifierSettings.Concurrency = 10
 	}
 }
