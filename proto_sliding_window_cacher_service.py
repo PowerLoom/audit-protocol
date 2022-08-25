@@ -152,6 +152,8 @@ async def get_max_height_pair_project(
 ):
     project_height_key = redis_keys.get_block_height_key(project_id)
     max_height = await writer_redis_conn.get(project_height_key)
+    if not max_height:
+        return Exception("Can\'t fetch max block height against project ID: %s", project_id)
     try:
         max_height = int(max_height.decode('utf-8'))
         dag_cid = await helper_functions.get_dag_cid(
@@ -161,8 +163,7 @@ async def get_max_height_pair_project(
 
         height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
     except Exception as err:
-        sliding_cacher_logger.error('Can\'t fetch max block height against project ID: %s | error_msg: %s', project_id, err)
-        max_height = -1
+        return err
     finally:
         return max_height
 
@@ -205,7 +206,15 @@ async def build_primary_indexes():
             'writer_redis_conn': writer_redis_conn
         })
         tasks.append(fn)
-    await asyncio.gather(*tasks, return_exceptions=True)
+    max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
+    res_exceptions = list(map(lambda r: r, filter(lambda y: isinstance(y, Exception), max_height_array)))
+    
+    if len(res_exceptions) == len(project_id_to_register_series):
+        sliding_cacher_logger.debug('block-height for all projects has not been intialized yet, sleeping till next cycle')
+        return
+    elif len(res_exceptions) > 0:
+        sliding_cacher_logger.warning('Can\'t find projects max height for some projects, sleeping till next cycle | error_objs: %s', res_exceptions)
+        return
 
     smallest_source_height = project_source_height_map[next(iter(project_source_height_map))]["source_height"]
     for project_map_id, project_map in project_source_height_map.items():

@@ -475,14 +475,10 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             not tail_marker_7d,
             not head_marker_7d
         ]):
-            logger.error(
-                f"Avoding pair data calculations as head or tail is empty for pair:{pair_contract_address}, tail:{tail_marker_24h}, head:{head_marker_24h}")
             return
 
         # if head of 24h and 7d index at 1 or less then return
         if head_marker_24h <= 1 or head_marker_7d <= 1:
-            logger.error(
-                f"Avoding pair data calculations as head and tail are set to 1 or 0 block for pair:{pair_contract_address}, tail:{tail_marker_24h}, head:{head_marker_24h}")
             return
 
         # initialize returning variables
@@ -528,23 +524,17 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             block_timestamp_total_reserve
         ] = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address)
         if not total_liquidity:
-            logger.error(
-                f"Error, exit process as liquidity data is not available - projectId:{project_id_token_reserve}")
             return
 
         if not cached_trade_volume_data:
             dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h,
                                                           writer_redis_conn)
             if not dag_chain_24h:
-                logger.error(
-                    f"dag_chain_24h array is empty for pair:{pair_contract_address}, avoiding trade volume calculations")
                 return
 
             dag_chain_7d = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_7d, head_marker_7d,
                                                          writer_redis_conn)
             if not dag_chain_7d:
-                logger.error(
-                    f"dag_chain_7d array is empty for pair:{pair_contract_address}, avoiding trade volume calculations")
                 return
 
             # calculate trade volume 24h
@@ -893,9 +883,13 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
             map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
         pair_addresses = list(
             map(lambda x: x.contractAddress, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
+        none_results = list(
+            map(lambda x: x, filter(lambda y: isinstance(y, type(None)), final_results)))
         # logger.debug('Final results from running v2 pairs coroutines: %s', final_results)
         # logger.debug('Filtered heights from running v2 pairs coroutines: %s', collected_heights)
-        if cardinality.count(final_results) != cardinality.count(collected_heights):
+        if cardinality.count(none_results) == cardinality.count(final_results):
+            logger.debug("pair-contract chains didn't move ahead, sleeping till next cycle...")
+        elif cardinality.count(final_results) != cardinality.count(collected_heights):
             if len(collected_heights) == 0:
                 logger.error(
                     f'Got empty result for all pairs, either pair chains didn\'t move ahead or there is an error while fetching dag-blocks data')
