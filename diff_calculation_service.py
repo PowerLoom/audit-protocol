@@ -50,6 +50,8 @@ class DiffCalculationCallbackWorker(Process):
 
     def callback(self, dont_use_ch, method, properties, body):
         self.rabbitmq_interactor._channel.basic_ack(delivery_tag=method.delivery_tag)
+        if settings.calculate_diff is False:
+            return
         try:
             command: DiffCalculationRequest = DiffCalculationRequest.parse_raw(body)
         except:
