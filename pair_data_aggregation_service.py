@@ -872,8 +872,13 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
             t = process_pairs_trade_volume_and_reserves(aioredis_pool.writer_redis_pool, pair_contract_address)
             process_data_list.append(t)
 
+        process_data_list.append(fetch_and_update_status_of_older_snapshots(redis_conn))
         final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(*process_data_list,
                                                                                                      return_exceptions=True)
+
+        # pop snapshot-meta-update results from asycio.gather result
+        final_results.pop()
+        
         common_blockheight_reached = False
         common_block_timestamp = False
         pair_contract_address = None
@@ -1031,8 +1036,6 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                     min=0,
                     max=pruning_timestamp
                 )
-
-                await fetch_and_update_status_of_older_snapshots(redis_conn)
 
                 logger.debug('Pruned snapshot summary Timestamp zset by %s elements', _)
                 logger.info('V2 pairs summary snapshot updated...')

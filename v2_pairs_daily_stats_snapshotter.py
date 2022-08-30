@@ -202,9 +202,10 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                 pair_snapshot_payloadCID_24h = pair_snapshot_payloadCID_24h.decode("utf-8")
 
             # fetch current and 24h old snapshot payload
-            dag_block_latest, dag_block_24h = await asyncio.gather(
+            dag_block_latest, dag_block_24h, snapshot_metadata_update = await asyncio.gather(
                 retrieve_payload_data(latest_pair_summary_timestamp_payloadCID),
-                retrieve_payload_data(pair_snapshot_payloadCID_24h)
+                retrieve_payload_data(pair_snapshot_payloadCID_24h),
+                fetch_and_update_status_of_older_snapshots(redis_conn)
             )
             dag_block_latest = json.loads(dag_block_latest).get("data", None) if dag_block_latest else None
             dag_block_24h = json.loads(dag_block_24h).get("data", None) if dag_block_24h else None
@@ -266,7 +267,10 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
 
         else:
             logger.debug(f"Pair summary & daily stats snapshots are already in sync with block height")
+            # update old snapshot metadata (irrespective of new snapshot being commited) 
+            await fetch_and_update_status_of_older_snapshots(redis_conn)
             return
+        
         wait_for_snapshot_project_new_commit = False
         if daily_stats_contracts:
             summarized_payload = {'data': daily_stats_contracts}
@@ -354,8 +358,6 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                         max=-1 * (block_height_zset_len - 20) + 1
                     )
                     logger.debug('Pruned pairs daily stats CID zset by %s elements', _)
-
-                await fetch_and_update_status_of_older_snapshots(redis_conn)
 
                 logger.debug('V2 pairs daily stats snapshot updated...')
 
