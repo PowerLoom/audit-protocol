@@ -93,6 +93,10 @@ async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis 
                 0, snapshot_meta.dagHeight, redis_conn, redis_conn
             )
 
+            # if updated block status is less than 3 then don't update metadata yet
+            if block_status.status < SNAPSHOT_STATUS_MAP["TX_CONFIRMATION_PENDING"]:
+                continue
+
             async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3),
                                                stop=stop_after_attempt(3)):
                 with attempt:
