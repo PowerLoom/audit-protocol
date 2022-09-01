@@ -213,8 +213,6 @@ async def create_dag_block(
         timestamp=timestamp
     )
 
-    logger.debug("DAG created: %s", dag)
-
     """ Convert dag structure to json and put it on ipfs dag """
     # IPFS operations should raise exceptions well ahead of time
     try:
@@ -227,8 +225,12 @@ async def create_dag_block(
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise DAGCreationException from e
-
+    else:
+        logger.debug("DAG created: %s", dag)
     """ Update redis keys """
+    block_height_key = redis_keys.get_block_height_key(project_id=project_id)
+    _ = await writer_redis_conn.set(block_height_key, tentative_block_height)
+
     last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id)
     _ = await writer_redis_conn.set(last_dag_cid_key, dag_cid)
 
@@ -236,9 +238,6 @@ async def create_dag_block(
         name=redis_keys.get_dag_cids_key(project_id),
         mapping={dag_cid: tentative_block_height}
     )
-
-    block_height_key = redis_keys.get_block_height_key(project_id=project_id)
-    _ = await writer_redis_conn.set(block_height_key, tentative_block_height)
 
     return dag_cid, dag
 
