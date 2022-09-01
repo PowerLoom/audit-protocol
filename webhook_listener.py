@@ -231,12 +231,8 @@ async def payload_to_dag_processor_task(event_data):
             num_block_to_wait_for_resubmission = 10
             pending_confirmation_callbacks_txs_filtered = list(filter(
                 lambda x:
-                (PendingTransaction.parse_raw(x[0]).lastTouchedBlock != -1 and
-                 PendingTransaction.parse_raw(x[0]).lastTouchedBlock != 0 and
-                 PendingTransaction.parse_raw(x[0]).lastTouchedBlock + num_block_to_wait_for_resubmission <= tentative_block_height_event_data
-                 )
-                or (PendingTransaction.parse_raw(x[0]).lastTouchedBlock == 0 and
-                    int(x[1]) + num_block_to_wait_for_resubmission <= tentative_block_height_event_data),
+                    PendingTransaction.parse_raw(x[0]).lastTouchedBlock == 0 and
+                    int(x[1]) + num_block_to_wait_for_resubmission <= tentative_block_height_event_data,
                 pending_confirmation_callbacks_txs
             ))
             custom_logger.info(
