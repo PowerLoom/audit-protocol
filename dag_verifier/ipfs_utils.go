@@ -10,6 +10,7 @@ import (
 
 	shell "github.com/ipfs/go-ipfs-api"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/powerloom/goutils/settings"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
@@ -19,7 +20,7 @@ type IpfsClient struct {
 	ipfsClientRateLimiter *rate.Limiter
 }
 
-func (client *IpfsClient) Init(settingsObj *SettingsObj) {
+func (client *IpfsClient) Init(settingsObj *settings.SettingsObj) {
 	url := settingsObj.IpfsURL
 	_, err := ma.NewMultiaddr(url)
 	if err == nil {

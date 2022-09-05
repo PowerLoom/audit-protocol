@@ -11,6 +11,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/writer"
+
+	"github.com/powerloom/goutils/settings"
 )
 
 var ipfsClient IpfsClient
@@ -18,7 +20,7 @@ var pairContractAddresses []string
 
 func main() {
 	initLogger()
-	settingsObj := ParseSettings("../settings.json")
+	settingsObj := settings.ParseSettings("../settings.json")
 	var pairContractAddress string
 	if len(os.Args) == 3 {
 		pairContractAddress = os.Args[2]

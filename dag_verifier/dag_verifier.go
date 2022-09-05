@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/powerloom/goutils/settings"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -27,7 +28,7 @@ type DagVerifier struct {
 	redisClient                      *redis.Client
 	projects                         []string
 	SummaryProjects                  []string
-	settings                         *SettingsObj
+	settings                         *settings.SettingsObj
 	lastVerifiedDagBlockHeights      map[string]string
 	ProjectsIndexedState             map[string]*ProjectIndexedState
 	lastVerifiedDagBlockHeightsMutex *sync.RWMutex
@@ -55,7 +56,7 @@ const DAG_CHAIN_REPORT_SEVERITY_MEDIUM = "Medium"
 const DAG_CHAIN_REPORT_SEVERITY_LOW = "Low"
 const DAG_CHAIN_REPORT_SEVERITY_CLEAR = "Cleared"
 
-func (verifier *DagVerifier) Initialize(settings *SettingsObj, pairContractAddresses *[]string) {
+func (verifier *DagVerifier) Initialize(settings *settings.SettingsObj, pairContractAddresses *[]string) {
 	verifier.settings = settings
 	verifier.InitIPFSClient()
 	verifier.InitRedisClient()
@@ -750,6 +751,7 @@ func (verifier *DagVerifier) InitRedisClient() {
 		Addr:     redisURL,
 		Password: "",
 		DB:       redisDb,
+		PoolSize: verifier.settings.DagVerifierSettings.RedisPoolSize,
 	})
 	pong, err := verifier.redisClient.Ping(ctx).Result()
 	//pong, err := verifier.redisClient.Ping().Result()

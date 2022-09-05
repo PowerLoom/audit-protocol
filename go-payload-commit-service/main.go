@@ -23,6 +23,8 @@ import (
 	"github.com/sirupsen/logrus/hooks/writer"
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
+
+	"github.com/powerloom/goutils/settings"
 )
 
 var ctx = context.Background()
@@ -32,7 +34,7 @@ var ipfsClient *shell.Shell
 var vigilHttpClient http.Client
 var webhookClient http.Client
 var w3sHttpClient http.Client
-var settingsObj SettingsObj
+var settingsObj *settings.SettingsObj
 var consts ConstsObj
 var rmqConnection *Conn
 var exitChan chan bool
@@ -171,7 +173,7 @@ func main() {
 
 	RegisterSignalHandles()
 	InitLogger()
-	settingsObj = ParseSettings("../settings.json")
+	settingsObj = settings.ParseSettings("../settings.json")
 	ParseConsts("../dev_consts.json")
 	InitIPFSClient()
 	InitRedisClient()
@@ -843,8 +845,8 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 		}
 		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(payload.Payload))
 		if err != nil {
-			log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
-				reqURL, commonVigilParams, err)
+			log.Fatalf("Failed to create new HTTP Req with URL %s for snapshot %s project %s with commitId %s with error %+v",
+				reqURL, payload.SnapshotCID, payload.ProjectId, payload.CommitId, err)
 			return "", false
 		}
 		req.Header.Add("Authorization", "Bearer "+settingsObj.Web3Storage.APIToken)
