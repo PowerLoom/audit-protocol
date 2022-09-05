@@ -745,6 +745,9 @@ async def get_block_status(
                                                                reader_redis_conn=reader_redis_conn,
                                                                writer_redis_conn=writer_redis_conn)
 
+    if block_status is None:
+        response.status_code = 404
+        return {'error': 'Could not retrieve block status'}
     return block_status.dict()
 
 

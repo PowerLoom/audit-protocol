@@ -1,3 +1,4 @@
+from asyncio.windows_events import NULL
 from eth_utils import keccak
 from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
@@ -14,9 +15,17 @@ from data_models import ProjectBlockHeightStatus, PendingTransaction
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
+formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s %(msecs)d %(module)s-%(funcName)s: %(message)s")
 stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setFormatter(formatter)
 stdout_handler.setLevel(logging.DEBUG)
 retrieval_utils_logger.addHandler(stdout_handler)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setFormatter(formatter)
+stderr_handler.setLevel(logging.ERROR)
+retrieval_utils_logger.addHandler(stderr_handler)
+retrieval_utils_logger.debug("Initialized logger")
 
 SNAPSHOT_STATUS_MAP = {
     "SNAPSHOT_COMMIT_PENDING": 1,
@@ -369,6 +378,10 @@ async def retrieve_block_status(
             withscores=False
         )
 
+        if len(r) == 0:
+            #This scenario can happen when a project's blockHeight is pushed ahead
+            # and current height is not present in the project DAG.
+            return None
         dag_cid = r[0].decode('utf-8')
 
         block = await retrieve_block_data(dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
