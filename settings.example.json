@@ -130,12 +130,15 @@
 		]
 	},
 	"pruning_service":{
-		"run_interval_mins": 1,
+		"run_interval_mins": 240,
 		"concurrency":20,
 		"car_storage_path":"/tmp/",
 		"ipfs_rate_limit":{
 			"req_per_sec": 20,
 			"burst": 20
-		}
+		},
+		"perform_archival": false,
+		"perform_ipfs_unpin": false,
+		"prune_redis_zsets":false
 	}
 }

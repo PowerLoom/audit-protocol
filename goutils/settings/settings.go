@@ -14,10 +14,13 @@ type _RateLimiter struct {
 }
 
 type _PruningServiceSettings_ struct {
-	RunIntervalMins int           `json:"run_interval_mins"`
-	IPFSRateLimiter *_RateLimiter `json:"ipfs_rate_limit"`
-	Concurrency     int           `json:"concurrency"`
-	CARStoragePath  string        `json:"car_storage_path"`
+	RunIntervalMins  int           `json:"run_interval_mins"`
+	IPFSRateLimiter  *_RateLimiter `json:"ipfs_rate_limit"`
+	Concurrency      int           `json:"concurrency"`
+	CARStoragePath   string        `json:"car_storage_path"`
+	PerformArchival  bool          `json:"perform_archival"`
+	PerformIPFSUnPin bool          `json:"perform_ipfs_unpin"`
+	PruneRedisZsets  bool          `json:"prune_redis_zsets"`
 }
 
 type _DagVerifierSettings_ struct {
