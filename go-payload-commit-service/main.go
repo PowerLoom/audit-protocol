@@ -398,11 +398,11 @@ func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
 
 		if err != nil {
-			if retryCount == *settingsObj.RetryCount{
+			if retryCount == *settingsObj.RetryCount {
 				log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, *settingsObj.RetryCount, err)
 				return false
 			}
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs)* time.Second)
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			retryCount++
 			log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", payloadCommit, err, retryCount)
 			continue
@@ -422,7 +422,7 @@ func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) (*Paylo
 			projectId, lastTentativeBlockHeight, err)
 		return nil, err
 	}
-	payload, err := GetPayloadFromIPFS(payloadCid, 3)
+	payload, err := GetPayloadFromIPFS(payloadCid, 1)
 	if err != nil {
 		log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
 			payloadCid, projectId, lastTentativeBlockHeight, err)
