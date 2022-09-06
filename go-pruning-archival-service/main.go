@@ -46,7 +46,7 @@ type ProjectMetaData struct {
 	} `json:"dagChains"`
 }
 
-type ProjectState struct {
+type ProjectPruneState struct {
 	ProjectId        string
 	LastPrunedHeight int
 }
@@ -60,13 +60,15 @@ type Web3StorageErrResponse struct {
 	Message string `json:"message"`
 }
 
-var projectList map[string]*ProjectState
+var projectList map[string]*ProjectPruneState
 
 const REDIS_KEY_STORED_PROJECTS string = "storedProjectIds"
 const REDIS_KEY_PROJECT_PAYLOAD_CIDS string = "projectID:%s:payloadCids"
 const REDIS_KEY_PROJECT_CIDS string = "projectID:%s:Cids"
 const REDIS_KEY_PRUNING_STATUS string = "projects:pruningStatus"
 const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:projectMetaData"
+
+const REDIS_KEY_PROJECT_TAIL_INDEX string = "projectID:%s:slidingCache:%s:tail"
 
 func InitLogger() {
 	log.SetOutput(ioutil.Discard) // Send all logs to nowhere by default
@@ -159,7 +161,7 @@ func GetLastPrunedStatusFromRedis() {
 				continue
 			}
 		} else {
-			projectList[projectId] = &ProjectState{ProjectId: projectId, LastPrunedHeight: 0}
+			projectList[projectId] = &ProjectPruneState{ProjectId: projectId, LastPrunedHeight: 0}
 		}
 	}
 	log.Debugf("Fetched Last Pruned Status from redis %+v", projectList)
@@ -169,8 +171,8 @@ func UpdatePrunedStatusToRedis() {
 	//No retry has been added, because in case of a failure, status will get updated in next run.
 	lastPrunedStatus := make(map[string]string, len(projectList))
 	//Prepare the status
-	for projectId, projectState := range projectList {
-		lastPrunedStatus[projectId] = strconv.Itoa(projectState.LastPrunedHeight)
+	for projectId, projectPruneState := range projectList {
+		lastPrunedStatus[projectId] = strconv.Itoa(projectPruneState.LastPrunedHeight)
 	}
 
 	for i := 0; i < 3; i++ {
@@ -241,10 +243,19 @@ func FetchProjectMetaData(projectId string) *ProjectMetaData {
 	return nil
 }
 
-func FindPruningHeight(projectMetaData *ProjectMetaData, project *ProjectState) int {
-	heightToPrune := project.LastPrunedHeight + 100
+func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
+	keyPattern := fmt.Sprintf(REDIS_KEY_PROJECT_TAIL_INDEX_WILDCARD, projectPruneState.ProjectId)
+	redisClient.Scan(ctx, cursor, keyPattern)
+}
+
+func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *ProjectPruneState) int {
+	//TODO: How to handle first run with single large DAG chain.
+	heightToPrune := projectPruneState.LastPrunedHeight
+	//Fetch oldest height used by indexers
+	//oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
 	for i := range projectMetaData.DagChains {
-		if projectMetaData.DagChains[i].EndHeight < project.LastPrunedHeight {
+		if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight {
+			//&& projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight {
 			continue
 		} else {
 			if projectMetaData.DagChains[i].ReadyForPruning {
@@ -255,44 +266,64 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, project *ProjectState) 
 	return heightToPrune
 }
 
+func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid string) {
+	//Export DAG from IPFS
+	fileName, opStatus := ExportDAGFromIPFS(projectId, startScore, endScore, lastDagCid)
+	if opStatus {
+		log.Errorf("Unable to export DAG for project %s at height %d. Will retry in next cycle", projectId, endScore)
+		return
+	}
+	//Can be Optimized: Consider batch upload of files if sizes are too small.
+	CID, opStatus := UploadToWeb3Storage(fileName)
+	if opStatus {
+		log.Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
+		//Delete file from local storage.
+		err := os.Remove(fileName)
+		if err != nil {
+			log.Errorf("Failed to delete file %s due to error %+v", fileName, err)
+		}
+	} else {
+		//TODO: Need to handle failure, where-in next cycle list of files present in dir should also be processed.
+	}
+}
+
 func ProcessProject(projectId string) {
 	log.Debugf("Processing Project %s", projectId)
-	//TODO: Fetch Project metaData from redis
+	// Fetch Project metaData from redis
 	projectMetaData := FetchProjectMetaData(projectId)
 	if projectMetaData == nil {
 		return
 	}
-	project := projectList[projectId]
-	startScore := project.LastPrunedHeight
-	endScore := FindPruningHeight(projectMetaData, project)
+	projectPruneState := projectList[projectId]
+	startScore := projectPruneState.LastPrunedHeight
+	//TODO: Don't prune until tail of all indexes are newer than this height.
+	endScore := FindPruningHeight(projectMetaData, projectPruneState)
 	if endScore == startScore {
 		log.Debugf("Nothing to Prune for project %s", projectId)
 		return
 	}
 	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
-	dagCids, lastDagCid := GetDAGCidsFromRedis(projectId, startScore, endScore)
+	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
 
 	if settingsObj.PruningServiceSettings.PerformArchival {
-		//Export DAG from IPFS
-		fileName, err := ExportDAGFromIPFS(projectId, startScore, endScore, lastDagCid)
-		if err {
-			log.Errorf("Unable to export DAG for project %s at height %d. Will retry in next cycle", projectId, endScore)
-			return
+		for i := range projectMetaData.DagChains {
+			//TODO: Can be optimized by storing index of lastPruned Chain.
+			if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight {
+				continue
+			} else {
+				if projectMetaData.DagChains[i].ReadyForPruning {
+					ArchiveDAG(projectId, projectMetaData.DagChains[i].BeginHeight,
+						projectMetaData.DagChains[i].EndHeight, projectMetaData.DagChains[i].EndDAGCID)
+				}
+				//TODO: Update Project metadata about archival status of DAG Chains.
+			}
 		}
-		//Can be Optimized: Consider batch upload of files if sizes are too small.
-		CID, opStatus := UploadToWeb3Storage(fileName)
-		if opStatus {
-			log.Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
-		} else {
-			//TODO: Need to handle failure
-		}
-		//TODO: UpdateProject metadata about archival status of DAG Chains.
 	}
 	if settingsObj.PruningServiceSettings.PerformIPFSUnPin {
 		UnPinFromIPFS(projectId, dagCids)
 		UnPinFromIPFS(projectId, payloadCids)
 	}
-	project.LastPrunedHeight = endScore
+	projectPruneState.LastPrunedHeight = endScore
 	if settingsObj.PruningServiceSettings.PruneRedisZsets {
 		//Backup ZSets before pruning
 		BackupZsetsToFile(projectId, startScore, endScore, payloadCids, dagCids)
@@ -568,9 +599,8 @@ func GetPayloadCidsFromRedis(projectId string, startScore int, endScore int) *ma
 	return &cids
 }
 
-func GetDAGCidsFromRedis(projectId string, startScore int, endScore int) (*map[int]string, string) {
+func GetDAGCidsFromRedis(projectId string, startScore int, endScore int) *map[int]string {
 	cids := make(map[int]string, endScore-startScore)
-	var lastDagCid string
 	key := fmt.Sprintf(REDIS_KEY_PROJECT_CIDS, projectId)
 	for i := 0; i < 3; i++ {
 		res := redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
@@ -584,14 +614,11 @@ func GetDAGCidsFromRedis(projectId string, startScore int, endScore int) (*map[i
 		}
 		for j := range res.Val() {
 			cids[int(res.Val()[j].Score)] = fmt.Sprintf("%v", res.Val()[j].Member)
-			if res.Val()[j].Score == float64(endScore) {
-				lastDagCid = fmt.Sprintf("%v", res.Val()[j].Member)
-			}
 		}
 		log.Debugf("Fetched %d DAG Cids from redis for project %s", len(cids), projectId)
 		break
 	}
-	return &cids, lastDagCid
+	return &cids
 }
 
 func GetProjectsListFromRedis() {
@@ -611,12 +638,12 @@ func GetProjectsListFromRedis() {
 		}
 		//projectList = make(map[string]*ProjectState, len(res.Val()))
 		//TODO: Remove hardcoding.
-		projectList = make(map[string]*ProjectState, 375)
+		projectList = make(map[string]*ProjectPruneState, 375)
 		for i := range res.Val() {
 			projectId := res.Val()[i]
 			//if strings.Contains(projectId, "UNISWAPV2") {
-			projectState := ProjectState{projectId, 0}
-			projectList[projectId] = &projectState
+			projectPruneState := ProjectPruneState{projectId, 0}
+			projectList[projectId] = &projectPruneState
 			//break
 			//}
 		}
