@@ -343,8 +343,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
 			//TODO: Not retrying further..need to think of project recovery from this point.
 			log.Warnf("MAX Retries reached while trying to invoke Vigil services for project %s and commitId %s with tentativeBlockHeight %d.",
-				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
-			return true
+				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further.")
 		} else if retryType == NO_RETRY_SUCCESS {
 			log.Trace("Submitted txn to chain for %+v", payloadCommit)
 		} else {
