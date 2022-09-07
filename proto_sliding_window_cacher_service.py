@@ -153,12 +153,15 @@ async def get_max_height_pair_project(
     max_height = await writer_redis_conn.get(project_height_key)
     try:
         max_height = int(max_height.decode('utf-8'))
-        dag_cid = await helper_functions.get_dag_cid(
-            project_id=project_id, block_height=max_height, reader_redis_conn=writer_redis_conn
-        )
-        dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-
-        height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
+        #dag_cid = await helper_functions.get_dag_cid(
+        #    project_id=project_id, block_height=max_height, reader_redis_conn=writer_redis_conn
+        #)
+        #dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+        payload_cid = await retrieval_utils.retrieve_payload_cid(project_id, max_height, writer_redis_conn)
+        _payload_data = await retrieval_utils.retrieve_payload_data(payload_cid, writer_redis_conn=writer_redis_conn)
+        payload_data = json.loads(_payload_data)
+        #height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
+        height_map[project_id] = {"source_height": payload_data["chainHeightRange"]["end"],"dag_block_height": max_height}
     except Exception as err:
         sliding_cacher_logger.error('Can\'t fetch max block height against project ID: %s | error_msg: %s', project_id, err)
         max_height = -1
@@ -236,7 +239,7 @@ async def periodic_retrieval():
         await asyncio.gather(
             v2_pairs_data(),
             v2_pairs_daily_stats_snapshotter(),
-            asyncio.sleep(30)
+            asyncio.sleep(90)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')
 
