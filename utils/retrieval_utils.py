@@ -430,16 +430,34 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     if data_flag == 2:
         return payload
 
+async def retrieve_payload_cid(project_id: str, block_height: int,reader_redis_conn=None):
+    """
+        - Given a projectId and block_height, get its payloadCID from redis
+    """
+    project_payload_cids_key_zset = redis_keys.get_payload_cids_key(project_id)
+    payload_cid = ""
+    if reader_redis_conn:
+        r = await reader_redis_conn.zrangebyscore(
+            name=project_payload_cids_key_zset,
+            min=block_height,
+            max=block_height,
+            withscores=False
+        )
+        if len(r) == 0:
+            return payload_cid
+        payload_cid = r[0].decode('utf-8')
+    return payload_cid
+
 
 async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
     """
         - Given a payload_cid, get its data from ipfs, at the same time increase its hit
     """
-    payload_key = redis_keys.get_hits_payload_data_key()
-    if writer_redis_conn:
-        r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
-        retrieval_utils_logger.debug("Payload Data hit for: ")
-        retrieval_utils_logger.debug(payload_cid)
+    #payload_key = redis_keys.get_hits_payload_data_key()
+    #if writer_redis_conn:
+        #r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
+        #retrieval_utils_logger.debug("Payload Data hit for: ")
+        #retrieval_utils_logger.debug(payload_cid)
 
     """ Get the payload Data from ipfs """
     _payload_data = await ipfs_client.cat(payload_cid)
