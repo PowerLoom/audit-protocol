@@ -6,7 +6,7 @@ from time import time
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
 from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, uniswapPairSummary7dCidRange, \
-    uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant
+    uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant, uniswapDailyStatsSnapshotZset
 from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
 from utils import helper_functions
 from utils import redis_keys
@@ -383,17 +383,18 @@ async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contrac
 
 
 @retry(reraise=True, wait=wait_random(min=1, max=3), stop=stop_after_attempt(3))
-async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis = None):
+async def fetch_and_update_status_of_older_snapshots(summary_snapshots_zset_key, summary_snapshots_project_id, data_model, redis_conn: aioredis.Redis = None):
     # Fetch all entries in snapshotZSet
     # Any entry that has a txStatus as TX_CONFIRM_PENDING, query its updated status and update ZSet
     # If txHash changes, store old one in prevTxhash and update the new one in txHash
+
     if not redis_conn:
         aioredis_pool = RedisPool()
         await aioredis_pool.populate()
         redis_conn = aioredis_pool.writer_redis_pool
 
     stored_snapshots = await redis_conn.zrangebyscore(
-        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+        name=summary_snapshots_zset_key,
         min=float('-inf'),
         max=float('+inf'),
         withscores=True
@@ -405,12 +406,12 @@ async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis 
             # skip processing of blockHeight snapshots if DAGheight is not available to fetch status.
             continue
 
-        snapshot_meta = uniswapPairsSnapshotZset(**snapshot_meta)
+        snapshot_meta = data_model(**snapshot_meta)
         if snapshot_meta.txStatus <= SNAPSHOT_STATUS_MAP["TX_CONFIRMATION_PENDING"]:
 
             block_status = await retrieval_utils.retrieve_block_status(
-                redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
-                0, snapshot_meta.dagHeight, redis_conn, redis_conn
+                summary_snapshots_project_id, 0, 
+                snapshot_meta.dagHeight, redis_conn, redis_conn
             )
 
             # if updated block status is less than 3 then don't update metadata yet
@@ -422,7 +423,7 @@ async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis 
                 with attempt:
                     # remove snapshot entry from zset
                     await redis_conn.zremrangebyscore(
-                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                        name=summary_snapshots_zset_key,
                         min=score,
                         max=score
                     )
@@ -439,7 +440,7 @@ async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis 
                 with attempt:
                     # add new snapshot entry to zset
                     await redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                        name=summary_snapshots_zset_key,
                         mapping={snapshot_meta.json(): score}
                     )
 
@@ -876,7 +877,14 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
             t = process_pairs_trade_volume_and_reserves(aioredis_pool.writer_redis_pool, pair_contract_address)
             process_data_list.append(t)
 
-        process_data_list.append(fetch_and_update_status_of_older_snapshots(redis_conn))
+        process_data_list.append(
+            fetch_and_update_status_of_older_snapshots(
+                summary_snapshots_zset_key=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                summary_snapshots_project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                data_model=uniswapPairsSnapshotZset,
+                redis_conn=redis_conn
+            )
+        )
         final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(*process_data_list,
                                                                                                      return_exceptions=True)
 
@@ -1058,6 +1066,10 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
 if __name__ == '__main__':
     print("", "")
     # loop = asyncio.get_event_loop()
-    # data = loop.run_until_complete(fetch_and_update_status_of_older_snapshots())
+    # data = loop.run_until_complete(fetch_and_update_status_of_older_snapshots(
+    #     summary_snapshots_zset_key=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+    #     summary_snapshots_project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+    #     data_model=uniswapDailyStatsSnapshotZset,
+    # ))
     # print("## ##", "")
     # print(data)
