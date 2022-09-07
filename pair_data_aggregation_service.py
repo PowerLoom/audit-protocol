@@ -6,7 +6,7 @@ from time import time
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
 from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, uniswapPairSummary7dCidRange, \
-    uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant, uniswapDailyStatsSnapshotZset
+    uniswapPairSummary24hCidRange, uniswapPairSummaryCid24hResultant, uniswapPairSummaryCid7dResultant
 from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
 from utils import helper_functions
 from utils import redis_keys
