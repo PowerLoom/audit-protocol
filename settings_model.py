@@ -51,6 +51,11 @@ class TableNames(BaseModel):
     retreivals_bulk: str
 
 
+class PruneSettings(BaseModel):
+    segment_size: int
+    interval: int  # in seconds
+
+
 class Settings(BaseModel):
     host: str
     port: str
@@ -67,7 +72,8 @@ class Settings(BaseModel):
     max_pending_payload_commits: int
     container_height: int
     payload_commit_interval: int
-    pruning_service_interval: int
+    pruning_service_interval: int  # TODO: this field will be deprecated and references should be removed
+    pruning: PruneSettings
     retrieval_service_interval: int
     deal_watcher_service_interval: int
     api_key: str

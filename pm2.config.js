@@ -8,8 +8,8 @@ const CWD = "/home/ubuntu/audit-protocol-private/"
 module.exports = {
   apps : [
     {
-      name   : "audit-protocol-webhooks",
-      script : "python3 ./gunicorn_webhook_launcher.py",
+      name   : "audit-protocol-dag-finalizer",
+      script : "python3 ./gunicorn_dag_finalizer_launcher.py",
       cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
