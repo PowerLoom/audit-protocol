@@ -47,7 +47,7 @@ type Snapshot struct {
 	Cid string `json:"cid"`
 }
 
-type CommonVigilRequestParams struct {
+type CommonTxRequestParams struct {
 	Contract          string          `json:"contract"`
 	Method            string          `json:"method"`
 	Params            json.RawMessage `json:"params"`
