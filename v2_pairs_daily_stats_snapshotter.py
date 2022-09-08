@@ -12,6 +12,7 @@ from utils.retrieval_utils import retrieve_block_data, retrieve_block_status, SN
 import logging.config
 from data_models import uniswapDailyStatsSnapshotZset, ProjectBlockHeightStatus
 import sys
+from pair_data_aggregation_service import fetch_and_update_status_of_older_snapshots
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -65,61 +66,6 @@ def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pai
                 linked_contract_snapshot[new_contract_obj["contractAddress"]]["old"] = old_contract_obj
 
     return linked_contract_snapshot
-
-
-@retry(reraise=True, wait=wait_random(min=1, max=3), stop=stop_after_attempt(3))
-async def fetch_and_update_status_of_older_snapshots(redis_conn: aioredis.Redis = None):
-    # Fetch all entries in snapshotZSet
-    # Any entry that has a txStatus as TX_CONFIRM_PENDING, query its updated status and update ZSet
-    # If txHash changes, store old one in prevTxhash and update the new one in txHash
-    stored_snapshots = await redis_conn.zrangebyscore(
-        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-        min=float('-inf'),
-        max=float('+inf'),
-        withscores=True
-    )
-    for snapshot_meta, score in stored_snapshots:
-        snapshot_meta = json.loads(snapshot_meta.decode('utf-8'))
-        score = int(score)
-        if snapshot_meta.get('dagHeight', 0) == 0:
-            # skip processing of blockHeight snapshots if DAGheight is not available to fetch status.
-            continue
-
-        snapshot_meta = uniswapDailyStatsSnapshotZset(**snapshot_meta)
-        if snapshot_meta.txStatus <= SNAPSHOT_STATUS_MAP["TX_CONFIRMATION_PENDING"]:
-
-            block_status = await retrieval_utils.retrieve_block_status(
-                redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
-                0, snapshot_meta.dagHeight, redis_conn, redis_conn
-            )
-
-            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3),
-                                               stop=stop_after_attempt(3)):
-                with attempt:
-                    # remove snapshot entry from zset
-                    await redis_conn.zremrangebyscore(
-                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                        min=score,
-                        max=score
-                    )
-
-            # update new status fields
-            if block_status.tx_hash != snapshot_meta.txHash:
-                snapshot_meta.prevTxHash = snapshot_meta.txHash
-
-            snapshot_meta.txHash = block_status.tx_hash
-            snapshot_meta.txStatus = block_status.status
-
-            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3),
-                                               stop=stop_after_attempt(3)):
-                with attempt:
-                    # add new snapshot entry to zset
-                    await redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                        mapping={snapshot_meta.json(): score}
-                    )
-
-    return None
 
 
 async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redis_conn=None):
@@ -205,7 +151,12 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
             dag_block_latest, dag_block_24h, snapshot_metadata_update = await asyncio.gather(
                 retrieve_payload_data(latest_pair_summary_timestamp_payloadCID),
                 retrieve_payload_data(pair_snapshot_payloadCID_24h),
-                fetch_and_update_status_of_older_snapshots(redis_conn)
+                fetch_and_update_status_of_older_snapshots(
+                    summary_snapshots_zset_key=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                    summary_snapshots_project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                    data_model=uniswapDailyStatsSnapshotZset,
+                    redis_conn=redis_conn
+                )
             )
             dag_block_latest = json.loads(dag_block_latest).get("data", None) if dag_block_latest else None
             dag_block_24h = json.loads(dag_block_24h).get("data", None) if dag_block_24h else None
@@ -268,7 +219,12 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
         else:
             logger.debug(f"Pair summary & daily stats snapshots are already in sync with block height")
             # update old snapshot metadata (irrespective of new snapshot being commited) 
-            await fetch_and_update_status_of_older_snapshots(redis_conn)
+            await fetch_and_update_status_of_older_snapshots(
+                summary_snapshots_zset_key=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                summary_snapshots_project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                data_model=uniswapDailyStatsSnapshotZset,
+                redis_conn=redis_conn
+            )
             return
         
         wait_for_snapshot_project_new_commit = False
