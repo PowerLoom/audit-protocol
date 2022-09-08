@@ -140,7 +140,7 @@ type SettingsObj struct {
 		UploadURLSuffix string        `json:"upload_url_suffix"`
 	} `json:"web3_storage"`
 	DagVerifierSettings    _DagVerifierSettings_    `json:"dag_verifier"`
-	PruningServiceSettings _PruningServiceSettings_ `json:"pruning_service"`
+	PruningServiceSettings _PruningServiceSettings_ `json:"pruning"`
 }
 
 func ParseSettings(settingsFile string) *SettingsObj {

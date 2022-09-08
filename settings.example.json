@@ -129,8 +129,9 @@
 			"uniswap_V2DailyStatsSnapshot"
 		]
 	},
-	"pruning_service":{
+	"pruning":{
 		"run_interval_mins": 240,
+		"segment_size": 700,
 		"concurrency":20,
 		"car_storage_path":"/tmp/",
 		"ipfs_rate_limit":{

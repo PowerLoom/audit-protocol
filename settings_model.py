@@ -53,8 +53,6 @@ class TableNames(BaseModel):
 
 class PruneSettings(BaseModel):
     segment_size: int
-    interval: int  # in seconds
-
 
 class Settings(BaseModel):
     host: str

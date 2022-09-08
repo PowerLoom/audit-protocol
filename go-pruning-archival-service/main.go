@@ -66,7 +66,7 @@ const REDIS_KEY_STORED_PROJECTS string = "storedProjectIds"
 const REDIS_KEY_PROJECT_PAYLOAD_CIDS string = "projectID:%s:payloadCids"
 const REDIS_KEY_PROJECT_CIDS string = "projectID:%s:Cids"
 const REDIS_KEY_PRUNING_STATUS string = "projects:pruningStatus"
-const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:projectMetaData"
+const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:stateMetadata"
 
 const REDIS_KEY_PROJECT_TAIL_INDEX string = "projectID:%s:slidingCache:%s:tail"
 
