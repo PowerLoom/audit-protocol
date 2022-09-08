@@ -664,16 +664,15 @@ func GetProjectsListFromRedis() {
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		//projectList = make(map[string]*ProjectState, len(res.Val()))
-		//TODO: Remove hardcoding.
-		projectList = make(map[string]*ProjectPruneState, 375)
+		projectList = make(map[string]*ProjectPruneState, len(res.Val()))
+		//projectList = make(map[string]*ProjectPruneState, 375)
 		for i := range res.Val() {
 			projectId := res.Val()[i]
-			if strings.Contains(projectId, "uniswap_V2PairsSummarySnapshot_UNISWAPV2") {
-				projectPruneState := ProjectPruneState{projectId, 0}
-				projectList[projectId] = &projectPruneState
-				break
-			}
+			//if strings.Contains(projectId, "uniswap_V2PairsSummarySnapshot_UNISWAPV2") {
+			projectPruneState := ProjectPruneState{projectId, 0}
+			projectList[projectId] = &projectPruneState
+			//	break
+			//}
 		}
 		log.Infof("Retrieved %d storedProjects %+v from redis", len(res.Val()), projectList)
 		return
