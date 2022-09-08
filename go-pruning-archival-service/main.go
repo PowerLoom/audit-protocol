@@ -267,8 +267,25 @@ func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid strin
 }
 
 func UpdateProjectMetaData(projectMetaData *ProjectMetaData) {
-	//TODO: Use project level lock/convert redis field in to a HTABLE in redis before updating metaData.
-
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectMetaData.ProjectID)
+	projectMetaDataJson, err := json.Marshal(projectMetaData)
+	if err != nil {
+		log.Fatalf("Unable to marshal Project MetaData for project %s due to error !! %+v ", err)
+	}
+	for i := 0; i < 3; i++ {
+		//TODO: Convert to HTable or use a project level lock to avoid race with DAG Finalizer.
+		res := redisClient.Set(ctx, key, projectMetaDataJson, 0)
+		if res.Err() != nil {
+			log.Errorf("Could not fetch key %s due to error %+v. Retrying %d.",
+				key, res.Err(), i)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		log.Debugf("Successfully updated project metaData to redis for projectId %s with value %+v",
+			projectMetaData.ProjectID, *projectMetaData)
+		return
+	}
+	log.Errorf("Failed to update metaData for project %s to redis after max retries.", projectMetaData.ProjectID)
 }
 
 func ProcessProject(projectId string) {
