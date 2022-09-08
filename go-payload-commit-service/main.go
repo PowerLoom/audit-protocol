@@ -29,7 +29,7 @@ var ctx = context.Background()
 
 var redisClient *redis.Client
 var ipfsClient *shell.Shell
-var vigilHttpClient http.Client
+var txMgrHttpClient http.Client
 var webhookClient http.Client
 var w3sHttpClient http.Client
 var settingsObj SettingsObj
@@ -41,7 +41,7 @@ var exitChan chan bool
 var webhookClientRateLimiter *rate.Limiter
 var web3StorageClientRateLimiter *rate.Limiter
 var ipfsClientRateLimiter *rate.Limiter
-var vigilClientRateLimiter *rate.Limiter
+var txClientRateLimiter *rate.Limiter
 
 var REDIS_KEY_PROJECT_PAYLOAD_CIDS = "projectID:%s:payloadCids"
 var REDIS_KEY_PROJECT_PENDING_TXNS = "projectID:%s:pendingTransactions"
@@ -51,7 +51,7 @@ var WEB3_STORAGE_UPLOAD_URL_SUFFIX = "/upload"
 
 var SKIP_SNAPSHOT_VALIDATION_ERR_STR = "skip validation"
 
-var commonVigilParams CommonVigilRequestParams
+var commonTxReqParams CommonTxRequestParams
 
 type retryType int64
 
@@ -175,7 +175,7 @@ func main() {
 	ParseConsts("../dev_consts.json")
 	InitIPFSClient()
 	InitRedisClient()
-	InitVigilClient()
+	InitTxManagerClient()
 	InitWebhookCallbackClient()
 	log.Info("Starting RabbitMq Consumer")
 	InitW3sClient()
@@ -342,9 +342,8 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 		txHash, retryType = PrepareAndSubmitTxnToChain(&payloadCommit)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
 			//TODO: Not retrying further..need to think of project recovery from this point.
-			log.Warnf("MAX Retries reached while trying to invoke Vigil services for project %s and commitId %s with tentativeBlockHeight %d.",
-				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
-			return true
+			log.Warnf("MAX Retries reached while trying to invoke tx-manager for project %s and commitId %s with tentativeBlockHeight %d.",
+				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further.")
 		} else if retryType == NO_RETRY_SUCCESS {
 			log.Trace("Submitted txn to chain for %+v", payloadCommit)
 		} else {
@@ -398,11 +397,11 @@ func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
 
 		if err != nil {
-			if retryCount == *settingsObj.RetryCount{
+			if retryCount == *settingsObj.RetryCount {
 				log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, *settingsObj.RetryCount, err)
 				return false
 			}
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs)* time.Second)
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			retryCount++
 			log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", payloadCommit, err, retryCount)
 			continue
@@ -422,7 +421,7 @@ func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) (*Paylo
 			projectId, lastTentativeBlockHeight, err)
 		return nil, err
 	}
-	payload, err := GetPayloadFromIPFS(payloadCid, 3)
+	payload, err := GetPayloadFromIPFS(payloadCid, 1)
 	if err != nil {
 		log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
 			payloadCid, projectId, lastTentativeBlockHeight, err)
@@ -685,13 +684,13 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
 				time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			}
 			if retryCount == *settingsObj.RetryCount {
-				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to Vigil with err %+v after max retries of %d",
+				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to tx-manager with err %+v after max retries of %d",
 					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, *settingsObj.RetryCount)
 				time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 				return txHash, RETRY_IMMEDIATE
 			}
 			retryCount++
-			log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to Vigil with err %+v ..retryCount %d",
+			log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to tx-manager with err %+v ..retryCount %d",
 				payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, retryCount)
 			continue
 		}
@@ -779,7 +778,7 @@ func InvokeWebhookCallback(payload *PayloadCommit) retryType {
 		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(reqParams))
 		if err != nil {
 			log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
-				reqURL, commonVigilParams, err)
+				reqURL, commonTxReqParams, err)
 			return RETRY_IMMEDIATE
 		}
 		req.Header.Add("Authorization", "Bearer "+settingsObj.Web3Storage.APIToken)
@@ -844,7 +843,7 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(payload.Payload))
 		if err != nil {
 			log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
-				reqURL, commonVigilParams, err)
+				reqURL, commonTxReqParams, err)
 			return "", false
 		}
 		req.Header.Add("Authorization", "Bearer "+settingsObj.Web3Storage.APIToken)
@@ -911,38 +910,38 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	reqParams.ProjectId = payload.ProjectId
 	reqParams.SnapshotCid = payload.SnapshotCID
 	reqParams.TentativeBlockHeight = payload.TentativeBlockHeight
-	commonVigilParams.Params, err = json.Marshal(reqParams)
+	commonTxReqParams.Params, err = json.Marshal(reqParams)
 	if err != nil {
-		log.Fatalf("Failed to marshal AuditContractCommitParams %+v towards Vigil GW with error %+v", reqParams, err)
+		log.Fatalf("Failed to marshal AuditContractCommitParams %+v towards tx-manager with error %+v", reqParams, err)
 		return "", NO_RETRY_FAILURE, err
 	}
-	body, err := json.Marshal(commonVigilParams)
+	body, err := json.Marshal(commonTxReqParams)
 	if err != nil {
-		log.Fatalf("Failed to marshal request %+v towards Vigil GW with error %+v", commonVigilParams, err)
+		log.Fatalf("Failed to marshal request %+v towards tx-manager with error %+v", commonTxReqParams, err)
 		return "", NO_RETRY_FAILURE, err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
 	if err != nil {
 		log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
-			reqURL, commonVigilParams, err)
+			reqURL, commonTxReqParams, err)
 		return "", NO_RETRY_FAILURE, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("accept", "application/json")
 
-	err = vigilClientRateLimiter.Wait(context.Background())
+	err = txClientRateLimiter.Wait(context.Background())
 	if err != nil {
-		log.Errorf("VigilClient Rate Limiter wait timeout with error %+v", err)
+		log.Errorf("tx-manager Rate Limiter wait timeout with error %+v", err)
 		time.Sleep(1 * time.Second)
 		return "", RETRY_IMMEDIATE, err
 	}
 
-	log.Debugf("Sending Req with params %+v to Vigil URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
+	log.Debugf("Sending Req with params %+v to tx-manager URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
 		reqParams, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tokenHash)
-	res, err := vigilHttpClient.Do(req)
+	res, err := txMgrHttpClient.Do(req)
 	if err != nil {
-		log.Errorf("Failed to send request %+v towards Vigil URL %s for project %s with snapshotCID %s commitId %s with error %+v",
+		log.Errorf("Failed to send request %+v towards tx-manager URL %s for project %s with snapshotCID %s commitId %s with error %+v",
 			req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
 		return "", RETRY_WITH_DELAY, err
 	}
@@ -950,36 +949,36 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	var resp AuditContractCommitResp
 	respBody, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from Vigil with error %+v",
+		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from tx-manager with error %+v",
 			payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
 		return "", RETRY_WITH_DELAY, err
 	}
 	if res.StatusCode == http.StatusOK {
 		err = json.Unmarshal(respBody, &resp)
 		if err != nil {
-			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards Vigil with error %+v",
+			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards tx-manager with error %+v",
 				respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
 			return "", RETRY_WITH_DELAY, err
 		}
 		if resp.Success {
-			log.Debugf("Received Success response %+v from Vigil for project %s with snapshotCID %s commitId %s.",
+			log.Debugf("Received Success response %+v from tx-manager for project %s with snapshotCID %s commitId %s.",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
 			return resp.Data[0].TxHash, NO_RETRY_SUCCESS, nil
 		} else {
 			var tmpRsp map[string]string
 			_ = json.Unmarshal(respBody, &tmpRsp)
-			log.Errorf("Received 200 OK with Error response %+v from Vigil for project %s with snapshotCID %s commitId %s resp bytes %+v ",
+			log.Errorf("Received 200 OK with Error response %+v from tx-manager for project %s with snapshotCID %s commitId %s resp bytes %+v ",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tmpRsp)
-			return "", RETRY_WITH_DELAY, errors.New("Received Error response from Vigil : " + fmt.Sprintf("%+v", resp))
+			return "", RETRY_WITH_DELAY, errors.New("Received Error response from tx-manager : " + fmt.Sprintf("%+v", resp))
 		}
 	} else {
-		log.Errorf("Received Error response %+v from Vigil for project %s with snapshotCID %s commitId %s with statusCode %d and status : %s ",
+		log.Errorf("Received Error response %+v from tx-manager for project %s with snapshotCID %s commitId %s with statusCode %d and status : %s ",
 			resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, res.StatusCode, res.Status)
-		return "", RETRY_WITH_DELAY, errors.New("Received Error response from Vigil" + fmt.Sprint(respBody))
+		return "", RETRY_WITH_DELAY, errors.New("Received Error response from tx-manager" + fmt.Sprint(respBody))
 	}
 }
 
-func InitVigilClient() {
+func InitTxManagerClient() {
 
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
@@ -990,16 +989,16 @@ func InitVigilClient() {
 		DisableCompression:  true,
 	}
 
-	vigilHttpClient = http.Client{
+	txMgrHttpClient = http.Client{
 		Timeout:   time.Duration(settingsObj.HttpClientTimeoutSecs) * time.Second,
 		Transport: &t,
 	}
 
-	commonVigilParams.Contract = strings.ToLower(settingsObj.AuditContract)
-	commonVigilParams.Method = "commitRecord"
-	commonVigilParams.NetworkId = 137
-	commonVigilParams.HackerMan = false
-	commonVigilParams.IgnoreGasEstimate = false
+	commonTxReqParams.Contract = strings.ToLower(settingsObj.AuditContract)
+	commonTxReqParams.Method = "commitRecord"
+	commonTxReqParams.NetworkId = 137
+	commonTxReqParams.HackerMan = false
+	commonTxReqParams.IgnoreGasEstimate = false
 
 	//Default values
 	tps := rate.Limit(50) //50 TPS
@@ -1013,8 +1012,8 @@ func InitVigilClient() {
 			tps = rate.Limit(settingsObj.ContractRateLimiter.RequestsPerSec)
 		}
 	}
-	log.Infof("Rate Limit configured for Vigil Client at %v TPS with a burst of %d", tps, burst)
-	vigilClientRateLimiter = rate.NewLimiter(tps, burst)
+	log.Infof("Rate Limit configured for tx-manager Client at %v TPS with a burst of %d", tps, burst)
+	txClientRateLimiter = rate.NewLimiter(tps, burst)
 }
 
 func InitRedisClient() {
