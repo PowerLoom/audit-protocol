@@ -256,7 +256,7 @@ async def periodic_retrieval():
         await asyncio.gather(
             v2_pairs_data(async_httpx_client),
             v2_pairs_daily_stats_snapshotter(async_httpx_client),
-            asyncio.sleep(30)
+            asyncio.sleep(90)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')
 
