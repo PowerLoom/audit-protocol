@@ -10,7 +10,8 @@ const (
 )
 
 type SlackNotifyReq struct {
-	DAGsummary string `json:"dagChainSummary"`
+	DAGsummary    string `json:"dagChainSummary"`
+	IssueSeverity string `json:"severity"`
 }
 
 type SummaryProjectState struct {

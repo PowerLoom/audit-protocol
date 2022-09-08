@@ -46,6 +46,9 @@
 		"req_per_sec": 50,
 		"burst": 50
 	},
+	"retry_count": 10,
+	"retry_interval_secs":5,
+	"http_client_timeout_secs": 10,
 	"seed": "THISISRANDOMSEED",
 	"REDIS": {
 		"HOST": "127.0.0.1",
@@ -100,6 +103,7 @@
 	"calculate_diff": false,
 	"web3_storage":{
 		"url":"https://api.web3.storage",
+		"upload_url_suffix":"/upload",
 		"api_token":"",
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
@@ -112,6 +116,11 @@
 	"dag_verifier":{
 		"slack_notify_URL":"",
 		"notify_suppress_time_secs":1800,
+		"concurrency": 10,
+		"ipfs_rate_limit" :{
+			"req_per_sec": 10,
+			"burst": 10
+		},
 		"run_interval_secs": 300,
 		"additional_projects_to_track_prefixes" :[
 			"uniswap_V2PairsSummarySnapshot",

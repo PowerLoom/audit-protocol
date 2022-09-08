@@ -257,6 +257,8 @@ func (verifier *DagVerifier) Run() {
 	periodicRetrievalInterval := time.Duration(verifier.settings.DagVerifierSettings.RunIntervalSecs) * time.Second
 	for {
 		if len(verifier.projects) > 0 {
+			verifier.FetchLastProjectIndexedStatusFromRedis()
+			verifier.FetchLastVerificationStatusFromRedis()
 			verifier.VerifyAllProjects() //Projects are pairContracts
 			verifier.SummarizeDAGIssuesAndNotifySlack()
 			verifier.UpdateLastStatusToRedis()
@@ -290,7 +292,7 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 		res := verifier.redisClient.Get(ctx, key)
 		if res.Err() == redis.Nil {
 			log.Errorf("No blockHeight key for the project %s is present in redis", projectId)
-			return ""
+			return "0"
 		}
 		if res.Err() != nil {
 			log.Errorf("Failed to fetch blockHeight for project %s from redis due to error %+v", projectId, res.Err())
@@ -300,7 +302,7 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 		log.Debugf("Retrieved BlockHeight for project %s from redis is %s", projectId, res.Val())
 		return res.Val()
 	}
-	return ""
+	return "0"
 }
 
 func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
@@ -431,32 +433,34 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	for j := range verifier.SummaryProjects {
 		projectId := verifier.SummaryProjects[j]
 		currentDagHeight := verifier.GetProjectDAGBlockHeightFromRedis(projectId)
-		if verifier.lastVerifiedDagBlockHeights[projectId] != "" {
-			if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
-				verifier.noOfCyclesSinceChainStuck[projectId]++
-				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
-					log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
-					isDagchainStuckForSummaryProject++
-					var summaryProject SummaryProjectState
-					summaryProject.ProjectHeight = currentDagHeight
-					summaryProject.ProjectId = projectId
-					dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
-					dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
-				}
-				summaryProjectsMovingAheadAfterStuck = false
-			} else {
-				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
-					summaryProjectsMovingAheadAfterStuck = true
-					var summaryProject SummaryProjectState
-					summaryProject.ProjectId = projectId
-					summaryProject.ProjectHeight = currentDagHeight
-					dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
-					dagSummary.SummaryProjectsRecovered = append(dagSummary.SummaryProjectsRecovered, summaryProject)
-				}
-				verifier.noOfCyclesSinceChainStuck[projectId] = 0
-			}
-			verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
+		if currentDagHeight == "0" {
+			log.Debugf("Project's %s height is 0 and not moved ahead. Skipping check for stuck", projectId)
+			continue
 		}
+		if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
+			verifier.noOfCyclesSinceChainStuck[projectId]++
+			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+				log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
+				isDagchainStuckForSummaryProject++
+				var summaryProject SummaryProjectState
+				summaryProject.ProjectHeight = currentDagHeight
+				summaryProject.ProjectId = projectId
+				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
+				dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
+			}
+			summaryProjectsMovingAheadAfterStuck = false
+		} else {
+			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+				summaryProjectsMovingAheadAfterStuck = true
+				var summaryProject SummaryProjectState
+				summaryProject.ProjectId = projectId
+				summaryProject.ProjectHeight = currentDagHeight
+				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
+				dagSummary.SummaryProjectsRecovered = append(dagSummary.SummaryProjectsRecovered, summaryProject)
+			}
+			verifier.noOfCyclesSinceChainStuck[projectId] = 0
+		}
+		verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
 	}
 
 	//Check if dagChain has issues for any project.
@@ -526,7 +530,9 @@ func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) 
 	dagSummaryStr, _ := json.MarshalIndent(dagSummary, "", "\t")
 
 	slackReq.DAGsummary = string(dagSummaryStr)
+	slackReq.IssueSeverity = dagSummary.Severity
 	body, err := json.Marshal(slackReq)
+
 	if err != nil {
 		log.Fatalf("Failed to marshal request %+v towards Slack Webhook with error %+v", dagSummary, err)
 		return err

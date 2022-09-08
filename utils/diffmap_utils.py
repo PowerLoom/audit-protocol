@@ -232,8 +232,6 @@ def calculate_diff(
         ipfs_client,
         writer_redis_conn: redis.Redis
 ):
-    # parse if audit-protocol require diff calculation
-    calculate_diff_setting = settings.calculate_diff
 
     # cache last seen diffs
     dag_height = dag.height
@@ -241,7 +239,7 @@ def calculate_diff(
     prev_dag = ipfs_client.dag.get(dag.prevCid['/'])
     prev_dag = prev_dag.as_json()
     prev_payload_cid = prev_dag['data']['cid']['/']
-    if prev_payload_cid != payload_cid and calculate_diff_setting:
+    if prev_payload_cid != payload_cid:
         diff_map = dict()
         _prev_data = ipfs_client.cat(prev_payload_cid)
         prev_data = json.loads(_prev_data)

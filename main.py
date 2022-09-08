@@ -739,12 +739,15 @@ async def get_block_status(
         return {'error': 'Project does not have any blocks'}
     rest_logger.debug(max_block_height)
 
-    block_status = await retrieval_utils.retrieve_block_status(projectId=projectId,
-                                            project_block_height=max_block_height,
-                                            block_height=block_height,
-                                            reader_redis_conn=reader_redis_conn,
-                                            writer_redis_conn=writer_redis_conn)
+    block_status = await retrieval_utils.retrieve_block_status(project_id=projectId,
+                                                               project_block_height=max_block_height,
+                                                               block_height=block_height,
+                                                               reader_redis_conn=reader_redis_conn,
+                                                               writer_redis_conn=writer_redis_conn)
 
+    if block_status is None:
+        response.status_code = 404
+        return {'error': 'Could not retrieve block status'}
     return block_status.dict()
 
 

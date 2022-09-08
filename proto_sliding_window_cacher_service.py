@@ -5,6 +5,7 @@ from utils import helper_functions, dag_utils, retrieval_utils
 from functools import wraps
 from pair_data_aggregation_service import v2_pairs_data
 from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
+from httpx import AsyncClient, Timeout, Limits
 from redis import asyncio as aioredis
 import asyncio
 import json
@@ -151,6 +152,8 @@ async def get_max_height_pair_project(
 ):
     project_height_key = redis_keys.get_block_height_key(project_id)
     max_height = await writer_redis_conn.get(project_height_key)
+    if not max_height:
+        return Exception("Can\'t fetch max block height against project ID: %s", project_id)
     try:
         max_height = int(max_height.decode('utf-8'))
         #dag_cid = await helper_functions.get_dag_cid(
@@ -163,8 +166,7 @@ async def get_max_height_pair_project(
         #height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
         height_map[project_id] = {"source_height": payload_data["chainHeightRange"]["end"],"dag_block_height": max_height}
     except Exception as err:
-        sliding_cacher_logger.error('Can\'t fetch max block height against project ID: %s | error_msg: %s', project_id, err)
-        max_height = -1
+        return err
     finally:
         return max_height
 
@@ -207,7 +209,15 @@ async def build_primary_indexes():
             'writer_redis_conn': writer_redis_conn
         })
         tasks.append(fn)
-    await asyncio.gather(*tasks, return_exceptions=True)
+    max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
+    res_exceptions = list(map(lambda r: r, filter(lambda y: isinstance(y, Exception), max_height_array)))
+    
+    if len(res_exceptions) == len(project_id_to_register_series):
+        sliding_cacher_logger.debug('block-height for all projects has not been intialized yet, sleeping till next cycle')
+        return
+    elif len(res_exceptions) > 0:
+        sliding_cacher_logger.warning('Can\'t find projects max height for some projects, sleeping till next cycle | error_objs: %s', res_exceptions)
+        return
 
     smallest_source_height = project_source_height_map[next(iter(project_source_height_map))]["source_height"]
     for project_map_id, project_map in project_source_height_map.items():
@@ -233,12 +243,19 @@ async def build_primary_indexes():
             tasks.append(fn)
     await asyncio.gather(*tasks)
 
+
 async def periodic_retrieval():
+    # TODO: make these configurable
+    async_httpx_client = AsyncClient(
+        timeout=Timeout(timeout=5.0),
+        follow_redirects=False,
+        limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
+    )
     while True:
         await build_primary_indexes()
         await asyncio.gather(
-            v2_pairs_data(),
-            v2_pairs_daily_stats_snapshotter(),
+            v2_pairs_data(async_httpx_client),
+            v2_pairs_daily_stats_snapshotter(async_httpx_client),
             asyncio.sleep(90)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')
