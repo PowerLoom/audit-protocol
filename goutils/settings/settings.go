@@ -14,13 +14,15 @@ type _RateLimiter struct {
 }
 
 type _PruningServiceSettings_ struct {
-	RunIntervalMins  int           `json:"run_interval_mins"`
-	IPFSRateLimiter  *_RateLimiter `json:"ipfs_rate_limit"`
-	Concurrency      int           `json:"concurrency"`
-	CARStoragePath   string        `json:"car_storage_path"`
-	PerformArchival  bool          `json:"perform_archival"`
-	PerformIPFSUnPin bool          `json:"perform_ipfs_unpin"`
-	PruneRedisZsets  bool          `json:"prune_redis_zsets"`
+	RunIntervalMins    int           `json:"run_interval_mins"`
+	IPFSRateLimiter    *_RateLimiter `json:"ipfs_rate_limit"`
+	Concurrency        int           `json:"concurrency"`
+	CARStoragePath     string        `json:"car_storage_path"`
+	PerformArchival    bool          `json:"perform_archival"`
+	PerformIPFSUnPin   bool          `json:"perform_ipfs_unpin"`
+	PruneRedisZsets    bool          `json:"prune_redis_zsets"`
+	OldestProjectIndex string        `json:"oldest_project_index"`
+	BackUpRedisZSets   bool          `json:"backup_redis_zsets_to_file"`
 }
 
 type _DagVerifierSettings_ struct {
@@ -180,5 +182,17 @@ func SetDefaults(settingsObj *SettingsObj) {
 	}
 	if settingsObj.Web3Storage.UploadURLSuffix == "" {
 		settingsObj.Web3Storage.UploadURLSuffix = "/upload"
+	}
+	if settingsObj.DagVerifierSettings.RunIntervalSecs == 0 {
+		settingsObj.DagVerifierSettings.RunIntervalSecs = 300
+	}
+	if settingsObj.DagVerifierSettings.SlackNotifyURL == "" {
+		log.Warnf("Slack Notification URL is not set, any issues observed by this service will not be notified.")
+	}
+	if settingsObj.DagVerifierSettings.SuppressNotificationTimeSecs == 0 {
+		settingsObj.DagVerifierSettings.SuppressNotificationTimeSecs = 1800
+	}
+	if settingsObj.DagVerifierSettings.Concurrency == 0 {
+		settingsObj.DagVerifierSettings.Concurrency = 10
 	}
 }

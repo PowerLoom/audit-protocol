@@ -2,6 +2,9 @@ echo "Building common utils"
 cd goutils/settings
 go build .
 cd ../..
+cd goutils/logger
+go build .
+cd ../..
 
 echo "Building Pruning Service"
 cd go-pruning-archival-service

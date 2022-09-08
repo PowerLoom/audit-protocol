@@ -137,8 +137,10 @@
 			"req_per_sec": 20,
 			"burst": 20
 		},
-		"perform_archival": false,
-		"perform_ipfs_unpin": false,
-		"prune_redis_zsets":false
+		"perform_archival": true,
+		"perform_ipfs_unpin": true,
+		"prune_redis_zsets":true,
+		"backup_redis_zsets_to_file": false,
+		"oldest_project_index": "7d"
 	}
 }

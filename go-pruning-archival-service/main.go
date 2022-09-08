@@ -14,11 +14,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alanshaw/go-carbites"
 	"github.com/go-redis/redis/v8"
 	shell "github.com/ipfs/go-ipfs-api"
+	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/settings"
 	log "github.com/sirupsen/logrus"
-	"github.com/sirupsen/logrus/hooks/writer"
 	"golang.org/x/time/rate"
 )
 
@@ -38,11 +39,10 @@ var web3StorageClientRateLimiter *rate.Limiter
 type ProjectMetaData struct {
 	ProjectID string `json:"projectId"`
 	DagChains []struct {
-		BeginHeight     int    `json:"beginHeight"`
-		EndHeight       int    `json:"endHeight"`
-		EndDAGCID       string `json:"endDAGCID"`
-		StorageType     string `json:"storageType"`
-		ReadyForPruning bool   `json:"readyForPruning"`
+		BeginHeight int    `json:"beginHeight"`
+		EndHeight   int    `json:"endHeight"`
+		EndDAGCID   string `json:"endDAGCID"`
+		StorageType string `json:"storageType"`
 	} `json:"dagChains"`
 }
 
@@ -70,45 +70,9 @@ const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:projectMetaData"
 
 const REDIS_KEY_PROJECT_TAIL_INDEX string = "projectID:%s:slidingCache:%s:tail"
 
-func InitLogger() {
-	log.SetOutput(ioutil.Discard) // Send all logs to nowhere by default
-
-	log.AddHook(&writer.Hook{ // Send logs with level higher than warning to stderr
-		Writer: os.Stderr,
-		LogLevels: []log.Level{
-			log.PanicLevel,
-			log.FatalLevel,
-			log.ErrorLevel,
-			log.WarnLevel,
-		},
-	})
-	log.AddHook(&writer.Hook{ // Send info and debug logs to stdout
-		Writer: os.Stdout,
-		LogLevels: []log.Level{
-			log.TraceLevel,
-			log.InfoLevel,
-			log.DebugLevel,
-		},
-	})
-	if len(os.Args) < 2 {
-		fmt.Println("Pass loglevel as an argument if you don't want default(INFO) to be set.")
-		fmt.Println("Values to be passed for logLevel: ERROR(2),INFO(4),DEBUG(5)")
-		log.SetLevel(log.DebugLevel)
-	} else {
-		logLevel, err := strconv.ParseUint(os.Args[1], 10, 32)
-		if err != nil || logLevel > 6 {
-			log.SetLevel(log.DebugLevel) //TODO: Change default level to error
-		} else {
-			//TODO: Need to come up with approach to dynamically update logLevel.
-			log.SetLevel(log.Level(logLevel))
-		}
-	}
-	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
-}
-
 func main() {
 
-	InitLogger()
+	logger.InitLogger()
 	settingsObj = settings.ParseSettings("../settings.json")
 	InitIPFSClient()
 	InitRedisClient()
@@ -132,6 +96,7 @@ func Run() {
 		VerifyAndPruneDAGChains()
 		UpdatePrunedStatusToRedis()
 		log.Infof("Completed cycle")
+		//TODO: Cleanup storage path wthat has old files.
 		time.Sleep(time.Duration(settingsObj.PruningServiceSettings.RunIntervalMins) * time.Minute)
 	}
 }
@@ -221,6 +186,7 @@ func VerifyAndPruneDAGChains() {
 func FetchProjectMetaData(projectId string) *ProjectMetaData {
 	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectId)
 	for i := 0; i < 3; i++ {
+		//TODO: Convert to HTable.
 		res := redisClient.Get(ctx, key)
 		if res.Err() != nil {
 			log.Errorf("Could not fetch key %s due to error %+v. Retrying %d.",
@@ -244,8 +210,22 @@ func FetchProjectMetaData(projectId string) *ProjectMetaData {
 }
 
 func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
-	keyPattern := fmt.Sprintf(REDIS_KEY_PROJECT_TAIL_INDEX_WILDCARD, projectPruneState.ProjectId)
-	redisClient.Scan(ctx, cursor, keyPattern)
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_TAIL_INDEX, projectPruneState.ProjectId, settingsObj.PruningServiceSettings.OldestProjectIndex)
+	lastIndexHeight := -1
+	res := redisClient.Get(ctx, key)
+	err := res.Err()
+	if err != nil {
+		if err == redis.Nil {
+			log.Errorf("Key %s does not exist", key)
+			return lastIndexHeight
+		}
+	}
+	lastIndexHeight, err = strconv.Atoi(res.Val())
+	if err != nil {
+		log.Fatalf("Unable to convert retrieved lastIndexHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
+		return -1
+	}
+	return lastIndexHeight
 }
 
 func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *ProjectPruneState) int {
@@ -255,12 +235,11 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *Proj
 	//oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
 	for i := range projectMetaData.DagChains {
 		if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight {
-			//&& projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight {
+			//&&
+			//oldestIndexedHeight != -1 && projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight {
 			continue
 		} else {
-			if projectMetaData.DagChains[i].ReadyForPruning {
-				heightToPrune = projectMetaData.DagChains[i].EndHeight
-			}
+			heightToPrune = projectMetaData.DagChains[i].EndHeight
 		}
 	}
 	return heightToPrune
@@ -274,7 +253,7 @@ func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid strin
 		return
 	}
 	//Can be Optimized: Consider batch upload of files if sizes are too small.
-	CID, opStatus := UploadToWeb3Storage(fileName)
+	CID, opStatus := UploadFileToWeb3Storage(fileName)
 	if opStatus {
 		log.Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
 		//Delete file from local storage.
@@ -287,6 +266,11 @@ func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid strin
 	}
 }
 
+func UpdateProjectMetaData(projectMetaData *ProjectMetaData) {
+	//TODO: Use project level lock/convert redis field in to a HTABLE in redis before updating metaData.
+
+}
+
 func ProcessProject(projectId string) {
 	log.Debugf("Processing Project %s", projectId)
 	// Fetch Project metaData from redis
@@ -296,7 +280,6 @@ func ProcessProject(projectId string) {
 	}
 	projectPruneState := projectList[projectId]
 	startScore := projectPruneState.LastPrunedHeight
-	//TODO: Don't prune until tail of all indexes are newer than this height.
 	endScore := FindPruningHeight(projectMetaData, projectPruneState)
 	if endScore == startScore {
 		log.Debugf("Nothing to Prune for project %s", projectId)
@@ -304,20 +287,19 @@ func ProcessProject(projectId string) {
 	}
 	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
 	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
-
+	//TODO: ideally use state to record each operation status.
 	if settingsObj.PruningServiceSettings.PerformArchival {
 		for i := range projectMetaData.DagChains {
 			//TODO: Can be optimized by storing index of lastPruned Chain.
 			if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight {
 				continue
 			} else {
-				if projectMetaData.DagChains[i].ReadyForPruning {
-					ArchiveDAG(projectId, projectMetaData.DagChains[i].BeginHeight,
-						projectMetaData.DagChains[i].EndHeight, projectMetaData.DagChains[i].EndDAGCID)
-				}
-				//TODO: Update Project metadata about archival status of DAG Chains.
+				ArchiveDAG(projectId, projectMetaData.DagChains[i].BeginHeight,
+					projectMetaData.DagChains[i].EndHeight, projectMetaData.DagChains[i].EndDAGCID)
+				projectMetaData.DagChains[i].StorageType = "COLD"
 			}
 		}
+		UpdateProjectMetaData(projectMetaData)
 	}
 	if settingsObj.PruningServiceSettings.PerformIPFSUnPin {
 		UnPinFromIPFS(projectId, dagCids)
@@ -325,9 +307,9 @@ func ProcessProject(projectId string) {
 	}
 	projectPruneState.LastPrunedHeight = endScore
 	if settingsObj.PruningServiceSettings.PruneRedisZsets {
-		//Backup ZSets before pruning
-		BackupZsetsToFile(projectId, startScore, endScore, payloadCids, dagCids)
-		//Prune redis ZSets
+		if settingsObj.PruningServiceSettings.BackUpRedisZSets {
+			BackupZsetsToFile(projectId, startScore, endScore, payloadCids, dagCids)
+		}
 		PruneProjectInRedis(projectId, startScore, endScore)
 	}
 }
@@ -376,7 +358,7 @@ func PruneZSetInRedis(key string, startScore int, endScore int) {
 	for i := 0; i < 3; i++ {
 		res := redisClient.ZRemRangeByScore(
 			ctx, key,
-			strconv.Itoa(startScore),
+			"-inf", //Always prune from start
 			strconv.Itoa(endScore),
 		)
 		if res.Err() != nil {
@@ -428,7 +410,7 @@ func ExportDAGFromIPFS(projectId string, fromHeight int, toHeight int, dagCID st
 			continue
 		}
 		if res.StatusCode == http.StatusOK {
-			log.Debugf("Received 200 OK from IPFS for project %s at height %d with Content-Length: %s",
+			log.Debugf("Received 200 OK from IPFS for project %s at height %d with Content-Length: %d",
 				projectId, fromHeight, res.ContentLength)
 			path := settingsObj.PruningServiceSettings.CARStoragePath
 			fileName := fmt.Sprintf("%s%s_%d_%d.car", path, projectId, fromHeight, toHeight)
@@ -456,7 +438,7 @@ func ExportDAGFromIPFS(projectId string, fromHeight int, toHeight int, dagCID st
 	}
 }
 
-func UploadToWeb3Storage(fileName string) (string, bool) {
+func UploadFileToWeb3Storage(fileName string) (string, bool) {
 
 	file, err := os.Open(fileName)
 	if err != nil {
@@ -468,13 +450,42 @@ func UploadToWeb3Storage(fileName string) (string, bool) {
 		log.Errorf("Unable to stat file %s due to error %+v", fileName, err)
 		return "", false
 	}
-	if fileStat.Size() > 100*1024*1024 {
-		log.Infof("File size greater than 100MB..needs chunking. Chunking logic not yet in place!!")
-		return "", false
-		//TODO: Need to chunk CAR files more than 100MB as web3.storage has size limit right now.
-		//Use code from carbites mentioned here https://web3.storage/docs/how-tos/work-with-car-files/
-	}
+	targetSize := 100 * 1024 * 1024 // 100MiB chunks
+
 	fileReader := bufio.NewReader(file)
+
+	if fileStat.Size() > int64(targetSize) {
+		log.Infof("File size greater than targetSize %d bytes..doing chunking", targetSize)
+		var lastCID string
+		var opStatus bool
+		// Need to chunk CAR files more than 100MB as web3.storage has size limit right now.
+		//Use code from carbites mentioned here https://web3.storage/docs/how-tos/work-with-car-files/
+		strategy := carbites.Treewalk
+		spltr, _ := carbites.Split(file, targetSize, strategy)
+		for i := 1; ; i++ {
+			car, err := spltr.Next()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				log.Fatalf("Failed to split car file %s due to error %+v", fileName, err)
+				return "", false
+			}
+			lastCID, opStatus = UploadChunkToWeb3Storage(fileName, car)
+			if !opStatus {
+				log.Errorf("Failed to upload chunk %d for file %s. aborting complete file.", i, fileName)
+				return "", false
+			}
+			log.Debugf("Uploaded chunk %d of file %s to web3.storage successfully", i, fileName)
+		}
+		return lastCID, true
+	} else {
+		return UploadChunkToWeb3Storage(fileName, fileReader)
+	}
+}
+
+func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bool) {
+
 	reqURL := settingsObj.Web3Storage.URL + "/car"
 	for retryCount := 0; ; {
 		if retryCount == *settingsObj.RetryCount {
@@ -641,11 +652,11 @@ func GetProjectsListFromRedis() {
 		projectList = make(map[string]*ProjectPruneState, 375)
 		for i := range res.Val() {
 			projectId := res.Val()[i]
-			//if strings.Contains(projectId, "UNISWAPV2") {
-			projectPruneState := ProjectPruneState{projectId, 0}
-			projectList[projectId] = &projectPruneState
-			//break
-			//}
+			if strings.Contains(projectId, "uniswap_V2PairsSummarySnapshot_UNISWAPV2") {
+				projectPruneState := ProjectPruneState{projectId, 0}
+				projectList[projectId] = &projectPruneState
+				break
+			}
 		}
 		log.Infof("Retrieved %d storedProjects %+v from redis", len(res.Val()), projectList)
 		return
