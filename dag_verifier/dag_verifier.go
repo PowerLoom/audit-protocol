@@ -433,32 +433,34 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	for j := range verifier.SummaryProjects {
 		projectId := verifier.SummaryProjects[j]
 		currentDagHeight := verifier.GetProjectDAGBlockHeightFromRedis(projectId)
-		if verifier.lastVerifiedDagBlockHeights[projectId] != "0" {
-			if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
-				verifier.noOfCyclesSinceChainStuck[projectId]++
-				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
-					log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
-					isDagchainStuckForSummaryProject++
-					var summaryProject SummaryProjectState
-					summaryProject.ProjectHeight = currentDagHeight
-					summaryProject.ProjectId = projectId
-					dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
-					dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
-				}
-				summaryProjectsMovingAheadAfterStuck = false
-			} else {
-				if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
-					summaryProjectsMovingAheadAfterStuck = true
-					var summaryProject SummaryProjectState
-					summaryProject.ProjectId = projectId
-					summaryProject.ProjectHeight = currentDagHeight
-					dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
-					dagSummary.SummaryProjectsRecovered = append(dagSummary.SummaryProjectsRecovered, summaryProject)
-				}
-				verifier.noOfCyclesSinceChainStuck[projectId] = 0
-			}
-			verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
+		if currentDagHeight == "0" {
+			log.Debugf("Project's %s height is 0 and not moved ahead. Skipping check for stuck", projectId)
+			continue
 		}
+		if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
+			verifier.noOfCyclesSinceChainStuck[projectId]++
+			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+				log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
+				isDagchainStuckForSummaryProject++
+				var summaryProject SummaryProjectState
+				summaryProject.ProjectHeight = currentDagHeight
+				summaryProject.ProjectId = projectId
+				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
+				dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
+			}
+			summaryProjectsMovingAheadAfterStuck = false
+		} else {
+			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+				summaryProjectsMovingAheadAfterStuck = true
+				var summaryProject SummaryProjectState
+				summaryProject.ProjectId = projectId
+				summaryProject.ProjectHeight = currentDagHeight
+				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
+				dagSummary.SummaryProjectsRecovered = append(dagSummary.SummaryProjectsRecovered, summaryProject)
+			}
+			verifier.noOfCyclesSinceChainStuck[projectId] = 0
+		}
+		verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
 	}
 
 	//Check if dagChain has issues for any project.
