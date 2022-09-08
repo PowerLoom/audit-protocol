@@ -96,7 +96,7 @@ func Run() {
 		VerifyAndPruneDAGChains()
 		UpdatePrunedStatusToRedis()
 		log.Infof("Completed cycle")
-		//TODO: Cleanup storage path wthat has old files.
+		//TODO: Cleanup storage path if it has old files.
 		time.Sleep(time.Duration(settingsObj.PruningServiceSettings.RunIntervalMins) * time.Minute)
 	}
 }
@@ -110,7 +110,6 @@ func GetLastPrunedStatusFromRedis() {
 		log.Info("Failed to fetch Last Pruned Status  from redis for the projects.")
 		//Key doesn't exist.
 		log.Info("Key doesn't exist..hence proceed from start of the block.")
-		//TODO: Read this from project metaData
 		return
 	}
 	err := res.Err()
@@ -229,7 +228,6 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 }
 
 func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *ProjectPruneState) int {
-	//TODO: How to handle first run with single large DAG chain.
 	heightToPrune := projectPruneState.LastPrunedHeight
 	//Fetch oldest height used by indexers
 	//oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
