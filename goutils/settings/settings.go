@@ -23,6 +23,7 @@ type _PruningServiceSettings_ struct {
 	PruneRedisZsets    bool          `json:"prune_redis_zsets"`
 	OldestProjectIndex string        `json:"oldest_project_index"`
 	BackUpRedisZSets   bool          `json:"backup_redis_zsets_to_file"`
+	IpfsTimeout        int           `json:"ipfs_timeout_secs"`
 }
 
 type _DagVerifierSettings_ struct {

@@ -138,6 +138,7 @@
 			"req_per_sec": 20,
 			"burst": 20
 		},
+		"ipfs_timeout_secs": 300,
 		"perform_archival": true,
 		"perform_ipfs_unpin": true,
 		"prune_redis_zsets":true,

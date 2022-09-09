@@ -555,6 +555,11 @@ func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bo
 				fileName, resp.CID)
 			return resp.CID, true
 		} else {
+			if res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusForbidden ||
+				res.StatusCode == http.StatusUnauthorized {
+				log.Errorf("Failed to upload to web3.storage due to error %+v with statusCode %d", resp, res.StatusCode)
+				return "", false
+			}
 			retryCount++
 			var resp Web3StorageErrResponse
 			err = json.Unmarshal(respBody, &resp)
@@ -741,7 +746,7 @@ func InitIPFSClient() {
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
+		Timeout:   time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout * 1000000000),
 		Transport: &t,
 	}
 	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
