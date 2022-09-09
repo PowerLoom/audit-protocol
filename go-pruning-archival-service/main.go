@@ -70,6 +70,8 @@ const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:stateMetadata"
 
 const REDIS_KEY_PROJECT_TAIL_INDEX string = "projectID:%s:slidingCache:%s:tail"
 
+const DAG_CHAIN_STORAGE_TYPE_COLD string = "COLD"
+
 func main() {
 
 	logger.InitLogger()
@@ -233,11 +235,10 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *ProjectPruneState) int {
 	heightToPrune := projectPruneState.LastPrunedHeight
 	//Fetch oldest height used by indexers
-	//oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
+	oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
 	for i := range projectMetaData.DagChains {
-		if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight {
-			//&&
-			//oldestIndexedHeight != -1 && projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight {
+		if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight &&
+			oldestIndexedHeight != -1 && projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight {
 			continue
 		} else {
 			heightToPrune = projectMetaData.DagChains[i].EndHeight
@@ -262,6 +263,7 @@ func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid strin
 		if err != nil {
 			log.Errorf("Failed to delete file %s due to error %+v", fileName, err)
 		}
+		log.Debugf("Deleted file %s successfully from local storage", fileName)
 	} else {
 		//TODO: Need to handle failure, where-in next cycle list of files present in dir should also be processed.
 	}
@@ -306,16 +308,13 @@ func ProcessProject(projectId string) {
 	}
 	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
 	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
-	//TODO: ideally use state to record each operation status.
 	if settingsObj.PruningServiceSettings.PerformArchival {
 		for i := range projectMetaData.DagChains {
 			//TODO: Can be optimized by storing index of lastPruned Chain.
-			if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight {
-				continue
-			} else {
+			if projectMetaData.DagChains[i].StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
 				ArchiveDAG(projectId, projectMetaData.DagChains[i].BeginHeight,
 					projectMetaData.DagChains[i].EndHeight, projectMetaData.DagChains[i].EndDAGCID)
-				projectMetaData.DagChains[i].StorageType = "COLD"
+				projectMetaData.DagChains[i].StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
 			}
 		}
 		UpdateProjectMetaData(projectMetaData)
@@ -374,7 +373,7 @@ func PruneZSetInRedis(key string, startScore int, endScore int) {
 	for i := 0; i < 3; i++ {
 		res := redisClient.ZRemRangeByScore(
 			ctx, key,
-			"-inf", //Always prune from start
+			strconv.Itoa(startScore), //Always prune from start
 			strconv.Itoa(endScore),
 		)
 		if res.Err() != nil {
@@ -439,7 +438,7 @@ func ExportDAGFromIPFS(projectId string, fromHeight int, toHeight int, dagCID st
 			//TODO: optimize for larger files.
 			bytesWritten, err := io.Copy(fileWriter, res.Body)
 			if err != nil {
-				log.Errorf("Failed to write to %s due to error %+v", err)
+				log.Errorf("Failed to write to %s due to error %+v", fileName, err)
 			}
 			fileWriter.Flush()
 			log.Debugf("Wrote %d bytes CAR to local file %s successfully", bytesWritten, fileName)
@@ -577,7 +576,7 @@ func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bo
 }
 
 func UnPinFromIPFS(projectId string, cids *map[int]string) {
-	for _, cid := range *cids {
+	for height, cid := range *cids {
 		i := 0
 		for ; i < 3; i++ {
 			err := ipfsClientRateLimiter.Wait(context.Background())
@@ -586,22 +585,22 @@ func UnPinFromIPFS(projectId string, cids *map[int]string) {
 				time.Sleep(1 * time.Second)
 				continue
 			}
-			log.Debugf("Unpinning CID %s from IPFS for project %s", cid, projectId)
+			log.Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectId)
 			err = ipfsClient.Unpin(cid)
 			if err != nil {
 				if err.Error() == "pin/rm: not pinned or pinned indirectly" {
-					log.Errorf("CID %s for project %s could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId)
+					log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
 					break
 				}
-				log.Errorf("Failed to unpin CID %s from ipfs for project %s due to error %+v. Retrying %d", cid, projectId, err, i)
+				log.Errorf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, i)
 				time.Sleep(5 * time.Second)
 				continue
 			}
-			log.Debugf("Unpinned CID %s from IPFS successfully for project %s", cid, projectId)
+			log.Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectId)
 			break
 		}
 		if i == 3 {
-			log.Errorf("Failed to unpin CID %s from ipfs for project %s after max retries", cid, projectId)
+			log.Errorf("Failed to unpin CID %s at height %d from ipfs for project %s after max retries", cid, height, projectId)
 			//TODO: Add to some failed queue to Unpin this CID at a later stage.
 			continue
 		}
@@ -694,7 +693,7 @@ func InitIPFSHTTPClient() {
 	}
 
 	ipfsHttpClient = http.Client{
-		Timeout:   time.Duration(settingsObj.Web3Storage.TimeoutSecs) * time.Second,
+		Timeout:   time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second,
 		Transport: &t,
 	}
 }
@@ -746,7 +745,7 @@ func InitIPFSClient() {
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout * 1000000000),
+		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
 		Transport: &t,
 	}
 	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
