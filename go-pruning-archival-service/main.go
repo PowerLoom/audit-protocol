@@ -294,6 +294,7 @@ func ProcessProject(projectId string) {
 	// Fetch Project metaData from redis
 	projectMetaData := FetchProjectMetaData(projectId)
 	if projectMetaData == nil {
+		log.Debugf("No state metaData available for project %s, skipping this cycle.", projectId)
 		return
 	}
 	projectPruneState := projectList[projectId]
@@ -340,23 +341,20 @@ func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCi
 		log.Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
 	}
 	defer file.Close()
-	payloadCidsJson, err := json.Marshal(payloadCids)
+
+	type ZSets struct {
+		PayloadCids *map[int]string `json:"payloadCids"`
+		DagCids     *map[int]string `json:"dagCids"`
+	}
+
+	zSets := ZSets{PayloadCids: payloadCids, DagCids: dagCids}
+
+	zSetsJson, err := json.Marshal(zSets)
 	if err != nil {
 		log.Fatalf("Failed to marshal payloadCids map to json due to error %+v", err)
 	}
-	dagCidsJson, err := json.Marshal(dagCids)
-	if err != nil {
-		log.Fatalf("Failed to marshal dagCids map to json due to error %+v", err)
-	}
 
-	bytesWritten, err := file.Write(payloadCidsJson)
-	if err != nil {
-		log.Errorf("Failed to write payloadCidsJson to file %s due to error %+v", fileName, err)
-	} else {
-		log.Debugf("Wrote %d bytes of payloadCids successfully to file %s.", bytesWritten, fileName)
-		file.Sync()
-	}
-	bytesWritten, err = file.Write(dagCidsJson)
+	bytesWritten, err := file.Write(zSetsJson)
 	if err != nil {
 		log.Errorf("Failed to write payloadCidsJson to file %s due to error %+v", fileName, err)
 	} else {
@@ -752,7 +750,7 @@ func InitIPFSClient() {
 	//Default values
 	tps := rate.Limit(200) //50 TPS
 	burst := 100
-	if settingsObj.IPFSRateLimiter != nil {
+	if settingsObj.PruningServiceSettings.IPFSRateLimiter != nil {
 		burst = settingsObj.PruningServiceSettings.IPFSRateLimiter.Burst
 		if settingsObj.PruningServiceSettings.IPFSRateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
