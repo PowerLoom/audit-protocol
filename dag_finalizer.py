@@ -719,7 +719,7 @@ async def identify_prune_target(project_id, tentative_max_height):
 
     # store
     p_ = await reader_redis_conn.get(
-        key=redis_keys.get_project_metadata_key(project_id)
+        redis_keys.get_project_metadata_key(project_id)
     )
     try:
         future_dag_cid = helper_functions.get_dag_cid(
