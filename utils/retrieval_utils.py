@@ -1,4 +1,3 @@
-from asyncio.windows_events import NULL
 from eth_utils import keccak
 from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
