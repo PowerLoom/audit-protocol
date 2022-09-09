@@ -7,7 +7,7 @@ from enum import Enum
 class ProjectDAGChainSegmentMetadata(BaseModel):
     beginHeight: int
     endHeight: int
-    endDAGCid: str
+    endDAGCID: str
     storageType: str
 
 

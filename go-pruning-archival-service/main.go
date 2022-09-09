@@ -37,7 +37,7 @@ var w3sHttpClient http.Client
 var web3StorageClientRateLimiter *rate.Limiter
 
 type ProjectMetaData struct {
-	ProjectID string `json:"projectId"`
+	ProjectID string `json:"projectID"`
 	DagChains []struct {
 		BeginHeight int    `json:"beginHeight"`
 		EndHeight   int    `json:"endHeight"`
@@ -188,6 +188,9 @@ func FetchProjectMetaData(projectId string) *ProjectMetaData {
 		//TODO: Convert to HTable.
 		res := redisClient.Get(ctx, key)
 		if res.Err() != nil {
+			if res.Err() == redis.Nil {
+				return nil
+			}
 			log.Errorf("Could not fetch key %s due to error %+v. Retrying %d.",
 				key, res.Err(), i)
 			time.Sleep(5 * time.Second)

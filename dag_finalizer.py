@@ -741,12 +741,12 @@ async def identify_prune_target(project_id, tentative_max_height):
             # get the DAG CID at tentative_max_height - 1 to set the endDAGCid field against the chain segment
             # in project state metadata
             project_state_metadata = ProjectStateMetadata(**{
-                'projectId': project_id,
+                'projectID': project_id,
                 'dagChains': [
                     {
                         'beginHeight': 1,
                         'endHeight': tentative_max_height - 1,
-                        'endDAGCid': last_dag_cid,
+                        'endDAGCID': last_dag_cid,
                         'storageType': 'pending'
                     }
                 ]
