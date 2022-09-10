@@ -96,7 +96,6 @@ func Run() {
 		GetLastPrunedStatusFromRedis()
 		log.Infof("Running Pruning Cycle")
 		VerifyAndPruneDAGChains()
-		UpdatePrunedStatusToRedis()
 		log.Infof("Completed cycle")
 		//TODO: Cleanup storage path if it has old files.
 		time.Sleep(time.Duration(settingsObj.PruningServiceSettings.RunIntervalMins) * time.Minute)
@@ -133,13 +132,9 @@ func GetLastPrunedStatusFromRedis() {
 	log.Debugf("Fetched Last Pruned Status from redis %+v", projectList)
 }
 
-func UpdatePrunedStatusToRedis() {
-	//No retry has been added, because in case of a failure, status will get updated in next run.
+func UpdatePrunedStatusToRedis(projectPruneState *ProjectPruneState) {
 	lastPrunedStatus := make(map[string]string, len(projectList))
-	//Prepare the status
-	for projectId, projectPruneState := range projectList {
-		lastPrunedStatus[projectId] = strconv.Itoa(projectPruneState.LastPrunedHeight)
-	}
+	lastPrunedStatus[projectPruneState.ProjectId] = strconv.Itoa(projectPruneState.LastPrunedHeight)
 
 	for i := 0; i < 3; i++ {
 		log.Info("Updating Last Pruned Status at key:", REDIS_KEY_PRUNING_STATUS)
@@ -149,8 +144,10 @@ func UpdatePrunedStatusToRedis() {
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		log.Debugf("Updated last Pruned status %+v successfully in redis", projectPruneState.ProjectId)
 		return
 	}
+	log.Errorf("Failed to update last Pruned status %+v in redis", projectPruneState.ProjectId)
 }
 
 func VerifyAndPruneDAGChains() {
@@ -309,15 +306,19 @@ func ProcessProject(projectId string) {
 	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
 	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
 	if settingsObj.PruningServiceSettings.PerformArchival {
+		updateMetaData := false
 		for i := range projectMetaData.DagChains {
 			//TODO: Can be optimized by storing index of lastPruned Chain.
 			if projectMetaData.DagChains[i].StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
 				ArchiveDAG(projectId, projectMetaData.DagChains[i].BeginHeight,
 					projectMetaData.DagChains[i].EndHeight, projectMetaData.DagChains[i].EndDAGCID)
 				projectMetaData.DagChains[i].StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
+				updateMetaData = true
 			}
 		}
-		UpdateProjectMetaData(projectMetaData)
+		if updateMetaData {
+			UpdateProjectMetaData(projectMetaData)
+		}
 	}
 	if settingsObj.PruningServiceSettings.PerformIPFSUnPin {
 		UnPinFromIPFS(projectId, dagCids)
@@ -330,6 +331,7 @@ func ProcessProject(projectId string) {
 		}
 		PruneProjectInRedis(projectId, startScore, endScore)
 	}
+	UpdatePrunedStatusToRedis(projectPruneState)
 }
 
 func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCids *map[int]string, dagCids *map[int]string) {
@@ -373,7 +375,7 @@ func PruneZSetInRedis(key string, startScore int, endScore int) {
 	for i := 0; i < 3; i++ {
 		res := redisClient.ZRemRangeByScore(
 			ctx, key,
-			strconv.Itoa(startScore), //Always prune from start
+			"-inf", //Always prune from start
 			strconv.Itoa(endScore),
 		)
 		if res.Err() != nil {

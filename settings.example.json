@@ -130,8 +130,8 @@
 		]
 	},
 	"pruning":{
-		"run_interval_mins": 240,
-		"segment_size": 700,
+		"run_interval_mins": 600,
+		"segment_size": 720,
 		"concurrency":20,
 		"car_storage_path":"/tmp/",
 		"ipfs_rate_limit":{
