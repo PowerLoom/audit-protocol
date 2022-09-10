@@ -756,7 +756,7 @@ async def identify_prune_target(project_id, tentative_max_height):
             new_dag_segment_pending_pruning = ProjectDAGChainSegmentMetadata(
                 beginHeight=project_state_metadata.dagChains[-1].endHeight+1,
                 endHeight=tentative_max_height - 1,
-                endDAGCid=last_dag_cid,
+                endDAGCID=last_dag_cid,
                 storageType='pending'
             )
             project_state_metadata.dagChains.append(new_dag_segment_pending_pruning)
