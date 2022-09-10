@@ -65,6 +65,8 @@ var projectList map[string]*ProjectPruneState
 const REDIS_KEY_STORED_PROJECTS string = "storedProjectIds"
 const REDIS_KEY_PROJECT_PAYLOAD_CIDS string = "projectID:%s:payloadCids"
 const REDIS_KEY_PROJECT_CIDS string = "projectID:%s:Cids"
+const REDIS_KEY_PROJECT_FINALIZED_HEIGHT string = "projectID:%s:blockHeight"
+
 const REDIS_KEY_PRUNING_STATUS string = "projects:pruningStatus"
 const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:stateMetadata"
 
@@ -218,6 +220,22 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 	if err != nil {
 		if err == redis.Nil {
 			log.Errorf("Key %s does not exist", key)
+			//For summary projects hard-code it to curBlockHeight-1000 as of now which gives safe values till 24hrs
+			key = fmt.Sprintf(REDIS_KEY_PROJECT_FINALIZED_HEIGHT, projectPruneState.ProjectId)
+			res = redisClient.Get(ctx, key)
+			err := res.Err()
+			if err != nil {
+				if err == redis.Nil {
+					log.Errorf("Key %s does not exist", key)
+					return -1
+				}
+			}
+			projectFinalizedHeight, err := strconv.Atoi(res.Val())
+			if err != nil {
+				log.Fatalf("Unable to convert retrieved projectFinalizedHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
+				return -1
+			}
+			lastIndexHeight = projectFinalizedHeight - 1000
 			return lastIndexHeight
 		}
 	}
