@@ -341,7 +341,7 @@ func ProcessProject(projectId string) {
 
 func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCids *map[int]string, dagCids *map[int]string) {
 	path := settingsObj.PruningServiceSettings.CARStoragePath
-	fileName := fmt.Sprintf("%s%s_%d_%d.json", path, projectId, startScore, endScore)
+	fileName := fmt.Sprintf("%s%s__%d_%d.json", path, projectId, startScore, endScore)
 	file, err := os.Create(fileName)
 	if err != nil {
 		log.Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
