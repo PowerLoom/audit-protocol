@@ -226,6 +226,7 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 		log.Fatalf("Unable to convert retrieved lastIndexHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
 		return -1
 	}
+	log.Debugf("Fetched oldest index height %d for project %s from redis ", lastIndexHeight, projectPruneState.ProjectId)
 	return lastIndexHeight
 }
 
@@ -234,8 +235,8 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *Proj
 	//Fetch oldest height used by indexers
 	oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
 	for i := range projectMetaData.DagChains {
-		if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight &&
-			oldestIndexedHeight != -1 && projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight {
+		if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight ||
+			(oldestIndexedHeight != -1 && projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight) {
 			continue
 		} else {
 			heightToPrune = projectMetaData.DagChains[i].EndHeight
@@ -303,9 +304,11 @@ func ProcessProject(projectId string) {
 		log.Debugf("Nothing to Prune for project %s", projectId)
 		return
 	}
+	log.Debugf("Height to Prune is %d for project %s", endScore, projectId)
 	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
 	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
 	if settingsObj.PruningServiceSettings.PerformArchival {
+		log.Infof("Performing Archival for project %s", projectId)
 		updateMetaData := false
 		for i := range projectMetaData.DagChains {
 			//TODO: Can be optimized by storing index of lastPruned Chain.
@@ -321,6 +324,7 @@ func ProcessProject(projectId string) {
 		}
 	}
 	if settingsObj.PruningServiceSettings.PerformIPFSUnPin {
+		log.Infof("Unpinning from IPFS for project %s", projectId)
 		UnPinFromIPFS(projectId, dagCids)
 		UnPinFromIPFS(projectId, payloadCids)
 	}
@@ -329,6 +333,7 @@ func ProcessProject(projectId string) {
 		if settingsObj.PruningServiceSettings.BackUpRedisZSets {
 			BackupZsetsToFile(projectId, startScore, endScore, payloadCids, dagCids)
 		}
+		log.Infof("Pruning redis Zsets from IPFS for project %s", projectId)
 		PruneProjectInRedis(projectId, startScore, endScore)
 	}
 	UpdatePrunedStatusToRedis(projectPruneState)
@@ -427,8 +432,8 @@ func ExportDAGFromIPFS(projectId string, fromHeight int, toHeight int, dagCID st
 			continue
 		}
 		if res.StatusCode == http.StatusOK {
-			log.Debugf("Received 200 OK from IPFS for project %s at height %d with Content-Length: %d",
-				projectId, fromHeight, res.ContentLength)
+			log.Debugf("Received 200 OK from IPFS for project %s at height %d",
+				projectId, fromHeight)
 			path := settingsObj.PruningServiceSettings.CARStoragePath
 			fileName := fmt.Sprintf("%s%s_%d_%d.car", path, projectId, fromHeight, toHeight)
 			file, err := os.Create(fileName)
