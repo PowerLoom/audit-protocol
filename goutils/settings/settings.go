@@ -8,14 +8,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type _RateLimiter struct {
+type RateLimiter_ struct {
 	Burst          int `json:"burst"`
 	RequestsPerSec int `json:"req_per_sec"`
 }
 
-type _PruningServiceSettings_ struct {
+type PruningServiceSettings_ struct {
 	RunIntervalMins    int           `json:"run_interval_mins"`
-	IPFSRateLimiter    *_RateLimiter `json:"ipfs_rate_limit"`
+	IPFSRateLimiter    *RateLimiter_ `json:"ipfs_rate_limit"`
 	Concurrency        int           `json:"concurrency"`
 	CARStoragePath     string        `json:"car_storage_path"`
 	PerformArchival    bool          `json:"perform_archival"`
@@ -31,7 +31,7 @@ type _DagVerifierSettings_ struct {
 	RunIntervalSecs              int           `json:"run_interval_secs"`
 	SuppressNotificationTimeSecs int64         `json:"suppress_notification_for_secs"`
 	SummaryProjectsToTrack       []string      `json:"additional_projects_to_track_prefixes"`
-	IPFSRateLimiter              *_RateLimiter `json:"ipfs_rate_limit,omitempty"`
+	IPFSRateLimiter              *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
 	Concurrency                  int           `json:"concurrency"`
 	RedisPoolSize                int           `json:"redis_pool_size"`
 }
@@ -43,7 +43,7 @@ type SettingsObj struct {
 	WebhookListener struct {
 		Host        string        `json:"host"`
 		Port        int           `json:"port"`
-		RateLimiter *_RateLimiter `json:"rate_limit,omitempty"`
+		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
 	IpfsURL          string `json:"ipfs_url"`
 	SnapshotInterval int    `json:"snapshot_interval"`
@@ -62,7 +62,7 @@ type SettingsObj struct {
 		} `json:"setup"`
 	} `json:"rabbitmq"`
 	ContractCallBackend   string        `json:"contract_call_backend"`
-	ContractRateLimiter   *_RateLimiter `json:"contract_rate_limit,omitempty"`
+	ContractRateLimiter   *RateLimiter_ `json:"contract_rate_limit,omitempty"`
 	RetryCount            *int          `json:"retry_count"`
 	RetryIntervalSecs     int           `json:"retry_interval_secs"`
 	HttpClientTimeoutSecs int           `json:"http_client_timeout_secs"`
@@ -123,7 +123,7 @@ type SettingsObj struct {
 	UnpinMode                  string        `json:"unpin_mode"`
 	MaxPendingEvents           int           `json:"max_pending_events"`
 	IpfsTimeout                int           `json:"ipfs_timeout"`
-	IPFSRateLimiter            *_RateLimiter `json:"ipfs_rate_limit,omitempty"`
+	IPFSRateLimiter            *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
 	SpanExpireTimeout          int           `json:"span_expire_timeout"`
 	APIKey                     string        `json:"api_key"`
 	AiohtttpTimeouts           struct {
@@ -137,11 +137,11 @@ type SettingsObj struct {
 		TimeoutSecs     int           `json:"timeout_secs"`
 		MaxIdleConns    int           `json:"max_idle_conns"`
 		IdleConnTimeout int           `json:"idle_conn_timeout"`
-		RateLimiter     *_RateLimiter `json:"rate_limit,omitempty"`
+		RateLimiter     *RateLimiter_ `json:"rate_limit,omitempty"`
 		UploadURLSuffix string        `json:"upload_url_suffix"`
 	} `json:"web3_storage"`
 	DagVerifierSettings    _DagVerifierSettings_    `json:"dag_verifier"`
-	PruningServiceSettings _PruningServiceSettings_ `json:"pruning"`
+	PruningServiceSettings *PruningServiceSettings_ `json:"pruning"`
 }
 
 func ParseSettings(settingsFile string) *SettingsObj {

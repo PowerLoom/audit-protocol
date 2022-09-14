@@ -78,11 +78,30 @@ func main() {
 
 	logger.InitLogger()
 	settingsObj = settings.ParseSettings("../settings.json")
+	SetDefaultPruneConfig()
 	InitIPFSClient()
 	InitRedisClient()
 	InitIPFSHTTPClient()
 	InitW3sClient()
 	Run()
+}
+
+func SetDefaultPruneConfig() {
+	if settingsObj.PruningServiceSettings == nil {
+		defaultSettings := settings.PruningServiceSettings_{
+			RunIntervalMins:    600,
+			Concurrency:        5,
+			CARStoragePath:     "/tmp/",
+			PerformArchival:    true,
+			PerformIPFSUnPin:   true,
+			PruneRedisZsets:    true,
+			BackUpRedisZSets:   false,
+			OldestProjectIndex: "7d",
+			IpfsTimeout:        300,
+			IPFSRateLimiter:    &settings.RateLimiter_{Burst: 20, RequestsPerSec: 20},
+		}
+		settingsObj.PruningServiceSettings = &defaultSettings
+	}
 }
 
 func Run() {
@@ -315,16 +334,7 @@ func ProcessProject(projectId string) {
 		log.Debugf("No state metaData available for project %s, skipping this cycle.", projectId)
 		return
 	}
-	projectPruneState := projectList[projectId]
-	startScore := projectPruneState.LastPrunedHeight
-	endScore := FindPruningHeight(projectMetaData, projectPruneState)
-	if endScore == startScore {
-		log.Debugf("Nothing to Prune for project %s", projectId)
-		return
-	}
-	log.Debugf("Height to Prune is %d for project %s", endScore, projectId)
-	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
-	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
+
 	if settingsObj.PruningServiceSettings.PerformArchival {
 		log.Infof("Performing Archival for project %s", projectId)
 		updateMetaData := false
@@ -341,6 +351,17 @@ func ProcessProject(projectId string) {
 			UpdateProjectMetaData(projectMetaData)
 		}
 	}
+
+	projectPruneState := projectList[projectId]
+	startScore := projectPruneState.LastPrunedHeight
+	endScore := FindPruningHeight(projectMetaData, projectPruneState)
+	if endScore == startScore {
+		log.Debugf("Nothing to Prune for project %s", projectId)
+		return
+	}
+	log.Debugf("Height to Prune is %d for project %s", endScore, projectId)
+	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
+	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
 	if settingsObj.PruningServiceSettings.PerformIPFSUnPin {
 		log.Infof("Unpinning from IPFS for project %s", projectId)
 		UnPinFromIPFS(projectId, dagCids)
