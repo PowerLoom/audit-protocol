@@ -246,7 +246,7 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 			if err != nil {
 				if err == redis.Nil {
 					log.Errorf("Key %s does not exist", key)
-					return -1
+					return 0
 				}
 			}
 			projectFinalizedHeight, err := strconv.Atoi(res.Val())
@@ -271,13 +271,8 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *Proj
 	heightToPrune := projectPruneState.LastPrunedHeight
 	//Fetch oldest height used by indexers
 	oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
-	for i := range projectMetaData.DagChains {
-		if projectMetaData.DagChains[i].EndHeight < projectPruneState.LastPrunedHeight ||
-			(oldestIndexedHeight != -1 && projectMetaData.DagChains[i].EndHeight > oldestIndexedHeight) {
-			continue
-		} else {
-			heightToPrune = projectMetaData.DagChains[i].EndHeight
-		}
+	if oldestIndexedHeight != -1 {
+		heightToPrune = oldestIndexedHeight
 	}
 	return heightToPrune
 }
@@ -634,7 +629,7 @@ func UnPinFromIPFS(projectId string, cids *map[int]string) {
 			log.Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectId)
 			err = ipfsClient.Unpin(cid)
 			if err != nil {
-				if err.Error() == "pin/rm: not pinned or pinned indirectly" {
+				if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
 					log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
 					break
 				}
