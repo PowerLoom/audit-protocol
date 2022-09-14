@@ -52,7 +52,7 @@ class TableNames(BaseModel):
 
 
 class PruneSettings(BaseModel):
-    segment_size: int
+    segment_size: int = 700
 
 class Settings(BaseModel):
     host: str
