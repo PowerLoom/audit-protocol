@@ -424,7 +424,7 @@ async def payload_to_dag_processor_task(event_data):
             #       in-order insertion, where the segment size overflow condition might be satisfied
             #       Not handling it will not break anything except for the fact that we might have unevenly sized
             #       pruned and backed up segments.
-            if tentative_block_height_event_data % settings.pruning.segment_size == 1:
+            if tentative_block_height_event_data > settings.pruning.segment_size and tentative_block_height_event_data % settings.pruning.segment_size == 1:
                 await identify_prune_target(project_id, tentative_block_height_event_data)
                 fetch_prev_cid_for_dag_block_creation = False
             async for attempt in AsyncRetrying(
@@ -571,7 +571,7 @@ async def payload_to_dag_processor_task(event_data):
                 _tt_block_height = int(_tt_block_height)
                 pending_q_fetch_prev_cid_for_dag_block_creation = True
                 if _tt_block_height == cur_max_height_project + 1:
-                    if _tt_block_height % settings.pruning.segment_size == 1:
+                    if _tt_block_height > settings.pruning.segment_size and _tt_block_height % settings.pruning.segment_size == 1:
                         await identify_prune_target(project_id, _tt_block_height)
                         pending_q_fetch_prev_cid_for_dag_block_creation = False
                     custom_logger.info(
