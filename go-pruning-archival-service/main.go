@@ -272,7 +272,7 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *Proj
 	//Fetch oldest height used by indexers
 	oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
 	if oldestIndexedHeight != -1 {
-		heightToPrune = oldestIndexedHeight
+		heightToPrune = oldestIndexedHeight - 100 //Adding a buffer just in case 7d index is just crossed and some heights before it are used in sliding window.
 	}
 	return heightToPrune
 }
@@ -350,7 +350,7 @@ func ProcessProject(projectId string) {
 	projectPruneState := projectList[projectId]
 	startScore := projectPruneState.LastPrunedHeight
 	endScore := FindPruningHeight(projectMetaData, projectPruneState)
-	if endScore == startScore {
+	if endScore <= startScore {
 		log.Debugf("Nothing to Prune for project %s", projectId)
 		return
 	}
