@@ -7,6 +7,18 @@ import logging
 import sys
 from redis import asyncio as aioredis
 
+logger = logging.getLogger("Utils|helper_functions")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s: %(message)s")
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setFormatter(formatter)
+stdout_handler.setLevel(logging.DEBUG)
+logger.addHandler(stdout_handler)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setFormatter(formatter)
+stderr_handler.setLevel(logging.ERROR)
+logger.addHandler(stderr_handler)
 
 async def get_tentative_block_height(
         project_id: str,
@@ -78,17 +90,17 @@ def cleanup_children_procs(fn):
     def wrapper(self, *args, **kwargs):
         try:
             fn(self, *args, **kwargs)
-            logging.info('Finished running process core...')
+            logger.info('Finished running process core...')
         except Exception as e:
-            logging.error('Received an exception on process core run(): %s', e, exc_info=True)
-            logging.error('Waiting on spawned callback workers to join...\n%s', self._spawned_processes_map)
+            logger.error('Received an exception on process core run(): %s', e, exc_info=True)
+            logger.error('Waiting on spawned callback workers to join...\n%s', self._spawned_processes_map)
             for k, v in self._spawned_processes_map.items():
-                logging.error('spawned Process Pid to wait on %s', v.pid)
+                logger.error('spawned Process Pid to wait on %s', v.pid)
                 # internal state reporter might set proc_id_map[k] = -1
                 if v != -1:
-                    logging.error('Waiting on spawned core worker %s | PID %s  to join...', k, v.pid)
+                    logger.error('Waiting on spawned core worker %s | PID %s  to join...', k, v.pid)
                     v.join()
-            logging.error('Finished waiting for all children...now can exit.')
+            logger.error('Finished waiting for all children...now can exit.')
         finally:
             sys.exit(0)
     return wrapper
@@ -103,7 +115,7 @@ async def commit_payload(project_id, report_payload, session: AsyncClient, web3_
                     url=audit_protocol_url,
                     json={'payload': report_payload, 'projectId': project_id, 'web3Storage': web3_storage_flag, 'skipAnchorProof': skipAnchorProof}
             )
-            logging.debug('Got audit protocol response: %s', response_obj.text)
+            logger.debug('Got audit protocol response: %s', response_obj.text)
             response_status_code = response_obj.status_code
             response = response_obj.json() or {}
             if response_status_code in range(200, 300):

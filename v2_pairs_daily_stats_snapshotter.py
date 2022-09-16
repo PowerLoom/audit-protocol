@@ -16,7 +16,7 @@ from pair_data_aggregation_service import fetch_and_update_status_of_older_snaps
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s %(msecs)d %(module)s-%(funcName)s: %(message)s")
+formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s: %(message)s")
 stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setFormatter(formatter)
 stdout_handler.setLevel(logging.DEBUG)
