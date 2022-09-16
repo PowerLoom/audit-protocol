@@ -9,7 +9,7 @@ from redis import asyncio as aioredis
 
 logger = logging.getLogger("Utils|helper_functions")
 logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s: %(message)s")
+formatter = logging.Formatter("%(levelname)-8s %(name)-4s %(asctime)s %(msecs)d %(module)s-%(funcName)s: %(message)s")
 stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setFormatter(formatter)
 stdout_handler.setLevel(logging.DEBUG)
