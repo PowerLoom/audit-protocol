@@ -53,7 +53,7 @@ func (client *IpfsClient) Init(settingsObj *SettingsObj) {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.IPFSRateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.DagVerifierSettings.IPFSRateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
