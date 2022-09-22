@@ -95,8 +95,8 @@ def get_stored_project_ids_key():
     return stored_project_ids_key
 
 
-def get_project_metadata_key(project_id: str):
-    return f'projectID:{project_id}:stateMetadata'
+def get_project_dag_segments_key(project_id: str):
+    return f'projectID:{project_id}:dagSegments'
 
 
 def get_target_dags_key(project_id: str):

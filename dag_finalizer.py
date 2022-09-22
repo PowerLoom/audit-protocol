@@ -13,7 +13,7 @@ from tenacity import retry_if_exception, wait_random_exponential, stop_after_att
 from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional
-from data_models import PayloadCommit, PendingTransaction, ProjectStateMetadata, ProjectDAGChainSegmentMetadata
+from data_models import PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata
 from redis import asyncio as aioredis
 import asyncio
 import aiohttp
@@ -711,17 +711,19 @@ async def identify_prune_target(project_id, tentative_max_height):
     # should be triggered when finalized_height (mod) segment_size == 1
     writer_redis_conn: aioredis.Redis = app.writer_redis_pool
     reader_redis_conn: aioredis.Redis = app.reader_redis_pool
-    # if state metadata not present, initialize for the entire chain
+    # if dagSegments are not present, initialize for the entire chain
     # first run, do not divide between height 1 -> cur_max
     # back up entire segment, 1 - 2800, for example with expected segment length, 700
     # insertion of DAG block at 2801, should contain prevCid = null right there and not refer to 2800
     # next run, qualified target would be 2801 - 3500, and would be triggered at height 3501
 
     # store
-    p_ = await reader_redis_conn.get(
-        redis_keys.get_project_metadata_key(project_id)
+    p_ = await reader_redis_conn.hgetall(
+        name=redis_keys.get_project_dag_segments_key(project_id)
     )
     try:
+        # get the DAG CID at tentative_max_height - 1 to set the endDAGCid field against the chain segment
+        # in project state metadata
         future_dag_cid = helper_functions.get_dag_cid(
             project_id=project_id,
             block_height=tentative_max_height - 1,
@@ -737,30 +739,19 @@ async def identify_prune_target(project_id, tentative_max_height):
             "Failure while getting dag cid from Redis zset of project CIDs, Exception: %s", e, exc_info=True
         )
     else:
-        if not p_:
-            # get the DAG CID at tentative_max_height - 1 to set the endDAGCid field against the chain segment
-            # in project state metadata
-            project_state_metadata = ProjectStateMetadata(**{
-                'projectID': project_id,
-                'dagChains': [
-                    {
-                        'beginHeight': 1,
-                        'endHeight': tentative_max_height - 1,
-                        'endDAGCID': last_dag_cid,
-                        'storageType': 'pending'
-                    }
-                ]
-            })
-        else:
-            project_state_metadata: ProjectStateMetadata = ProjectStateMetadata.parse_raw(p_)
-            new_dag_segment_pending_pruning = ProjectDAGChainSegmentMetadata(
-                beginHeight=project_state_metadata.dagChains[-1].endHeight+1,
-                endHeight=tentative_max_height - 1,
-                endDAGCID=last_dag_cid,
-                storageType='pending'
-            )
-            project_state_metadata.dagChains.append(new_dag_segment_pending_pruning)
-        await writer_redis_conn.set(redis_keys.get_project_metadata_key(project_id), project_state_metadata.json())
+        begin_height = 1
+        if len(p_) > 0:
+            sorted_keys = sorted(list(p_.keys()), key = lambda x: (len(x),x))
+            sorted_dict = {k:p_[k] for k in sorted_keys}
+            last_dag_segment = ProjectDAGChainSegmentMetadata.parse_raw(sorted_dict[sorted_keys[-1]])
+            begin_height = last_dag_segment.endHeight+1
+        new_project_dag_segment = ProjectDAGChainSegmentMetadata(
+            beginHeight=begin_height,
+            endHeight=tentative_max_height - 1,
+            endDAGCID=last_dag_cid,
+            storageType='pending'
+        )
+        await writer_redis_conn.hset(redis_keys.get_project_dag_segments_key(project_id),new_project_dag_segment.endHeight,new_project_dag_segment.json())
 
 
 @app.post('/')
