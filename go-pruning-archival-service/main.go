@@ -16,6 +16,7 @@ import (
 
 	"github.com/alanshaw/go-carbites"
 	"github.com/go-redis/redis/v8"
+
 	shell "github.com/ipfs/go-ipfs-api"
 	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/settings"
@@ -37,13 +38,25 @@ var w3sHttpClient http.Client
 var web3StorageClientRateLimiter *rate.Limiter
 
 type ProjectMetaData struct {
-	ProjectID string `json:"projectID"`
-	DagChains []struct {
+	//ProjectID string `json:"projectID"`
+	DagChains map[string]string
+	/*DagChains []struct {
 		BeginHeight int    `json:"beginHeight"`
 		EndHeight   int    `json:"endHeight"`
 		EndDAGCID   string `json:"endDAGCID"`
 		StorageType string `json:"storageType"`
-	} `json:"dagChains"`
+	} `json:"dagChains"`*/
+}
+
+type ProjectDAGSegment struct {
+	BeginHeight int    `json:"beginHeight"`
+	EndHeight   int    `json:"endHeight"`
+	EndDAGCID   string `json:"endDAGCID"`
+	StorageType string `json:"storageType"`
+}
+
+func (i ProjectDAGSegment) MarshalBinary() ([]byte, error) {
+	return json.Marshal(i)
 }
 
 type ProjectPruneState struct {
@@ -68,7 +81,7 @@ const REDIS_KEY_PROJECT_CIDS string = "projectID:%s:Cids"
 const REDIS_KEY_PROJECT_FINALIZED_HEIGHT string = "projectID:%s:blockHeight"
 
 const REDIS_KEY_PRUNING_STATUS string = "projects:pruningStatus"
-const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:stateMetadata"
+const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:dagSegments"
 
 const REDIS_KEY_PROJECT_TAIL_INDEX string = "projectID:%s:slidingCache:%s:tail"
 
@@ -206,7 +219,7 @@ func FetchProjectMetaData(projectId string) *ProjectMetaData {
 	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectId)
 	for i := 0; i < 3; i++ {
 		//TODO: Convert to HTable.
-		res := redisClient.Get(ctx, key)
+		res := redisClient.HGetAll(ctx, key)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
 				return nil
@@ -219,12 +232,7 @@ func FetchProjectMetaData(projectId string) *ProjectMetaData {
 		log.Debugf("Successfully fetched project metaData from redis for projectId %s with value %s",
 			projectId, res.Val())
 		var projectMetaData ProjectMetaData
-		err := json.Unmarshal([]byte(res.Val()), &projectMetaData)
-		if err != nil {
-			log.Fatalf("Failed to Unmarshal project metaData fetched from redis for project %s due to error %+v",
-				projectId, err)
-			return nil
-		}
+		projectMetaData.DagChains = res.Val()
 		return &projectMetaData
 	}
 	log.Errorf("Failed to fetch metaData for project %s from redis after max retries.", projectId)
@@ -238,7 +246,7 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 	err := res.Err()
 	if err != nil {
 		if err == redis.Nil {
-			log.Errorf("Key %s does not exist", key)
+			log.Infof("Key %s does not exist", key)
 			//For summary projects hard-code it to curBlockHeight-1000 as of now which gives safe values till 24hrs
 			key = fmt.Sprintf(REDIS_KEY_PROJECT_FINALIZED_HEIGHT, projectPruneState.ProjectId)
 			res = redisClient.Get(ctx, key)
@@ -277,48 +285,52 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *Proj
 	return heightToPrune
 }
 
-func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid string) {
+func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid string) bool {
 	//Export DAG from IPFS
 	fileName, opStatus := ExportDAGFromIPFS(projectId, startScore, endScore, lastDagCid)
 	if opStatus {
 		log.Errorf("Unable to export DAG for project %s at height %d. Will retry in next cycle", projectId, endScore)
-		return
+		return false
 	}
 	//Can be Optimized: Consider batch upload of files if sizes are too small.
 	CID, opStatus := UploadFileToWeb3Storage(fileName)
 	if opStatus {
 		log.Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
-		//Delete file from local storage.
-		err := os.Remove(fileName)
-		if err != nil {
-			log.Errorf("Failed to delete file %s due to error %+v", fileName, err)
-		}
+
 		log.Debugf("Deleted file %s successfully from local storage", fileName)
 	} else {
 		//TODO: Need to handle failure, where-in next cycle list of files present in dir should also be processed.
+		return false
 	}
+	//Delete file from local storage.
+	err := os.Remove(fileName)
+	if err != nil {
+		log.Errorf("Failed to delete file %s due to error %+v", fileName, err)
+	}
+	return true
 }
 
-func UpdateProjectMetaData(projectMetaData *ProjectMetaData) {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectMetaData.ProjectID)
-	projectMetaDataJson, err := json.Marshal(projectMetaData)
-	if err != nil {
-		log.Fatalf("Unable to marshal Project MetaData for project %s due to error !! %+v ", err)
-	}
+func UpdateDagSegmentStatusToRedis(projectID string, height int, dagSegment *ProjectDAGSegment) bool {
+	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectID)
 	for i := 0; i < 3; i++ {
-		//TODO: Convert to HTable or use a project level lock to avoid race with DAG Finalizer.
-		res := redisClient.Set(ctx, key, projectMetaDataJson, 0)
+		bytes, err := json.Marshal(dagSegment)
+		if err != nil {
+			log.Fatalf("Failed to marshal dag segment due toe error %+v", err)
+			return false
+		}
+		res := redisClient.HSet(ctx, key, height, bytes)
 		if res.Err() != nil {
-			log.Errorf("Could not fetch key %s due to error %+v. Retrying %d.",
+			log.Errorf("Could not update key %s due to error %+v. Retrying %d.",
 				key, res.Err(), i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Debugf("Successfully updated project metaData to redis for projectId %s with value %+v",
-			projectMetaData.ProjectID, *projectMetaData)
-		return
+		log.Debugf("Successfully updated archivedDAGSegments to redis for projectId %s with value %+v",
+			projectID, *dagSegment)
+		return true
 	}
-	log.Errorf("Failed to update metaData for project %s to redis after max retries.", projectMetaData.ProjectID)
+	log.Errorf("Failed to update DAGSegments %+v for project %s to redis after max retries.", *dagSegment, projectID)
+	return false
 }
 
 func ProcessProject(projectId string) {
@@ -329,24 +341,6 @@ func ProcessProject(projectId string) {
 		log.Debugf("No state metaData available for project %s, skipping this cycle.", projectId)
 		return
 	}
-
-	if settingsObj.PruningServiceSettings.PerformArchival {
-		log.Infof("Performing Archival for project %s", projectId)
-		updateMetaData := false
-		for i := range projectMetaData.DagChains {
-			//TODO: Can be optimized by storing index of lastPruned Chain.
-			if projectMetaData.DagChains[i].StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
-				ArchiveDAG(projectId, projectMetaData.DagChains[i].BeginHeight,
-					projectMetaData.DagChains[i].EndHeight, projectMetaData.DagChains[i].EndDAGCID)
-				projectMetaData.DagChains[i].StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
-				updateMetaData = true
-			}
-		}
-		if updateMetaData {
-			UpdateProjectMetaData(projectMetaData)
-		}
-	}
-
 	projectPruneState := projectList[projectId]
 	startScore := projectPruneState.LastPrunedHeight
 	endScore := FindPruningHeight(projectMetaData, projectPruneState)
@@ -355,22 +349,54 @@ func ProcessProject(projectId string) {
 		return
 	}
 	log.Debugf("Height to Prune is %d for project %s", endScore, projectId)
-	payloadCids := GetPayloadCidsFromRedis(projectId, startScore, endScore)
-	dagCids := GetDAGCidsFromRedis(projectId, startScore, endScore)
-	if settingsObj.PruningServiceSettings.PerformIPFSUnPin {
-		log.Infof("Unpinning from IPFS for project %s", projectId)
-		UnPinFromIPFS(projectId, dagCids)
-		UnPinFromIPFS(projectId, payloadCids)
-	}
-	projectPruneState.LastPrunedHeight = endScore
-	if settingsObj.PruningServiceSettings.PruneRedisZsets {
-		if settingsObj.PruningServiceSettings.BackUpRedisZSets {
-			BackupZsetsToFile(projectId, startScore, endScore, payloadCids, dagCids)
+
+	for dagSegmentEndHeightStr, dagChainSegment := range projectMetaData.DagChains {
+		dagSegmentEndHeight, err := strconv.Atoi(dagSegmentEndHeightStr)
+		if err != nil {
+			log.Errorf("dagSegmentEndHeight is not an integer.")
+			return
 		}
-		log.Infof("Pruning redis Zsets from IPFS for project %s", projectId)
-		PruneProjectInRedis(projectId, startScore, endScore)
+		if dagSegmentEndHeight < endScore {
+			var dagSegment ProjectDAGSegment
+			err = json.Unmarshal([]byte(dagChainSegment), &dagSegment)
+			if err != nil {
+				log.Errorf("Unable to unmarshal dagChainSegment data due to error %+v", err)
+				continue
+			}
+			log.Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, projectId)
+
+			log.Infof("Performing Archival for project %s", projectId)
+
+			if dagSegment.StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
+				opStatus := ArchiveDAG(projectId, dagSegment.BeginHeight,
+					dagSegment.EndHeight, dagSegment.EndDAGCID)
+				if opStatus {
+					dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
+				} else {
+					log.Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectId, dagSegmentEndHeight)
+					return
+				}
+				UpdateDagSegmentStatusToRedis(projectId, dagSegmentEndHeight, &dagSegment)
+			}
+
+			payloadCids := GetPayloadCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
+			dagCids := GetDAGCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
+			log.Infof("Unpinning DAG CIDS from IPFS for project %s", projectId)
+			UnPinFromIPFS(projectId, dagCids)
+
+			log.Infof("Unpinning payload CIDS from IPFS for project %s", projectId)
+			UnPinFromIPFS(projectId, payloadCids)
+			projectPruneState.LastPrunedHeight = dagSegmentEndHeight
+			if settingsObj.PruningServiceSettings.PruneRedisZsets {
+				if settingsObj.PruningServiceSettings.BackUpRedisZSets {
+					BackupZsetsToFile(projectId, startScore, endScore, payloadCids, dagCids)
+				}
+				log.Infof("Pruning redis Zsets from IPFS for project %s", projectId)
+				PruneProjectInRedis(projectId, startScore, endScore)
+			}
+			UpdatePrunedStatusToRedis(projectPruneState)
+		}
 	}
-	UpdatePrunedStatusToRedis(projectPruneState)
 }
 
 func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCids *map[int]string, dagCids *map[int]string) {
@@ -824,4 +850,5 @@ func InitRedisClient() {
 		log.Errorf("Unable to connect to redis at %s with error %+v", redisURL, err)
 	}
 	log.Info("Connected successfully to Redis and received ", pong, " back")
+
 }
