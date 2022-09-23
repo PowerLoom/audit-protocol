@@ -14,16 +14,18 @@ type RateLimiter_ struct {
 }
 
 type PruningServiceSettings_ struct {
-	RunIntervalMins    int           `json:"run_interval_mins"`
-	IPFSRateLimiter    *RateLimiter_ `json:"ipfs_rate_limit"`
-	Concurrency        int           `json:"concurrency"`
-	CARStoragePath     string        `json:"car_storage_path"`
-	PerformArchival    bool          `json:"perform_archival"`
-	PerformIPFSUnPin   bool          `json:"perform_ipfs_unpin"`
-	PruneRedisZsets    bool          `json:"prune_redis_zsets"`
-	OldestProjectIndex string        `json:"oldest_project_index"`
-	BackUpRedisZSets   bool          `json:"backup_redis_zsets_to_file"`
-	IpfsTimeout        int           `json:"ipfs_timeout_secs"`
+	RunIntervalMins                      int           `json:"run_interval_mins"`
+	IPFSRateLimiter                      *RateLimiter_ `json:"ipfs_rate_limit"`
+	Concurrency                          int           `json:"concurrency"`
+	CARStoragePath                       string        `json:"car_storage_path"`
+	PerformArchival                      bool          `json:"perform_archival"`
+	PerformIPFSUnPin                     bool          `json:"perform_ipfs_unpin"`
+	PruneRedisZsets                      bool          `json:"prune_redis_zsets"`
+	OldestProjectIndex                   string        `json:"oldest_project_index"`
+	BackUpRedisZSets                     bool          `json:"backup_redis_zsets_to_file"`
+	IpfsTimeout                          int           `json:"ipfs_timeout_secs"`
+	SummaryProjectsPruneHeightBehindHead int           `json:"summary_projects_prune_height_behind_head"`
+	PruningHeightBehindOldestIndex       int           `json:"pruning_height_behind_oldest_index"`
 }
 
 type _DagVerifierSettings_ struct {

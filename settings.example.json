@@ -143,6 +143,8 @@
 		"perform_ipfs_unpin": true,
 		"prune_redis_zsets":true,
 		"backup_redis_zsets_to_file": false,
-		"oldest_project_index": "7d"
+		"oldest_project_index": "7d",
+		"pruning_height_behind_oldest_index": 100,
+		"summary_projects_prune_height_behind_head": 1000
 	}
 }

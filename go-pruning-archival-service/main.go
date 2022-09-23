@@ -91,16 +91,18 @@ func main() {
 func SetDefaultPruneConfig() {
 	if settingsObj.PruningServiceSettings == nil {
 		defaultSettings := settings.PruningServiceSettings_{
-			RunIntervalMins:    600,
-			Concurrency:        5,
-			CARStoragePath:     "/tmp/",
-			PerformArchival:    true,
-			PerformIPFSUnPin:   true,
-			PruneRedisZsets:    true,
-			BackUpRedisZSets:   false,
-			OldestProjectIndex: "7d",
-			IpfsTimeout:        300,
-			IPFSRateLimiter:    &settings.RateLimiter_{Burst: 20, RequestsPerSec: 20},
+			RunIntervalMins:                      600,
+			Concurrency:                          5,
+			CARStoragePath:                       "/tmp/",
+			PerformArchival:                      true,
+			PerformIPFSUnPin:                     true,
+			PruneRedisZsets:                      true,
+			BackUpRedisZSets:                     false,
+			OldestProjectIndex:                   "7d",
+			PruningHeightBehindOldestIndex:       100,
+			IpfsTimeout:                          300,
+			IPFSRateLimiter:                      &settings.RateLimiter_{Burst: 20, RequestsPerSec: 20},
+			SummaryProjectsPruneHeightBehindHead: 1000,
 		}
 		settingsObj.PruningServiceSettings = &defaultSettings
 	}
@@ -250,7 +252,7 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 				log.Fatalf("Unable to convert retrieved projectFinalizedHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
 				return -1
 			}
-			lastIndexHeight = projectFinalizedHeight - 1000
+			lastIndexHeight = projectFinalizedHeight - settingsObj.PruningServiceSettings.SummaryProjectsPruneHeightBehindHead
 			return lastIndexHeight
 		}
 	}
@@ -268,7 +270,7 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *Proj
 	//Fetch oldest height used by indexers
 	oldestIndexedHeight := GetOldestIndexedProjectHeight(projectPruneState)
 	if oldestIndexedHeight != -1 {
-		heightToPrune = oldestIndexedHeight - 100 //Adding a buffer just in case 7d index is just crossed and some heights before it are used in sliding window.
+		heightToPrune = oldestIndexedHeight - settingsObj.PruningServiceSettings.PruningHeightBehindOldestIndex //Adding a buffer just in case 7d index is just crossed and some heights before it are used in sliding window.
 	}
 	return heightToPrune
 }
