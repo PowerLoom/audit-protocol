@@ -38,14 +38,7 @@ var w3sHttpClient http.Client
 var web3StorageClientRateLimiter *rate.Limiter
 
 type ProjectMetaData struct {
-	//ProjectID string `json:"projectID"`
 	DagChains map[string]string
-	/*DagChains []struct {
-		BeginHeight int    `json:"beginHeight"`
-		EndHeight   int    `json:"endHeight"`
-		EndDAGCID   string `json:"endDAGCID"`
-		StorageType string `json:"storageType"`
-	} `json:"dagChains"`*/
 }
 
 type ProjectDAGSegment struct {
@@ -53,10 +46,6 @@ type ProjectDAGSegment struct {
 	EndHeight   int    `json:"endHeight"`
 	EndDAGCID   string `json:"endDAGCID"`
 	StorageType string `json:"storageType"`
-}
-
-func (i ProjectDAGSegment) MarshalBinary() ([]byte, error) {
-	return json.Marshal(i)
 }
 
 type ProjectPruneState struct {
@@ -218,7 +207,6 @@ func VerifyAndPruneDAGChains() {
 func FetchProjectMetaData(projectId string) *ProjectMetaData {
 	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectId)
 	for i := 0; i < 3; i++ {
-		//TODO: Convert to HTable.
 		res := redisClient.HGetAll(ctx, key)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
@@ -296,18 +284,17 @@ func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid strin
 	CID, opStatus := UploadFileToWeb3Storage(fileName)
 	if opStatus {
 		log.Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
-
-		log.Debugf("Deleted file %s successfully from local storage", fileName)
 	} else {
-		//TODO: Need to handle failure, where-in next cycle list of files present in dir should also be processed.
-		return false
+		log.Debugf("Failed to upload CAR file %s to web3.storage", fileName)
 	}
 	//Delete file from local storage.
 	err := os.Remove(fileName)
 	if err != nil {
 		log.Errorf("Failed to delete file %s due to error %+v", fileName, err)
 	}
-	return true
+	log.Debugf("Deleted file %s successfully from local storage", fileName)
+
+	return opStatus
 }
 
 func UpdateDagSegmentStatusToRedis(projectID string, height int, dagSegment *ProjectDAGSegment) bool {
@@ -343,12 +330,12 @@ func ProcessProject(projectId string) {
 	}
 	projectPruneState := projectList[projectId]
 	startScore := projectPruneState.LastPrunedHeight
-	endScore := FindPruningHeight(projectMetaData, projectPruneState)
-	if endScore <= startScore {
+	heightToPrune := FindPruningHeight(projectMetaData, projectPruneState)
+	if heightToPrune <= startScore {
 		log.Debugf("Nothing to Prune for project %s", projectId)
 		return
 	}
-	log.Debugf("Height to Prune is %d for project %s", endScore, projectId)
+	log.Debugf("Height to Prune is %d for project %s", heightToPrune, projectId)
 
 	for dagSegmentEndHeightStr, dagChainSegment := range projectMetaData.DagChains {
 		dagSegmentEndHeight, err := strconv.Atoi(dagSegmentEndHeightStr)
@@ -356,7 +343,7 @@ func ProcessProject(projectId string) {
 			log.Errorf("dagSegmentEndHeight is not an integer.")
 			return
 		}
-		if dagSegmentEndHeight < endScore {
+		if dagSegmentEndHeight < heightToPrune {
 			var dagSegment ProjectDAGSegment
 			err = json.Unmarshal([]byte(dagChainSegment), &dagSegment)
 			if err != nil {
@@ -365,9 +352,9 @@ func ProcessProject(projectId string) {
 			}
 			log.Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, projectId)
 
-			log.Infof("Performing Archival for project %s", projectId)
-
 			if dagSegment.StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
+				log.Infof("Performing Archival for project %s segment with endHeight %d", projectId, dagSegmentEndHeight)
+
 				opStatus := ArchiveDAG(projectId, dagSegment.BeginHeight,
 					dagSegment.EndHeight, dagSegment.EndDAGCID)
 				if opStatus {
@@ -377,24 +364,24 @@ func ProcessProject(projectId string) {
 					return
 				}
 				UpdateDagSegmentStatusToRedis(projectId, dagSegmentEndHeight, &dagSegment)
-			}
 
-			payloadCids := GetPayloadCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
-			dagCids := GetDAGCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
-			log.Infof("Unpinning DAG CIDS from IPFS for project %s", projectId)
-			UnPinFromIPFS(projectId, dagCids)
+				payloadCids := GetPayloadCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
+				dagCids := GetDAGCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
+				log.Infof("Unpinning DAG CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
+				UnPinFromIPFS(projectId, dagCids)
 
-			log.Infof("Unpinning payload CIDS from IPFS for project %s", projectId)
-			UnPinFromIPFS(projectId, payloadCids)
-			projectPruneState.LastPrunedHeight = dagSegmentEndHeight
-			if settingsObj.PruningServiceSettings.PruneRedisZsets {
-				if settingsObj.PruningServiceSettings.BackUpRedisZSets {
-					BackupZsetsToFile(projectId, startScore, endScore, payloadCids, dagCids)
+				log.Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
+				UnPinFromIPFS(projectId, payloadCids)
+				projectPruneState.LastPrunedHeight = dagSegmentEndHeight
+				if settingsObj.PruningServiceSettings.PruneRedisZsets {
+					if settingsObj.PruningServiceSettings.BackUpRedisZSets {
+						BackupZsetsToFile(projectId, startScore, heightToPrune, payloadCids, dagCids)
+					}
+					log.Infof("Pruning redis Zsets from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
+					PruneProjectInRedis(projectId, startScore, heightToPrune)
 				}
-				log.Infof("Pruning redis Zsets from IPFS for project %s", projectId)
-				PruneProjectInRedis(projectId, startScore, endScore)
+				UpdatePrunedStatusToRedis(projectPruneState)
 			}
-			UpdatePrunedStatusToRedis(projectPruneState)
 		}
 	}
 }
@@ -781,8 +768,8 @@ func InitW3sClient() {
 	}
 
 	//Default values
-	tps := rate.Limit(3) //3 TPS
-	burst := 3
+	tps := rate.Limit(1) //3 TPS
+	burst := 1
 	if settingsObj.Web3Storage.RateLimiter != nil {
 		burst = settingsObj.Web3Storage.RateLimiter.Burst
 		if settingsObj.Web3Storage.RateLimiter.RequestsPerSec == -1 {
@@ -819,8 +806,8 @@ func InitIPFSClient() {
 	ipfsClient = shell.NewShellWithClient(connectUrl, &ipfsHttpClient)
 
 	//Default values
-	tps := rate.Limit(200) //50 TPS
-	burst := 100
+	tps := rate.Limit(20) //50 TPS
+	burst := 20
 	if settingsObj.PruningServiceSettings.IPFSRateLimiter != nil {
 		burst = settingsObj.PruningServiceSettings.IPFSRateLimiter.Burst
 		if settingsObj.PruningServiceSettings.IPFSRateLimiter.RequestsPerSec == -1 {
