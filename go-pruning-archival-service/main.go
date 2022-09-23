@@ -377,10 +377,10 @@ func ProcessProject(projectId string) {
 				projectPruneState.LastPrunedHeight = dagSegmentEndHeight
 				if settingsObj.PruningServiceSettings.PruneRedisZsets {
 					if settingsObj.PruningServiceSettings.BackUpRedisZSets {
-						BackupZsetsToFile(projectId, startScore, heightToPrune, payloadCids, dagCids)
+						BackupZsetsToFile(projectId, startScore, dagSegmentEndHeight, payloadCids, dagCids)
 					}
 					log.Infof("Pruning redis Zsets from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
-					PruneProjectInRedis(projectId, startScore, heightToPrune)
+					PruneProjectInRedis(projectId, startScore, dagSegmentEndHeight)
 				}
 				UpdatePrunedStatusToRedis(projectPruneState)
 			}
