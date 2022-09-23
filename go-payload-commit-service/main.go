@@ -20,10 +20,10 @@ import (
 	"github.com/go-redis/redis/v8"
 	shell "github.com/ipfs/go-ipfs-api"
 	log "github.com/sirupsen/logrus"
-	"github.com/sirupsen/logrus/hooks/writer"
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
 
+	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/settings"
 )
 
@@ -32,7 +32,7 @@ var ctx = context.Background()
 var redisClient *redis.Client
 var ipfsClient *shell.Shell
 var txMgrHttpClient http.Client
-var webhookClient http.Client
+var dagFinalizerClient http.Client
 var w3sHttpClient http.Client
 var settingsObj *settings.SettingsObj
 var consts ConstsObj
@@ -40,7 +40,7 @@ var rmqConnection *Conn
 var exitChan chan bool
 
 //Rate Limiter Objects
-var webhookClientRateLimiter *rate.Limiter
+var dagFinalizerClientRateLimiter *rate.Limiter
 var web3StorageClientRateLimiter *rate.Limiter
 var ipfsClientRateLimiter *rate.Limiter
 var txClientRateLimiter *rate.Limiter
@@ -76,42 +76,6 @@ func (r retryType) String() string {
 		return "Non recoverable error, hence not retrying."
 	}
 	return "unknown"
-}
-
-func InitLogger() {
-	log.SetOutput(ioutil.Discard) // Send all logs to nowhere by default
-
-	log.AddHook(&writer.Hook{ // Send logs with level higher than warning to stderr
-		Writer: os.Stderr,
-		LogLevels: []log.Level{
-			log.PanicLevel,
-			log.FatalLevel,
-			log.ErrorLevel,
-			log.WarnLevel,
-		},
-	})
-	log.AddHook(&writer.Hook{ // Send info and debug logs to stdout
-		Writer: os.Stdout,
-		LogLevels: []log.Level{
-			log.TraceLevel,
-			log.InfoLevel,
-			log.DebugLevel,
-		},
-	})
-	if len(os.Args) < 2 {
-		fmt.Println("Pass loglevel as an argument if you don't want default(INFO) to be set.")
-		fmt.Println("Values to be passed for logLevel: ERROR(2),INFO(4),DEBUG(5)")
-		log.SetLevel(log.DebugLevel)
-	} else {
-		logLevel, err := strconv.ParseUint(os.Args[1], 10, 32)
-		if err != nil || logLevel > 6 {
-			log.SetLevel(log.DebugLevel) //TODO: Change default level to error
-		} else {
-			//TODO: Need to come up with approach to dynamically update logLevel.
-			log.SetLevel(log.Level(logLevel))
-		}
-	}
-	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
 }
 
 func RegisterSignalHandles() {
@@ -172,13 +136,13 @@ type ConstsObj struct {
 func main() {
 
 	RegisterSignalHandles()
-	InitLogger()
+	logger.InitLogger()
 	settingsObj = settings.ParseSettings("../settings.json")
 	ParseConsts("../dev_consts.json")
 	InitIPFSClient()
 	InitRedisClient()
 	InitTxManagerClient()
-	InitWebhookCallbackClient()
+	InitDAGFinalizerCallbackClient()
 	log.Info("Starting RabbitMq Consumer")
 	InitW3sClient()
 
@@ -370,14 +334,12 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
 		return true
 	}
-	//Optimize: No need to invoke webhook callback, rather DAG Block can be created from here directly
-	//But sequencing logic needs to be introduced based on chainHeightRange.
 	if payloadCommit.SkipAnchorProof {
-		//Notify webhook listener service as we are skipping proof anchor on chain.
-		retryType := InvokeWebhookCallback(&payloadCommit)
+		//Notify DAG finalizer service as we are skipping proof anchor on chain.
+		retryType := InvokeDAGFinalizerCallback(&payloadCommit)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
 			//TODO: Not retrying further..need to think of project recovery from this point.
-			log.Warnf("MAX Retries reached while trying to invoke webhook listener for project %s and commitId %s with tentativeBlockHeight %d.",
+			log.Warnf("MAX Retries reached while trying to invoke DAG finalizer for project %s and commitId %s with tentativeBlockHeight %d.",
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
 			return true
 		} else if retryType == NO_RETRY_SUCCESS {
@@ -751,7 +713,7 @@ func GetTentativeBlockHeight(projectId string) (int, error) {
 
 //TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
 //As of now it is copy pasted and looks ugly.
-func InvokeWebhookCallback(payload *PayloadCommit) retryType {
+func InvokeDAGFinalizerCallback(payload *PayloadCommit) retryType {
 	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.WebhookListener.Host, settingsObj.WebhookListener.Port)
 	var req AuditContractSimWebhookCallbackRequest
 	req.EventName = "RecordAppended"
@@ -767,7 +729,7 @@ func InvokeWebhookCallback(payload *PayloadCommit) retryType {
 	reqParams, err := json.Marshal(req)
 
 	if err != nil {
-		log.Fatalf("CRITICAL. Failed to Json-Marshall webhook listener request for project %s with commitID %s , with err %v",
+		log.Fatalf("CRITICAL. Failed to Json-Marshall DAG finalizer request for project %s with commitID %s , with err %v",
 			payload.ProjectId, payload.CommitId, err)
 		return NO_RETRY_FAILURE
 	}
@@ -787,18 +749,18 @@ func InvokeWebhookCallback(payload *PayloadCommit) retryType {
 		req.Header.Add("accept", "application/json")
 		req.Header.Add("Content-Type", "application/json")
 
-		err = webhookClientRateLimiter.Wait(context.Background())
+		err = dagFinalizerClientRateLimiter.Wait(context.Background())
 		if err != nil {
 			log.Errorf("WebhookClient Rate Limiter wait timeout with error %+v", err)
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		log.Debugf("Sending Req to webhook listener URL %s for project %s with snapshotCID %s commitId %s ",
+		log.Debugf("Sending Req to DAG finalizer URL %s for project %s with snapshotCID %s commitId %s ",
 			reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
-		res, err := webhookClient.Do(req)
+		res, err := dagFinalizerClient.Do(req)
 		if err != nil {
 			retryCount++
-			log.Errorf("Failed to send request %+v towards webhook listener URL %s for project %s with snapshotCID %s commitId %s with error %+v.  Retrying %d",
+			log.Errorf("Failed to send request %+v towards DAG finalizer URL %s for project %s with snapshotCID %s commitId %s with error %+v.  Retrying %d",
 				req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err, retryCount)
 			continue
 		}
@@ -807,7 +769,7 @@ func InvokeWebhookCallback(payload *PayloadCommit) retryType {
 		respBody, err := ioutil.ReadAll(res.Body)
 		if err != nil {
 			retryCount++
-			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from webhook listener with error %+v. Retrying %d",
+			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from DAG finalizer with error %+v. Retrying %d",
 				payload.ProjectId, payload.SnapshotCID, payload.CommitId, err, retryCount)
 			continue
 		}
@@ -815,17 +777,17 @@ func InvokeWebhookCallback(payload *PayloadCommit) retryType {
 			err = json.Unmarshal(respBody, &resp)
 			if err != nil {
 				retryCount++
-				log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s from webhook listener with error %+v. Retrying %d",
+				log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s from DAG finalizer with error %+v. Retrying %d",
 					respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err, retryCount)
 				time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 				continue
 			}
-			log.Debugf("Received 200 OK with body %+v from webhook listener for project %s with snapshotCID %s commitId %s ",
+			log.Debugf("Received 200 OK with body %+v from DAG finalizer for project %s with snapshotCID %s commitId %s ",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
 			return NO_RETRY_SUCCESS
 		} else {
 			retryCount++
-			log.Errorf("Received Error response %+v from webhook listener for project %s with commitId %s with statusCode %d and status : %s ",
+			log.Errorf("Received Error response %+v from DAG finalizer for project %s with commitId %s with statusCode %d and status : %s ",
 				resp, payload.ProjectId, payload.CommitId, res.StatusCode, res.Status)
 			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			continue
@@ -1103,7 +1065,7 @@ func InitW3sClient() {
 	web3StorageClientRateLimiter = rate.NewLimiter(tps, burst)
 }
 
-func InitWebhookCallbackClient() {
+func InitDAGFinalizerCallbackClient() {
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
@@ -1113,7 +1075,7 @@ func InitWebhookCallbackClient() {
 		DisableCompression:  true,
 	}
 
-	webhookClient = http.Client{
+	dagFinalizerClient = http.Client{
 		Timeout:   time.Duration(settingsObj.HttpClientTimeoutSecs) * time.Second,
 		Transport: &t,
 	}
@@ -1129,6 +1091,6 @@ func InitWebhookCallbackClient() {
 			tps = rate.Limit(settingsObj.WebhookListener.RateLimiter.RequestsPerSec)
 		}
 	}
-	log.Infof("Rate Limit configured for webhookClient at %v TPS with a burst of %d", tps, burst)
-	webhookClientRateLimiter = rate.NewLimiter(tps, burst)
+	log.Infof("Rate Limit configured for dagFinalizerClient at %v TPS with a burst of %d", tps, burst)
+	dagFinalizerClientRateLimiter = rate.NewLimiter(tps, burst)
 }
