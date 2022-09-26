@@ -1,6 +1,8 @@
 from itertools import cycle
 from textwrap import wrap
+from itertools import cycle
 from typing import Optional
+from settings_model import Settings
 from settings_model import Settings
 from utils import redis_conn
 from utils import redis_keys
@@ -13,6 +15,9 @@ from rich.text import Text
 from datetime import datetime
 from rich.pretty import pretty_repr
 
+
+from datetime import datetime
+from rich.pretty import pretty_repr
 
 import re
 
@@ -217,7 +222,7 @@ def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2", "--namespace")
 
 @app.command()
 def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
-    
+
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
     cycles = 20 if cycles > 20 else cycles
@@ -229,7 +234,7 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
         max='+inf',
         withscores=True
     )
-    
+
     table = Table(show_header=True, header_style="bold magenta", show_lines=True )
     table.add_column("Timestamp", justify="center", vertical="middle")
     table.add_column("Cycle status", justify="center")
@@ -247,12 +252,12 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
         payload_text.append(f"projectsProcessSuccessCount: {payload.get('projectsProcessSuccessCount')}\n", style="bold green")
         payload_text.append(f"projectsProcessFailedCount: {payload.get('projectsProcessFailedCount')}\n", style="bold red")
         payload_text.append(f"projectsNotProcessedCount: {payload.get('projectsNotProcessedCount')}", style="bold yellow")
-        
+
         table.add_row(
-            Text(f"{datetime.fromtimestamp(timestamp)} ( {timestamp} )"), 
+            Text(f"{datetime.fromtimestamp(timestamp)} ( {timestamp} )"),
             payload_text
         )
-        
+
         cycles -= 1
         if cycles <= 0:
             break
@@ -262,7 +267,7 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
 
 @app.command()
 def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId")):
-    
+
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
     cycleDetails = {}
 
@@ -312,9 +317,9 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
                 payload_text.append(f"failureCause: {projectDetails.get('failureCause')}\n", style="bold red")
             if projectDetails.get('unPinFailed', False):
                 payload_text.append(f"unPinFailed: {projectDetails.get('unPinFailed')}\n", style="bold red")
-            
+
             table.add_row(
-                Text(projectId, style='bright_cyan'), 
+                Text(projectId, style='bright_cyan'),
                 payload_text
             )
 
@@ -328,8 +333,8 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
     console.print("[bold green]Success count:[/bold green]", f"[bold green]{cycleDetails.get('projectsProcessSuccessCount', None)}[/bold green]")
     console.print("[bold red]Failure counts:[/bold red]", f"[bold red]{cycleDetails.get('projectsProcessFailedCount', None)}[/bold red]")
     console.print("[bold yellow]Unprocessed Project count:[/bold yellow]", f"[bold yellow]{cycleDetails.get('projectsNotProcessedCount', None)}[/bold yellow]\n\n")
-    
-    
+
+
 
 def identify_projects_that_require_force_resubmission(namespace: str = typer.Option(None, "--namespace")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
@@ -445,6 +450,98 @@ def force_project_height_into_resubmission(namespace: str = typer.Option(None, "
             print(f"Error: {str(e)} | project: {project}")
     if count == 0:
        console.log("No projects required force resubmission")
+
+from config import settings
+REDIS_CONN_CONF_NEW = {
+    "host": settings.redis.host,
+    "port": settings.redis.port,
+    "password": settings.redis.password,
+    "db": 14,
+    "retry_on_error": [redis.exceptions.ReadOnlyError, ]
+}
+# python cli_cmd.py pruning-cycles-status --cycles=5
+@app.command()
+def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
+
+    r = redis.Redis(**REDIS_CONN_CONF_NEW, single_connection_client=True)
+
+    cycles = 20 if cycles > 20 else cycles
+    cycles = 3 if cycles < 1 else cycles
+
+    pruningStatusZset = r.zrangebyscore(
+        name='pruningRunStatus',
+        min='-inf',
+        max='+inf',
+        withscores=True
+    )
+
+    table = Table(show_header=True, header_style="bold magenta", show_lines=True )
+    table.add_column("Timestamp", justify="center", vertical="middle")
+    table.add_column("Cycle status", justify="center")
+
+    for entry in reversed(pruningStatusZset):
+        payload, timestamp = entry
+        payload = json.loads(payload.decode('utf-8')) if payload else {}
+        timestamp = int(timestamp/1000) if timestamp and len(str(int(timestamp))) > 10  else timestamp
+
+        payload_text = Text()
+        payload_text.append(f"pruningCycleID: {payload.get('pruningCycleID')}\n")
+        payload_text.append(f"cycleStartTime: {payload.get('cycleStartTime')}\n")
+        payload_text.append(f"cycleEndTime: {payload.get('cycleEndTime')}\n")
+        payload_text.append(f"projectsProcessSuccessCount: {payload.get('projectsProcessSuccessCount')}\n", style="bold green")
+        payload_text.append(f"projectsProcessFailedCount: {payload.get('projectsProcessFailedCount')}\n", style="bold red")
+        payload_text.append(f"projectsNotProcessedCount: {payload.get('projectsNotProcessedCount')}", style="bold yellow")
+
+        table.add_row(
+            Text(f"{datetime.fromtimestamp(timestamp)} ( {timestamp} )"),
+            payload_text
+        )
+
+        cycles -= 1
+        if cycles <= 0:
+            break
+
+    console.print(table)
+
+
+# python cli_cmd.py pruning-cycle-project-report --cycleId=6d9fee93-9bda-4dc2-b062-3cee185cac15
+@app.command()
+def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId")):
+
+    r = redis.Redis(**REDIS_CONN_CONF_NEW, single_connection_client=True)
+    cycleDetails = {}
+
+    if not cycleId:
+        cycleDetails = r.zrevrange(
+            name='pruningRunStatus',
+            start=0,
+            end=0
+        )
+        cycleDetails = json.loads(cycleDetails[0].decode('utf-8')) if len(cycleDetails)>0 else {}
+    else:
+        allCycles = r.zrangebyscore(
+            name='pruningRunStatus',
+            min='-inf',
+            max='+inf'
+        )
+        for cycle in allCycles:
+            cycle = json.loads(cycle.decode('utf-8')) if cycle else {}
+            if cycle.get('pruningCycleID', None) == cycleId:
+                cycleDetails = cycle
+                break
+
+    cycleStartTime = cycleDetails.get('cycleStartTime', None)
+    cycleStartTime = int(cycleStartTime/1000) if cycleStartTime and len(str(int(cycleStartTime))) > 10  else cycleStartTime
+    cycleEndTime = cycleDetails.get('cycleEndTime', None)
+    cycleEndTime = int(cycleEndTime/1000) if cycleEndTime and len(str(int(cycleEndTime))) > 10  else cycleEndTime
+
+    console.print("[bold magenta]Pruning cycleId:[/bold magenta]", f"[bold bright_cyan]{cycleDetails.get('pruningCycleID', None)}[/bold bright_cyan]")
+    console.print("[bold magenta]Start timestamp:[/bold magenta]", f"[white] {datetime.fromtimestamp(cycleStartTime)} ( {cycleStartTime} )[/white]")
+    console.print("[bold magenta]End timestamp:[/bold magenta]", f"[white]{datetime.fromtimestamp(cycleEndTime)} ( {cycleEndTime} )[/white]")
+    console.print("[bold blue]Projects count:[/bold blue]", f"[bold blue]{cycleDetails.get('projectsCount', None)}[/bold blue]")
+    console.print("[bold green]Success count:[/bold green]", f"[bold green]{cycleDetails.get('projectsProcessSuccessCount', None)}[/bold green]")
+    console.print("[bold red]Failure counts:[/bold red]", f"[bold red]{cycleDetails.get('projectsProcessFailedCount', None)}[/bold red]")
+    console.print("[bold yellow]Unprocessed Project count:[/bold yellow]", f"[bold yellow]{cycleDetails.get('projectsNotProcessedCount', None)}[/bold yellow]")
 
 if __name__ == '__main__':
     app()
