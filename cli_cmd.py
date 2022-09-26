@@ -504,7 +504,6 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
     console.print(table)
 
 
-# python cli_cmd.py pruning-cycle-project-report --cycleId=6d9fee93-9bda-4dc2-b062-3cee185cac15
 @app.command()
 def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId")):
 
