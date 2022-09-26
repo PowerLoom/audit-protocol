@@ -212,20 +212,10 @@ def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2", "--namespace")
 
     console.print(table)
 
-
-from config import settings
-REDIS_CONN_CONF_NEW = {
-    "host": settings.redis.host,
-    "port": settings.redis.port,
-    "password": settings.redis.password,
-    "db": 14,
-    "retry_on_error": [redis.exceptions.ReadOnlyError, ]
-}
-# python cli_cmd.py pruning-cycles-status --cycles=5
 @app.command()
 def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
     
-    r = redis.Redis(**REDIS_CONN_CONF_NEW, single_connection_client=True)
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
     cycles = 20 if cycles > 20 else cycles
     cycles = 3 if cycles < 1 else cycles
@@ -266,11 +256,10 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
     console.print(table)
 
 
-# python cli_cmd.py pruning-cycle-project-report --cycleId=6d9fee93-9bda-4dc2-b062-3cee185cac15
 @app.command()
 def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId")):
     
-    r = redis.Redis(**REDIS_CONN_CONF_NEW, single_connection_client=True)
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
     cycleDetails = {}
 
     if not cycleId:
