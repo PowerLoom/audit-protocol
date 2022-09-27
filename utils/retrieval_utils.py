@@ -353,17 +353,41 @@ async def retrieve_block_status(
         payload_cid = r[0].decode('utf-8')
 
         project_pending_txns_key_zset = redis_keys.get_pending_transactions_key(project_id)
-        r = await reader_redis_conn.zrangebyscore(
+        pending_txs = await reader_redis_conn.zrangebyscore(
             name=project_pending_txns_key_zset,
             min=block_height,
             max=block_height,
             withscores=False
         )
-        if len(r) == 0:
+        if len(pending_txs) == 0:
             block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
             return block_status
+        
+        all_empty_txhash = True
+        for tx in pending_txs:
+            pending_txn = PendingTransaction.parse_raw(tx)
+            # itrate until we find a entry with txHash
+            if pending_txn.txHash == None or pending_txn.txHash == "":
+                continue
+            
+            # set this false, when atleast one txHash exist
+            all_empty_txhash = False
+            
+            # check if tx is confirmed
+            if pending_txn.lastTouchedBlock == -1:
+                block_status.tx_hash = tx.get("txHash")
+                block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
+                block_status.payload_cid = payload_cid
+                return
+
+        # if all the entry had empty txHash
+        if all_empty_txhash:
+            block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
+            return block_status
+        
+        # if txHash was there but none with lastTouchedBlock == -1 then take latest pending tx
         block_status.payload_cid = payload_cid
-        pending_txn = PendingTransaction.parse_raw(r[0])
+        pending_txn = PendingTransaction.parse_raw(pending_txs[0])
         block_status.tx_hash = pending_txn.txHash
         block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMATION_PENDING']
 
@@ -376,7 +400,6 @@ async def retrieve_block_status(
             max=block_height,
             withscores=False
         )
-
         if len(r) == 0:
             #This scenario can happen when a project's blockHeight is pushed ahead
             # and current height is not present in the project DAG.
