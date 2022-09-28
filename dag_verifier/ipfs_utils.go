@@ -81,7 +81,7 @@ func (client *IpfsClient) DagGet(dagCid string) (DagChainBlock, error) {
 		}
 	}
 	if i >= 3 {
-		log.Error("Failed to fetch even after retrying.")
+		log.Errorf("Failed to fetch CID %s even after retrying.", dagCid)
 		return dagBlock, err
 	}
 	log.Tracef("Fetched the dag Block with CID %s, BlockInfo:%+v", dagCid, dagBlock)

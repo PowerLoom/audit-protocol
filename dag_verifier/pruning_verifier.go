@@ -241,11 +241,20 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(segment *ProjectDAGSegment
 	return true, ""
 }
 
+func (verifier *PruningVerifier) DeleteCARFile(carFile string) {
+	//Delete file from local storage.
+	err := os.Remove(carFile)
+	if err != nil {
+		log.Errorf("Failed to delete file %s due to error %+v", carFile, err)
+	}
+}
+
 func (verifier *PruningVerifier) FetchAndValidateCAR(segment *ProjectDAGSegment) (bool, string) {
 	ok, errStr, carFile := verifier.FetchCAR(segment)
 	if !ok {
 		return ok, errStr
 	}
+	defer verifier.DeleteCARFile(carFile)
 	blockStore, err := blockstore.OpenReadOnly(carFile,
 		blockstore.UseWholeCIDs(true),
 		carv2.ZeroLengthSectionAsEOF(true),
@@ -281,12 +290,14 @@ func (verifier *PruningVerifier) FetchAndValidateCAR(segment *ProjectDAGSegment)
 		i++
 	}
 	log.Debugf("Total CIDs in the car file %s is %d", carFile, i)
-	if i != segment.EndHeight-segment.BeginHeight {
+
+	if i != 2*(segment.EndHeight-segment.BeginHeight+1) {
 		log.Errorf("Number of CIDS in CAR file %s is not matching that of segment. CAR File as %d CIDS, segment has %d",
 			carFile, i, segment.EndHeight-segment.BeginHeight)
 		return false, fmt.Sprintf("Number of CIDS in CAR file %s is not matching that of segment. CAR File as %d CIDS, segment has %d",
 			carFile, i, segment.EndHeight-segment.BeginHeight)
 	}
+
 	return true, ""
 }
 
@@ -364,6 +375,13 @@ func (verifier *PruningVerifier) FetchPruningVerificationStatusFromRedis() bool 
 			log.Warnf("Failed to fetch PruningVerification in redis..Retrying %d", i)
 			time.Sleep(5 * time.Second)
 			continue
+		}
+		if len(res.Val()) == 0 {
+			for index := range verifier.Projects {
+				verifier.ProjectVerificationStatus[verifier.Projects[index]] = &ProjectPruningVerificationStatus{}
+			}
+			log.Debugf("No PruningVerification key found in redis and hence creating newly")
+			return true
 		}
 		for projectID, projectLastStatus := range res.Val() {
 			projectStatus := ProjectPruningVerificationStatus{}

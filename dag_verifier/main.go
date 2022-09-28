@@ -5,6 +5,7 @@ import (
 
 	"encoding/json"
 	"os"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 
@@ -25,7 +26,19 @@ func main() {
 	PopulatePairContractList(pairContractAddress, "../static/cached_pair_addresses.json")
 	var dagVerifier DagVerifier
 	dagVerifier.Initialize(settingsObj, &pairContractAddresses)
+	var wg sync.WaitGroup
+	var pruningVerifier PruningVerifier
+	pruningVerifier.Init(settingsObj)
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		pruningVerifier.Run()
+	}()
+
 	dagVerifier.Run()
+
+	wg.Wait()
 }
 
 func PopulatePairContractList(pairContractAddr string, pairContractListFile string) {
