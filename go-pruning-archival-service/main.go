@@ -4,22 +4,28 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alanshaw/go-carbites"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 
 	shell "github.com/ipfs/go-ipfs-api"
 	"github.com/powerloom/goutils/logger"
+	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
+	"github.com/powerloom/goutils/slackutils"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
@@ -36,6 +42,7 @@ var ipfsHttpClient http.Client
 var w3sHttpClient http.Client
 
 var web3StorageClientRateLimiter *rate.Limiter
+var cycleDetails PruningCycleDetails
 
 type ProjectMetaData struct {
 	DagChains map[string]string
@@ -51,6 +58,7 @@ type ProjectDAGSegment struct {
 type ProjectPruneState struct {
 	ProjectId        string
 	LastPrunedHeight int
+	ErrorInLastcycle bool
 }
 
 type Web3StoragePostResponse struct {
@@ -64,16 +72,6 @@ type Web3StorageErrResponse struct {
 
 var projectList map[string]*ProjectPruneState
 
-const REDIS_KEY_STORED_PROJECTS string = "storedProjectIds"
-const REDIS_KEY_PROJECT_PAYLOAD_CIDS string = "projectID:%s:payloadCids"
-const REDIS_KEY_PROJECT_CIDS string = "projectID:%s:Cids"
-const REDIS_KEY_PROJECT_FINALIZED_HEIGHT string = "projectID:%s:blockHeight"
-
-const REDIS_KEY_PRUNING_STATUS string = "projects:pruningStatus"
-const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:dagSegments"
-
-const REDIS_KEY_PROJECT_TAIL_INDEX string = "projectID:%s:slidingCache:%s:tail"
-
 const DAG_CHAIN_STORAGE_TYPE_COLD string = "COLD"
 
 func main() {
@@ -85,6 +83,7 @@ func main() {
 	InitRedisClient()
 	InitIPFSHTTPClient()
 	InitW3sClient()
+	slackutils.InitSlackWorkFlowClient(settingsObj.DagVerifierSettings.SlackNotifyURL)
 	Run()
 }
 
@@ -119,42 +118,44 @@ func Run() {
 			continue
 		}
 		GetLastPrunedStatusFromRedis()
-		log.Infof("Running Pruning Cycle")
+		cycleDetails = PruningCycleDetails{}
+		cycleDetails.CycleID = uuid.New().String()
+		log.WithField("CycleID", cycleDetails.CycleID).Infof("Running Pruning Cycle")
 		VerifyAndPruneDAGChains()
-		log.Infof("Completed cycle")
+		log.WithField("CycleID", cycleDetails.CycleID).Infof("Completed cycle")
 		//TODO: Cleanup storage path if it has old files.
 		time.Sleep(time.Duration(settingsObj.PruningServiceSettings.RunIntervalMins) * time.Minute)
 	}
 }
 
 func GetLastPrunedStatusFromRedis() {
-	log.Debug("Fetching Last Pruned Status at key:", REDIS_KEY_PRUNING_STATUS)
+	log.WithField("CycleID", cycleDetails.CycleID).Debug("Fetching Last Pruned Status at key:", redisutils.REDIS_KEY_PRUNING_STATUS)
 
-	res := redisClient.HGetAll(ctx, REDIS_KEY_PRUNING_STATUS)
+	res := redisClient.HGetAll(ctx, redisutils.REDIS_KEY_PRUNING_STATUS)
 
 	if len(res.Val()) == 0 {
-		log.Info("Failed to fetch Last Pruned Status  from redis for the projects.")
+		log.WithField("CycleID", cycleDetails.CycleID).Info("Failed to fetch Last Pruned Status  from redis for the projects.")
 		//Key doesn't exist.
-		log.Info("Key doesn't exist..hence proceed from start of the block.")
+		log.WithField("CycleID", cycleDetails.CycleID).Info("Key doesn't exist..hence proceed from start of the block.")
 		return
 	}
 	err := res.Err()
 	if err != nil {
-		log.Error("Ideally should not come here, which means there is some other redis error. To debug:", err)
+		log.WithField("CycleID", cycleDetails.CycleID).Error("Ideally should not come here, which means there is some other redis error. To debug:", err)
 	}
 	//TODO: Need to handle dynamic addition of projects.
 	for projectId, lastHeight := range res.Val() {
 		if project, ok := projectList[projectId]; ok {
 			project.LastPrunedHeight, err = strconv.Atoi(lastHeight)
 			if err != nil {
-				log.Errorf("lastPrunedHeight corrupt for project %s. It will be set to 0", projectId)
+				log.WithField("CycleID", cycleDetails.CycleID).Errorf("lastPrunedHeight corrupt for project %s. It will be set to 0", projectId)
 				continue
 			}
 		} else {
 			projectList[projectId] = &ProjectPruneState{ProjectId: projectId, LastPrunedHeight: 0}
 		}
 	}
-	log.Debugf("Fetched Last Pruned Status from redis %+v", projectList)
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Fetched Last Pruned Status from redis %+v", projectList)
 }
 
 func UpdatePrunedStatusToRedis(projectPruneState *ProjectPruneState) {
@@ -162,20 +163,23 @@ func UpdatePrunedStatusToRedis(projectPruneState *ProjectPruneState) {
 	lastPrunedStatus[projectPruneState.ProjectId] = strconv.Itoa(projectPruneState.LastPrunedHeight)
 
 	for i := 0; i < 3; i++ {
-		log.Info("Updating Last Pruned Status at key:", REDIS_KEY_PRUNING_STATUS)
-		res := redisClient.HSet(ctx, REDIS_KEY_PRUNING_STATUS, lastPrunedStatus)
+		log.WithField("CycleID", cycleDetails.CycleID).Infof("Updating Last Pruned Status at key %s", redisutils.REDIS_KEY_PRUNING_STATUS)
+		res := redisClient.HSet(ctx, redisutils.REDIS_KEY_PRUNING_STATUS, lastPrunedStatus)
 		if res.Err() != nil {
-			log.Error("Failed to update Last Pruned Status in redis..Retrying %d", i)
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to update Last Pruned Status in redis..Retrying %d", i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Debugf("Updated last Pruned status %+v successfully in redis", projectPruneState.ProjectId)
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Updated last Pruned status %+v successfully in redis", projectPruneState.ProjectId)
 		return
 	}
-	log.Errorf("Failed to update last Pruned status %+v in redis", projectPruneState.ProjectId)
+	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to update last Pruned status %+v in redis", projectPruneState.ProjectId)
 }
 
 func VerifyAndPruneDAGChains() {
+
+	cycleDetails.CycleStartTime = time.Now().UnixMilli()
+
 	concurrency := settingsObj.PruningServiceSettings.Concurrency
 	totalProjects := len(projectList)
 	projectIds := make([]string, totalProjects)
@@ -185,71 +189,82 @@ func VerifyAndPruneDAGChains() {
 		projectIds[index] = projectId
 		index++
 	}
+	cycleDetails.ProjectsCount = uint64(totalProjects)
 	noOfProjectsPerRoutine := totalProjects / concurrency
 	var wg sync.WaitGroup
-	log.Debugf("totalProjects %d, noOfProjectsPerRouting %d concurrency %d \n", totalProjects, noOfProjectsPerRoutine, concurrency)
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("totalProjects %d, noOfProjectsPerRouting %d concurrency %d \n", totalProjects, noOfProjectsPerRoutine, concurrency)
 	for startIndex := 0; startIndex < totalProjects; startIndex = startIndex + noOfProjectsPerRoutine + 1 {
 		endIndex := startIndex + noOfProjectsPerRoutine
 		if endIndex >= totalProjects {
 			endIndex = totalProjects - 1
 		}
 		wg.Add(1)
-		log.Debugf("Go-Routine start %d, end %d \n", startIndex, endIndex)
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Go-Routine start %d, end %d \n", startIndex, endIndex)
 		go func(start int, end int, limit int) {
 			defer wg.Done()
 			for k := start; k <= end; k++ {
-				ProcessProject(projectIds[k])
+				result := ProcessProject(projectIds[k])
+				switch result {
+				case 0:
+					atomic.AddUint64(&cycleDetails.ProjectsProcessSuccessCount, 1)
+				case 1:
+					atomic.AddUint64(&cycleDetails.ProjectsNotProcessedCount, 1)
+				default:
+					atomic.AddUint64(&cycleDetails.ProjectsProcessFailedCount, 1)
+				}
 			}
 		}(startIndex, endIndex, totalProjects)
 	}
 	wg.Wait()
-	log.Debugf("Finished all go-routines")
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Finished all go-routines")
+	cycleDetails.CycleEndTime = time.Now().UnixMilli()
+	UpdatePruningCycleDetailsInRedis()
 }
 
 func FetchProjectMetaData(projectId string) *ProjectMetaData {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectId)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_METADATA, projectId)
 	for i := 0; i < 3; i++ {
 		res := redisClient.HGetAll(ctx, key)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
 				return nil
 			}
-			log.Errorf("Could not fetch key %s due to error %+v. Retrying %d.",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Could not fetch key %s due to error %+v. Retrying %d.",
 				key, res.Err(), i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Debugf("Successfully fetched project metaData from redis for projectId %s with value %s",
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Successfully fetched project metaData from redis for projectId %s with value %s",
 			projectId, res.Val())
 		var projectMetaData ProjectMetaData
 		projectMetaData.DagChains = res.Val()
 		return &projectMetaData
 	}
-	log.Errorf("Failed to fetch metaData for project %s from redis after max retries.", projectId)
+	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to fetch metaData for project %s from redis after max retries.", projectId)
 	return nil
 }
 
 func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_TAIL_INDEX, projectPruneState.ProjectId, settingsObj.PruningServiceSettings.OldestProjectIndex)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TAIL_INDEX, projectPruneState.ProjectId, settingsObj.PruningServiceSettings.OldestProjectIndex)
 	lastIndexHeight := -1
 	res := redisClient.Get(ctx, key)
 	err := res.Err()
 	if err != nil {
 		if err == redis.Nil {
-			log.Infof("Key %s does not exist", key)
+			log.WithField("CycleID", cycleDetails.CycleID).Infof("Key %s does not exist", key)
 			//For summary projects hard-code it to curBlockHeight-1000 as of now which gives safe values till 24hrs
-			key = fmt.Sprintf(REDIS_KEY_PROJECT_FINALIZED_HEIGHT, projectPruneState.ProjectId)
+			key = fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_FINALIZED_HEIGHT, projectPruneState.ProjectId)
 			res = redisClient.Get(ctx, key)
 			err := res.Err()
 			if err != nil {
 				if err == redis.Nil {
-					log.Errorf("Key %s does not exist", key)
+					log.WithField("CycleID", cycleDetails.CycleID).Errorf("Key %s does not exist", key)
 					return 0
 				}
 			}
 			projectFinalizedHeight, err := strconv.Atoi(res.Val())
 			if err != nil {
-				log.Fatalf("Unable to convert retrieved projectFinalizedHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
+				log.WithField("CycleID", cycleDetails.CycleID).Fatalf("Unable to convert retrieved projectFinalizedHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
 				return -1
 			}
 			lastIndexHeight = projectFinalizedHeight - settingsObj.PruningServiceSettings.SummaryProjectsPruneHeightBehindHead
@@ -258,10 +273,10 @@ func GetOldestIndexedProjectHeight(projectPruneState *ProjectPruneState) int {
 	}
 	lastIndexHeight, err = strconv.Atoi(res.Val())
 	if err != nil {
-		log.Fatalf("Unable to convert retrieved lastIndexHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
+		log.WithField("CycleID", cycleDetails.CycleID).Fatalf("Unable to convert retrieved lastIndexHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
 		return -1
 	}
-	log.Debugf("Fetched oldest index height %d for project %s from redis ", lastIndexHeight, projectPruneState.ProjectId)
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Fetched oldest index height %d for project %s from redis ", lastIndexHeight, projectPruneState.ProjectId)
 	return lastIndexHeight
 }
 
@@ -275,117 +290,180 @@ func FindPruningHeight(projectMetaData *ProjectMetaData, projectPruneState *Proj
 	return heightToPrune
 }
 
-func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid string) bool {
+func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid string) (bool, error) {
+	var errToReturn error
 	//Export DAG from IPFS
 	fileName, opStatus := ExportDAGFromIPFS(projectId, startScore, endScore, lastDagCid)
-	if opStatus {
-		log.Errorf("Unable to export DAG for project %s at height %d. Will retry in next cycle", projectId, endScore)
-		return false
+	if !opStatus {
+		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to export DAG for project %s at height %d. Will retry in next cycle", projectId, endScore)
+		return opStatus, errors.New("failed to export CAR File from IPFS")
 	}
 	//Can be Optimized: Consider batch upload of files if sizes are too small.
 	CID, opStatus := UploadFileToWeb3Storage(fileName)
 	if opStatus {
-		log.Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
 	} else {
-		log.Debugf("Failed to upload CAR file %s to web3.storage", fileName)
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Failed to upload CAR file %s to web3.storage", fileName)
+		errToReturn = errors.New("failed to upload CAR File to web3.storage")
 	}
 	//Delete file from local storage.
 	err := os.Remove(fileName)
 	if err != nil {
-		log.Errorf("Failed to delete file %s due to error %+v", fileName, err)
+		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to delete file %s due to error %+v", fileName, err)
 	}
-	log.Debugf("Deleted file %s successfully from local storage", fileName)
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Deleted file %s successfully from local storage", fileName)
 
-	return opStatus
+	return opStatus, errToReturn
 }
 
 func UpdateDagSegmentStatusToRedis(projectID string, height int, dagSegment *ProjectDAGSegment) bool {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_METADATA, projectID)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_METADATA, projectID)
 	for i := 0; i < 3; i++ {
 		bytes, err := json.Marshal(dagSegment)
 		if err != nil {
-			log.Fatalf("Failed to marshal dag segment due toe error %+v", err)
+			log.WithField("CycleID", cycleDetails.CycleID).Fatalf("Failed to marshal dag segment due toe error %+v", err)
 			return false
 		}
 		res := redisClient.HSet(ctx, key, height, bytes)
 		if res.Err() != nil {
-			log.Errorf("Could not update key %s due to error %+v. Retrying %d.",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Could not update key %s due to error %+v. Retrying %d.",
 				key, res.Err(), i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Debugf("Successfully updated archivedDAGSegments to redis for projectId %s with value %+v",
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Successfully updated archivedDAGSegments to redis for projectId %s with value %+v",
 			projectID, *dagSegment)
 		return true
 	}
-	log.Errorf("Failed to update DAGSegments %+v for project %s to redis after max retries.", *dagSegment, projectID)
+	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to update DAGSegments %+v for project %s to redis after max retries.", *dagSegment, projectID)
 	return false
 }
 
-func ProcessProject(projectId string) {
-	log.Debugf("Processing Project %s", projectId)
+type asInt []string
+
+func (s asInt) Len() int {
+	return len(s)
+}
+func (s asInt) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+func (s asInt) Less(i, j int) bool {
+	iInt, err := strconv.Atoi(s[i])
+	if err != nil {
+		log.Fatalf("%s is not an integer due to err %+v", s[i], err)
+	}
+	jInt, err := strconv.Atoi(s[j])
+	if err != nil {
+		log.Fatalf("%s is not an integer  due to err", s[j], err)
+	}
+	return iInt < jInt
+}
+
+func ProcessProject(projectId string) int {
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Processing Project %s", projectId)
+	var projectReport ProjectPruningReport
+	projectReport.ProjectID = projectId
 	// Fetch Project metaData from redis
 	projectMetaData := FetchProjectMetaData(projectId)
 	if projectMetaData == nil {
-		log.Debugf("No state metaData available for project %s, skipping this cycle.", projectId)
-		return
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("No state metaData available for project %s, skipping this cycle.", projectId)
+		return 1
 	}
 	projectPruneState := projectList[projectId]
 	startScore := projectPruneState.LastPrunedHeight
 	heightToPrune := FindPruningHeight(projectMetaData, projectPruneState)
 	if heightToPrune <= startScore {
-		log.Debugf("Nothing to Prune for project %s", projectId)
-		return
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Nothing to Prune for project %s", projectId)
+		UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
+		return 1
 	}
-	log.Debugf("Height to Prune is %d for project %s", heightToPrune, projectId)
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Height to Prune is %d for project %s", heightToPrune, projectId)
+	projectProcessed := false
 
-	for dagSegmentEndHeightStr, dagChainSegment := range projectMetaData.DagChains {
+	//Sort DAGSegments by their height and then process.
+	dagSegments := make([]string, 0, len(projectMetaData.DagChains))
+	for k := range projectMetaData.DagChains {
+		dagSegments = append(dagSegments, k)
+		//log.Debugf("Key %s", k)
+	}
+	sort.Sort(asInt(dagSegments))
+
+	//for dagSegmentEndHeightStr, dagChainSegment := range projectMetaData.DagChains {
+	for _, dagSegmentEndHeightStr := range dagSegments {
+		dagChainSegment := projectMetaData.DagChains[dagSegmentEndHeightStr]
 		dagSegmentEndHeight, err := strconv.Atoi(dagSegmentEndHeightStr)
 		if err != nil {
-			log.Errorf("dagSegmentEndHeight is not an integer.")
-			return
+			log.WithField("CycleID", cycleDetails.CycleID).Errorf("dagSegmentEndHeight %s is not an integer.", dagSegmentEndHeightStr)
+			return -1
 		}
 		if dagSegmentEndHeight < heightToPrune {
 			var dagSegment ProjectDAGSegment
 			err = json.Unmarshal([]byte(dagChainSegment), &dagSegment)
 			if err != nil {
-				log.Errorf("Unable to unmarshal dagChainSegment data due to error %+v", err)
+				log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to unmarshal dagChainSegment data due to error %+v", err)
 				continue
 			}
-			log.Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, projectId)
+			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, projectId)
 
 			if dagSegment.StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
-				log.Infof("Performing Archival for project %s segment with endHeight %d", projectId, dagSegmentEndHeight)
-
-				opStatus := ArchiveDAG(projectId, dagSegment.BeginHeight,
+				log.WithField("CycleID", cycleDetails.CycleID).Infof("Performing Archival for project %s segment with endHeight %d", projectId, dagSegmentEndHeight)
+				projectReport.DAGSegmentsProcessed++
+				opStatus, err := ArchiveDAG(projectId, dagSegment.BeginHeight,
 					dagSegment.EndHeight, dagSegment.EndDAGCID)
 				if opStatus {
 					dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
 				} else {
-					log.Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectId, dagSegmentEndHeight)
-					return
+					log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectId, dagSegmentEndHeight)
+					projectReport.DAGSegmentsArchivalFailed++
+					projectReport.ArchivalFailureCause = err.Error()
+					UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
+					return -2
 				}
+				startScore = dagSegment.BeginHeight
+				payloadCids := GetPayloadCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
+				if payloadCids == nil {
+					projectReport.UnPinFailed += dagSegment.EndHeight - dagSegment.BeginHeight
+					projectReport.ArchivalFailureCause = "Failed to fetch payloadCids from Redis"
+					UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
+					return -2
+				}
+				dagCids := GetDAGCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
+				if dagCids == nil {
+					projectReport.UnPinFailed += dagSegment.EndHeight - dagSegment.BeginHeight
+					projectReport.ArchivalFailureCause = "Failed to fetch DAGCids from Redis"
+					UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
+					return -2
+				}
+				log.WithField("CycleID", cycleDetails.CycleID).Infof("Unpinning DAG CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
+				errCount := UnPinFromIPFS(projectId, dagCids)
+				projectReport.UnPinFailed += errCount
+				log.WithField("CycleID", cycleDetails.CycleID).Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
+				errCount = UnPinFromIPFS(projectId, payloadCids)
+				projectReport.UnPinFailed += errCount
+
 				UpdateDagSegmentStatusToRedis(projectId, dagSegmentEndHeight, &dagSegment)
 
-				payloadCids := GetPayloadCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
-				dagCids := GetDAGCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
-				log.Infof("Unpinning DAG CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
-				UnPinFromIPFS(projectId, dagCids)
-
-				log.Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
-				UnPinFromIPFS(projectId, payloadCids)
 				projectPruneState.LastPrunedHeight = dagSegmentEndHeight
 				if settingsObj.PruningServiceSettings.PruneRedisZsets {
 					if settingsObj.PruningServiceSettings.BackUpRedisZSets {
 						BackupZsetsToFile(projectId, startScore, dagSegmentEndHeight, payloadCids, dagCids)
 					}
-					log.Infof("Pruning redis Zsets from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
+					log.WithField("CycleID", cycleDetails.CycleID).Infof("Pruning redis Zsets from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
 					PruneProjectInRedis(projectId, startScore, dagSegmentEndHeight)
 				}
 				UpdatePrunedStatusToRedis(projectPruneState)
+
+				projectReport.DAGSegmentsArchived++
+				projectReport.CIDsUnPinned += len(*payloadCids) + len(*dagCids)
+				projectProcessed = true
 			}
 		}
 	}
+	if projectProcessed {
+		UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
+		return 0
+	}
+	return 1
 }
 
 func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCids *map[int]string, dagCids *map[int]string) {
@@ -393,7 +471,7 @@ func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCi
 	fileName := fmt.Sprintf("%s%s__%d_%d.json", path, projectId, startScore, endScore)
 	file, err := os.Create(fileName)
 	if err != nil {
-		log.Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
+		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
 	}
 	defer file.Close()
 
@@ -406,22 +484,22 @@ func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCi
 
 	zSetsJson, err := json.Marshal(zSets)
 	if err != nil {
-		log.Fatalf("Failed to marshal payloadCids map to json due to error %+v", err)
+		log.WithField("CycleID", cycleDetails.CycleID).Fatalf("Failed to marshal payloadCids map to json due to error %+v", err)
 	}
 
 	bytesWritten, err := file.Write(zSetsJson)
 	if err != nil {
-		log.Errorf("Failed to write payloadCidsJson to file %s due to error %+v", fileName, err)
+		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to write payloadCidsJson to file %s due to error %+v", fileName, err)
 	} else {
-		log.Debugf("Wrote %d bytes of payloadCids successfully to file %s.", bytesWritten, fileName)
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Wrote %d bytes of payloadCids successfully to file %s.", bytesWritten, fileName)
 		file.Sync()
 	}
 }
 
 func PruneProjectInRedis(projectId string, startScore int, endScore int) {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_CIDS, projectId)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_CIDS, projectId)
 	PruneZSetInRedis(key, startScore, endScore)
-	key = fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+	key = fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
 	PruneZSetInRedis(key, startScore, endScore)
 }
 
@@ -433,42 +511,44 @@ func PruneZSetInRedis(key string, startScore int, endScore int) {
 			strconv.Itoa(endScore),
 		)
 		if res.Err() != nil {
-			log.Errorf("Could not prune redis Zset %s between height %d to %d due to error %+v. Retrying %d.",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Could not prune redis Zset %s between height %d to %d due to error %+v. Retrying %d.",
 				key, startScore, endScore, res.Err(), i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		log.Debugf("Successfully pruned redis Zset %s of %d entries between height %d and %d",
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Successfully pruned redis Zset %s of %d entries between height %d and %d",
 			key, res.Val(), startScore, endScore)
 		break
 	}
+	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Could not prune redis Zset %s between height %d to %d even after max-retries.",
+		key, startScore, endScore)
 }
 
 func ExportDAGFromIPFS(projectId string, fromHeight int, toHeight int, dagCID string) (string, bool) {
-	log.Debugf("Exporting DAG for project %s from height %d to height %d with last DAG CID %s", projectId, fromHeight, toHeight, dagCID)
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Exporting DAG for project %s from height %d to height %d with last DAG CID %s", projectId, fromHeight, toHeight, dagCID)
 	dagExportSuffix := "/api/v0/dag/export"
 	reqURL := "http://" + ipfsHTTPURL + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
-	log.Debugf("Sending request to URL %s", reqURL)
-	for retryCount := 0; ; {
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Sending request to URL %s", reqURL)
+	for retryCount := 0; retryCount < 3; {
 		if retryCount == *settingsObj.RetryCount {
-			log.Errorf("CAR export failed for project %s at height %d after max-retry of %d",
+			log.WithField("CycleID", cycleDetails.CycleID).Errorf("CAR export failed for project %s at height %d after max-retry of %d",
 				projectId, fromHeight, settingsObj.RetryCount)
-			return "", true
+			return "", false
 		}
 		req, err := http.NewRequest(http.MethodPost, reqURL, nil)
 		if err != nil {
-			log.Fatalf("Failed to create new HTTP Req with URL %s with error %+v",
+			log.WithField("CycleID", cycleDetails.CycleID).Fatalf("Failed to create new HTTP Req with URL %s with error %+v",
 				reqURL, err)
-			return "", true
+			return "", false
 		}
 
-		log.Debugf("Sending Req to IPFS URL %s for project %s a height %d ",
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Sending Req to IPFS URL %s for project %s at height %d ",
 			reqURL, projectId, fromHeight)
 		res, err := ipfsHttpClient.Do(req)
 		if err != nil {
 			retryCount++
-			log.Errorf("Failed to send request %+v towards IPFS URL %s for project %s at height %d with error %+v.  Retrying %d",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to send request %+v towards IPFS URL %s for project %s at height %d with error %+v.  Retrying %d",
 				req, reqURL, projectId, fromHeight, err, retryCount)
 			continue
 		}
@@ -476,49 +556,55 @@ func ExportDAGFromIPFS(projectId string, fromHeight int, toHeight int, dagCID st
 
 		if err != nil {
 			retryCount++
-			log.Errorf("Failed to read response body for project %s at height %d from IPFS with error %+v. Retrying %d",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to read response body for project %s at height %d from IPFS with error %+v. Retrying %d",
 				projectId, fromHeight, err, retryCount)
 			continue
 		}
 		if res.StatusCode == http.StatusOK {
-			log.Debugf("Received 200 OK from IPFS for project %s at height %d",
+			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Received 200 OK from IPFS for project %s at height %d",
 				projectId, fromHeight)
 			path := settingsObj.PruningServiceSettings.CARStoragePath
 			fileName := fmt.Sprintf("%s%s_%d_%d.car", path, projectId, fromHeight, toHeight)
 			file, err := os.Create(fileName)
 			if err != nil {
-				log.Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
+				log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
+				return "", false
 			}
 			defer file.Close()
 			fileWriter := bufio.NewWriter(file)
 			//TODO: optimize for larger files.
 			bytesWritten, err := io.Copy(fileWriter, res.Body)
 			if err != nil {
-				log.Errorf("Failed to write to %s due to error %+v", fileName, err)
+				retryCount++
+				log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to write to %s due to error %+v. Retrying %d", fileName, err, retryCount)
+				time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Minute)
+				continue
 			}
 			fileWriter.Flush()
-			log.Debugf("Wrote %d bytes CAR to local file %s successfully", bytesWritten, fileName)
-			return fileName, false
+			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Wrote %d bytes CAR to local file %s successfully", bytesWritten, fileName)
+			return fileName, true
 		} else {
 			retryCount++
-			log.Errorf("Received Error response from IPFS for project %s at height %d with statusCode %d and status : %s ",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Received Error response from IPFS for project %s at height %d with statusCode %d and status : %s ",
 				projectId, fromHeight, res.StatusCode, res.Status)
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Minute)
 			continue
 		}
 	}
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Failed to export DAG from ipfs for project %s at height %d after max retries.", projectId, toHeight)
+	return "", false
 }
 
 func UploadFileToWeb3Storage(fileName string) (string, bool) {
 
 	file, err := os.Open(fileName)
 	if err != nil {
-		log.Errorf("Unable to open file %s due to error %+v", fileName, err)
+		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to open file %s due to error %+v", fileName, err)
 		return "", false
 	}
 	fileStat, err := file.Stat()
 	if err != nil {
-		log.Errorf("Unable to stat file %s due to error %+v", fileName, err)
+		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to stat file %s due to error %+v", fileName, err)
 		return "", false
 	}
 	targetSize := 100 * 1024 * 1024 // 100MiB chunks
@@ -526,7 +612,7 @@ func UploadFileToWeb3Storage(fileName string) (string, bool) {
 	fileReader := bufio.NewReader(file)
 
 	if fileStat.Size() > int64(targetSize) {
-		log.Infof("File size greater than targetSize %d bytes..doing chunking", targetSize)
+		log.WithField("CycleID", cycleDetails.CycleID).Infof("File size greater than targetSize %d bytes..doing chunking", targetSize)
 		var lastCID string
 		var opStatus bool
 		// Need to chunk CAR files more than 100MB as web3.storage has size limit right now.
@@ -539,15 +625,15 @@ func UploadFileToWeb3Storage(fileName string) (string, bool) {
 				if err == io.EOF {
 					break
 				}
-				log.Fatalf("Failed to split car file %s due to error %+v", fileName, err)
+				log.WithField("CycleID", cycleDetails.CycleID).Fatalf("Failed to split car file %s due to error %+v", fileName, err)
 				return "", false
 			}
 			lastCID, opStatus = UploadChunkToWeb3Storage(fileName, car)
 			if !opStatus {
-				log.Errorf("Failed to upload chunk %d for file %s. aborting complete file.", i, fileName)
+				log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to upload chunk %d for file %s. aborting complete file.", i, fileName)
 				return "", false
 			}
-			log.Debugf("Uploaded chunk %d of file %s to web3.storage successfully", i, fileName)
+			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Uploaded chunk %d of file %s to web3.storage successfully", i, fileName)
 		}
 		return lastCID, true
 	} else {
@@ -558,15 +644,15 @@ func UploadFileToWeb3Storage(fileName string) (string, bool) {
 func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bool) {
 
 	reqURL := settingsObj.Web3Storage.URL + "/car"
-	for retryCount := 0; ; {
+	for retryCount := 0; retryCount < 3; {
 		if retryCount == *settingsObj.RetryCount {
-			log.Errorf("web3.storage upload failed for file %s after max-retry of %d",
+			log.WithField("CycleID", cycleDetails.CycleID).Errorf("web3.storage upload failed for file %s after max-retry of %d",
 				fileName, *settingsObj.RetryCount)
 			return "", false
 		}
 		req, err := http.NewRequest(http.MethodPost, reqURL, fileReader)
 		if err != nil {
-			log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
+			log.WithField("CycleID", cycleDetails.CycleID).Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
 				reqURL, err)
 			return "", false
 		}
@@ -575,16 +661,16 @@ func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bo
 
 		err = web3StorageClientRateLimiter.Wait(context.Background())
 		if err != nil {
-			log.Errorf("Web3Storage Rate Limiter wait timeout with error %+v", err)
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Web3Storage Rate Limiter wait timeout with error %+v", err)
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		log.Debugf("Sending Req to web3.storage URL %s for file %s",
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Sending Req to web3.storage URL %s for file %s",
 			reqURL, fileName)
 		res, err := w3sHttpClient.Do(req)
 		if err != nil {
 			retryCount++
-			log.Errorf("Failed to send request %+v towards web3.storage URL %s for fileName %s with error %+v.  Retrying %d",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to send request %+v towards web3.storage URL %s for fileName %s with error %+v.  Retrying %d",
 				req, reqURL)
 			continue
 		}
@@ -593,7 +679,7 @@ func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bo
 		respBody, err := ioutil.ReadAll(res.Body)
 		if err != nil {
 			retryCount++
-			log.Errorf("Failed to read response body for fileName %s from web3.storage with error %+v. Retrying %d",
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to read response body for fileName %s from web3.storage with error %+v. Retrying %d",
 				err, retryCount)
 			continue
 		}
@@ -601,121 +687,129 @@ func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bo
 			err = json.Unmarshal(respBody, &resp)
 			if err != nil {
 				retryCount++
-				log.Errorf("Failed to unmarshal response %+v for fileName %s towards web3.storage with error %+v. Retrying %d",
+				log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to unmarshal response %+v for fileName %s towards web3.storage with error %+v. Retrying %d",
 					respBody, fileName, err, retryCount)
 				time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 				continue
 			}
-			log.Debugf("Received 200 OK from web3.storage for fileName %s with CID %s ",
+			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Received 200 OK from web3.storage for fileName %s with CID %s ",
 				fileName, resp.CID)
 			return resp.CID, true
 		} else {
 			if res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusForbidden ||
 				res.StatusCode == http.StatusUnauthorized {
-				log.Errorf("Failed to upload to web3.storage due to error %+v with statusCode %d", resp, res.StatusCode)
+				log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to upload to web3.storage due to error %+v with statusCode %d", resp, res.StatusCode)
 				return "", false
 			}
 			retryCount++
 			var resp Web3StorageErrResponse
 			err = json.Unmarshal(respBody, &resp)
 			if err != nil {
-				log.Errorf("Failed to unmarshal error response %+v for fileName %s towards web3.storage with error %+v. Retrying %d",
+				log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to unmarshal error response %+v for fileName %s towards web3.storage with error %+v. Retrying %d",
 					respBody, fileName, err, retryCount)
 			} else {
-				log.Errorf("Received Error response %+v from web3.storage for fileName %s with statusCode %d and status : %s ",
+				log.WithField("CycleID", cycleDetails.CycleID).Warnf("Received Error response %+v from web3.storage for fileName %s with statusCode %d and status : %s ",
 					resp, fileName, res.StatusCode, res.Status)
 			}
 			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			continue
 		}
 	}
+	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to upload file %s to web3.storage after max retries", fileName)
+	return "", false
 }
 
-func UnPinFromIPFS(projectId string, cids *map[int]string) {
+func UnPinFromIPFS(projectId string, cids *map[int]string) int {
+	errorCount := 0
 	for height, cid := range *cids {
 		i := 0
 		for ; i < 3; i++ {
 			err := ipfsClientRateLimiter.Wait(context.Background())
 			if err != nil {
-				log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
+				log.WithField("CycleID", cycleDetails.CycleID).Warnf("IPFSClient Rate Limiter wait timeout with error %+v", err)
 				time.Sleep(1 * time.Second)
 				continue
 			}
-			log.Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectId)
+			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectId)
 			err = ipfsClient.Unpin(cid)
 			if err != nil {
+				//CID has already been unpinned
 				if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
-					log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
+					log.WithField("CycleID", cycleDetails.CycleID).Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
 					break
 				}
-				log.Errorf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, i)
+				log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, i)
 				time.Sleep(5 * time.Second)
 				continue
 			}
-			log.Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectId)
+			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectId)
 			break
 		}
 		if i == 3 {
-			log.Errorf("Failed to unpin CID %s at height %d from ipfs for project %s after max retries", cid, height, projectId)
+			log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to unpin CID %s at height %d from ipfs for project %s after max retries", cid, height, projectId)
 			//TODO: Add to some failed queue to Unpin this CID at a later stage.
+			errorCount++
 			continue
 		}
 	}
+	return errorCount
 }
 
 func GetPayloadCidsFromRedis(projectId string, startScore int, endScore int) *map[int]string {
 	cids := make(map[int]string, endScore-startScore)
 
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
-	for i := 0; ; i++ {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+	for i := 0; i < 5; i++ {
 		res := redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 			Min: strconv.Itoa(startScore),
 			Max: strconv.Itoa(endScore),
 		})
 		if res.Err() != nil {
-			log.Errorf("Could not fetch payloadCids for project %s due to error %+v. Retrying %d.", projectId, res.Err(), i)
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Could not fetch payloadCids for project %s due to error %+v. Retrying %d.", projectId, res.Err(), i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		for j := range res.Val() {
 			cids[int(res.Val()[j].Score)] = fmt.Sprintf("%v", res.Val()[j].Member)
 		}
-		log.Debugf("Fetched %d payload Cids from redis for project %s", len(cids), projectId)
-		break
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Fetched %d payload Cids from redis for project %s", len(cids), projectId)
+		return &cids
 	}
-	return &cids
+	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Could not fetch payloadCids for project %s after max retries.", projectId)
+	return nil
 }
 
 func GetDAGCidsFromRedis(projectId string, startScore int, endScore int) *map[int]string {
 	cids := make(map[int]string, endScore-startScore)
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_CIDS, projectId)
-	for i := 0; i < 3; i++ {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_CIDS, projectId)
+	for i := 0; i < 5; i++ {
 		res := redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 			Min: strconv.Itoa(startScore),
 			Max: strconv.Itoa(endScore),
 		})
 		if res.Err() != nil {
-			log.Errorf("Could not fetch payloadCids for project %s due to error %+v. Retrying %d.", projectId, res.Err(), i)
+			log.WithField("CycleID", cycleDetails.CycleID).Warnf("Could not fetch DAGCids for project %s due to error %+v. Retrying %d.", projectId, res.Err(), i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		for j := range res.Val() {
 			cids[int(res.Val()[j].Score)] = fmt.Sprintf("%v", res.Val()[j].Member)
 		}
-		log.Debugf("Fetched %d DAG Cids from redis for project %s", len(cids), projectId)
-		break
+		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Fetched %d DAG Cids from redis for project %s", len(cids), projectId)
+		return &cids
 	}
-	return &cids
+	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Could not fetch DAGCids for project %s after max retries.", projectId)
+	return nil
 }
 
 func GetProjectsListFromRedis() {
-	key := REDIS_KEY_STORED_PROJECTS
+	key := redisutils.REDIS_KEY_STORED_PROJECTS
 	log.Debugf("Fetching stored Projects from redis at key: %s", key)
-	for i := 0; i < 3; i++ {
+	for i := 0; ; i++ {
 		res := redisClient.SMembers(ctx, key)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
-				log.Errorf("Stored Projects key doesn't exist..retrying")
+				log.Warnf("Stored Projects key doesn't exist..retrying")
 				time.Sleep(5 * time.Minute)
 				continue
 			}
@@ -728,7 +822,7 @@ func GetProjectsListFromRedis() {
 		for i := range res.Val() {
 			projectId := res.Val()[i]
 			//if strings.Contains(projectId, "uniswap_V2PairsSummarySnapshot_UNISWAPV2") {
-			projectPruneState := ProjectPruneState{projectId, 0}
+			projectPruneState := ProjectPruneState{projectId, 0, false}
 			projectList[projectId] = &projectPruneState
 			//	break
 			//}
