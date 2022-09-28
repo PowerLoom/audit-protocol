@@ -382,71 +382,6 @@ async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contrac
     )
 
 
-@retry(reraise=True, wait=wait_random(min=1, max=3), stop=stop_after_attempt(3))
-async def fetch_and_update_status_of_older_snapshots(summary_snapshots_zset_key, summary_snapshots_project_id, data_model, redis_conn: aioredis.Redis = None):
-    # Fetch all entries in snapshotZSet
-    # Any entry that has a txStatus as TX_CONFIRM_PENDING, query its updated status and update ZSet
-    # If txHash changes, store old one in prevTxhash and update the new one in txHash
-
-    if not redis_conn:
-        aioredis_pool = RedisPool()
-        await aioredis_pool.populate()
-        redis_conn = aioredis_pool.writer_redis_pool
-
-    stored_snapshots = await redis_conn.zrangebyscore(
-        name=summary_snapshots_zset_key,
-        min=float('-inf'),
-        max=float('+inf'),
-        withscores=True
-    )
-    for snapshot_meta, score in stored_snapshots:
-        snapshot_meta = json.loads(snapshot_meta.decode('utf-8'))
-        score = int(score)
-        if snapshot_meta.get('dagHeight', 0) == 0:
-            # skip processing of blockHeight snapshots if DAGheight is not available to fetch status.
-            continue
-
-        snapshot_meta = data_model(**snapshot_meta)
-        if snapshot_meta.txStatus <= SNAPSHOT_STATUS_MAP["TX_CONFIRMATION_PENDING"]:
-
-            block_status = await retrieval_utils.retrieve_block_status(
-                summary_snapshots_project_id, 0, 
-                snapshot_meta.dagHeight, redis_conn, redis_conn
-            )
-
-            # if updated block status is less than 3 then don't update metadata yet
-            if block_status.status < SNAPSHOT_STATUS_MAP["TX_CONFIRMATION_PENDING"]:
-                continue
-
-            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3),
-                                               stop=stop_after_attempt(3)):
-                with attempt:
-                    # remove snapshot entry from zset
-                    await redis_conn.zremrangebyscore(
-                        name=summary_snapshots_zset_key,
-                        min=score,
-                        max=score
-                    )
-
-            # update new status fields
-            if block_status.tx_hash != snapshot_meta.txHash:
-                snapshot_meta.prevTxHash = snapshot_meta.txHash
-
-            snapshot_meta.txHash = block_status.tx_hash
-            snapshot_meta.txStatus = block_status.status
-
-            async for attempt in AsyncRetrying(reraise=True, wait=wait_random(min=1, max=3),
-                                               stop=stop_after_attempt(3)):
-                with attempt:
-                    # add new snapshot entry to zset
-                    await redis_conn.zadd(
-                        name=summary_snapshots_zset_key,
-                        mapping={snapshot_meta.json(): score}
-                    )
-
-    return None
-
-
 async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Redis, pair_contract_address):
     try:
         project_id_trade_volume = f'uniswap_pairContract_trade_volume_{pair_contract_address}_{NAMESPACE}'
@@ -877,19 +812,8 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
             t = process_pairs_trade_volume_and_reserves(aioredis_pool.writer_redis_pool, pair_contract_address)
             process_data_list.append(t)
 
-        process_data_list.append(
-            fetch_and_update_status_of_older_snapshots(
-                summary_snapshots_zset_key=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
-                summary_snapshots_project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
-                data_model=uniswapPairsSnapshotZset,
-                redis_conn=redis_conn
-            )
-        )
         final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(*process_data_list,
                                                                                                      return_exceptions=True)
-
-        # pop snapshot-meta-update results from asycio.gather result
-        final_results.pop()
         
         common_blockheight_reached = False
         common_block_timestamp = False

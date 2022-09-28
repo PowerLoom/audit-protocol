@@ -12,7 +12,6 @@ from utils.retrieval_utils import retrieve_block_data, retrieve_block_status, SN
 import logging.config
 from data_models import uniswapDailyStatsSnapshotZset, ProjectBlockHeightStatus
 import sys
-from pair_data_aggregation_service import fetch_and_update_status_of_older_snapshots
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -148,15 +147,9 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                 pair_snapshot_payloadCID_24h = pair_snapshot_payloadCID_24h.decode("utf-8")
 
             # fetch current and 24h old snapshot payload
-            dag_block_latest, dag_block_24h, snapshot_metadata_update = await asyncio.gather(
+            dag_block_latest, dag_block_24h = await asyncio.gather(
                 retrieve_payload_data(latest_pair_summary_timestamp_payloadCID),
-                retrieve_payload_data(pair_snapshot_payloadCID_24h),
-                fetch_and_update_status_of_older_snapshots(
-                    summary_snapshots_zset_key=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                    summary_snapshots_project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
-                    data_model=uniswapDailyStatsSnapshotZset,
-                    redis_conn=redis_conn
-                )
+                retrieve_payload_data(pair_snapshot_payloadCID_24h)
             )
             dag_block_latest = json.loads(dag_block_latest).get("data", None) if dag_block_latest else None
             dag_block_24h = json.loads(dag_block_24h).get("data", None) if dag_block_24h else None
@@ -218,13 +211,6 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
 
         else:
             logger.debug(f"Pair summary & daily stats snapshots are already in sync with block height")
-            # update old snapshot metadata (irrespective of new snapshot being commited) 
-            await fetch_and_update_status_of_older_snapshots(
-                summary_snapshots_zset_key=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
-                summary_snapshots_project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
-                data_model=uniswapDailyStatsSnapshotZset,
-                redis_conn=redis_conn
-            )
             return
         
         wait_for_snapshot_project_new_commit = False

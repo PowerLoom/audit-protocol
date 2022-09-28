@@ -534,7 +534,8 @@ async def payload_to_dag_processor_task(event_data):
                     payload={
                         'commitID': event_data['event_data']['payloadCommitId'],
                         'projectID': project_id,
-                        'status': True
+                        'status': True,
+                        'finalized_height': tentative_block_height_event_data
                     }
                 )
 
