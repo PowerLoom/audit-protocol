@@ -299,9 +299,9 @@ func (verifier *PruningVerifier) FetchAndValidateCAR(segment *ProjectDAGSegment)
 
 	if i != 2*(segment.EndHeight-segment.BeginHeight+1) {
 		log.Errorf("Number of CIDS in CAR file %s is not matching that of segment. CAR File as %d CIDS, segment has %d",
-			carFile, i, segment.EndHeight-segment.BeginHeight)
+			carFile, i, 2*(segment.EndHeight-segment.BeginHeight+1))
 		return false, fmt.Sprintf("Number of CIDS in CAR file %s is not matching that of segment. CAR File as %d CIDS, segment has %d",
-			carFile, i, segment.EndHeight-segment.BeginHeight)
+			carFile, i, 2*(segment.EndHeight-segment.BeginHeight+1))
 	}
 
 	return true, ""

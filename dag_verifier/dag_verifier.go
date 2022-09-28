@@ -1,19 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
+	"github.com/powerloom/goutils/slackutils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -32,7 +31,6 @@ type DagVerifier struct {
 	lastVerifiedDagBlockHeights      map[string]string
 	ProjectsIndexedState             map[string]*ProjectIndexedState
 	lastVerifiedDagBlockHeightsMutex *sync.RWMutex
-	slackClient                      *http.Client
 	dagChainHasIssues                bool
 	dagCacheIssues                   int
 	dagChainIssues                   map[string][]DagChainIssue
@@ -256,6 +254,7 @@ func (verifier *DagVerifier) InitIPFSClient() {
 
 func (verifier *DagVerifier) Run() {
 	periodicRetrievalInterval := time.Duration(verifier.settings.DagVerifierSettings.RunIntervalSecs) * time.Second
+
 	for {
 		if len(verifier.projects) > 0 {
 			verifier.FetchLastProjectIndexedStatusFromRedis()
@@ -273,7 +272,7 @@ func (verifier *DagVerifier) Run() {
 
 func (verifier *DagVerifier) VerifyAllProjects() {
 	var wg sync.WaitGroup
-
+	//TODO: change to batch logic as done in pruning service.
 	for i := range verifier.projects {
 		wg.Add(1)
 
@@ -490,11 +489,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_LOW
 		dagSummary.ProjectsWithCacheIssueCount = verifier.dagCacheIssues
 		dagSummary.CurrentMinChainHeight = currentMinChainHeight
+		verifier.NotifySlack(&dagSummary)
 
-		err := verifier.NotifySlackOfDAGSummary(dagSummary)
-		if err != nil {
-			log.Errorf("Slack Notify failed with error %+v", err)
-		}
 		verifier.dagCacheIssues = 0
 	}
 
@@ -504,15 +500,12 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	//As of now the workaround is to restart dag-verifier once issues are resolved.
 	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 || isDagchainStuckForSummaryProject > 0 {
 		if time.Now().Unix()-verifier.lastNotifyTime > verifier.settings.DagVerifierSettings.SuppressNotificationTimeSecs {
-			err := verifier.NotifySlackOfDAGSummary(dagSummary)
-			if err != nil {
-				log.Errorf("Slack Notify failed with error %+v", err)
-			}
+			verifier.NotifySlack(&dagSummary)
 			verifier.lastNotifyTime = time.Now().Unix()
 		}
 	}
 	if summaryProjectsMovingAheadAfterStuck {
-		verifier.NotifySlackOfDAGSummary(dagSummary)
+		verifier.NotifySlack(&dagSummary)
 	}
 	//Cleanup reported issues, because either they auto-recover or a manual recovery is needed.
 	verifier.dagChainHasIssues = false
@@ -524,68 +517,14 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 
 }
 
-func (verifier *DagVerifier) NotifySlackOfDAGSummary(dagSummary DagChainReport) error {
-
-	reqURL := verifier.settings.DagVerifierSettings.SlackNotifyURL
-	var slackReq SlackNotifyReq
+func (verifier *DagVerifier) NotifySlack(dagSummary *DagChainReport) error {
 	dagSummaryStr, _ := json.MarshalIndent(dagSummary, "", "\t")
-
-	slackReq.DAGsummary = string(dagSummaryStr)
-	slackReq.IssueSeverity = dagSummary.Severity
-	body, err := json.Marshal(slackReq)
-
+	//err := verifier.NotifySlackOfDAGSummary(dagSummary)
+	err := slackutils.NotifySlackWorkflow(string(dagSummaryStr), dagSummary.Severity)
 	if err != nil {
-		log.Fatalf("Failed to marshal request %+v towards Slack Webhook with error %+v", dagSummary, err)
-		return err
+		log.Errorf("Slack Notify failed with error %+v", err)
 	}
-	for retryCount := 0; ; retryCount++ {
-		if retryCount == 3 {
-			log.Errorf("Giving up notifying slack after retrying for %d times", retryCount)
-			return errors.New("failed to notify after maximum retries")
-		}
-		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
-		if err != nil {
-			log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
-				reqURL, dagSummary, err)
-			return err
-		}
-		req.Header.Add("Content-Type", "application/json")
-		req.Header.Add("accept", "application/json")
-		log.Debugf("Sending Req with params %+v to Slack Webhook URL %s.",
-			dagSummary, reqURL)
-		res, err := verifier.slackClient.Do(req)
-		if err != nil {
-			log.Errorf("Failed to send request %+v towards Slack Webhook URL %s with error %+v",
-				req, reqURL, err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		defer res.Body.Close()
-		var resp SlackResp
-		respBody, err := ioutil.ReadAll(res.Body)
-		if err != nil {
-			log.Errorf("Failed to read response body from Slack Webhook with error %+v",
-				err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		if res.StatusCode == http.StatusOK {
-			log.Debugf("Received success response from Slack Webhook with statusCode %d", res.StatusCode)
-			return nil
-		} else {
-			err = json.Unmarshal(respBody, &resp)
-			if err != nil {
-				log.Errorf("Failed to unmarshal response %+v towards Slack Webhook with error %+v",
-					respBody, err)
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			log.Errorf("Received Error response %+v from Slack Webhook with statusCode %d and status : %s ",
-				resp, res.StatusCode, res.Status)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-	}
+	return err
 }
 
 // Need to handle Dagchain reorg event and reset the lastVerifiedBlockHeight to the same.
@@ -709,6 +648,8 @@ func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, [
 	lastBlock = dagChain[len(dagChain)-1].Payload.Data.ChainHeightRange.Begin
 	var dagIssues []DagChainIssue
 	for i := range dagChain {
+		//TODO: Add logic of out of order identification
+
 		//log.Debug("Processing dag block :", i, "nextDagBlockStart:", nextDagBlockStart)
 		if prevDagBlockEnd != 0 {
 			if dagChain[i].Height == dagChain[i-1].Height {
@@ -722,11 +663,11 @@ func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, [
 			}
 			curBlockStart := dagChain[i].Payload.Data.ChainHeightRange.Begin
 			//log.Debug("curBlockEnd", curBlockEnd, " nextDagBlockStart", nextDagBlockStart)
-			if curBlockStart != prevDagBlockEnd+1 {
+			if curBlockStart != 0 && curBlockStart != prevDagBlockEnd+1 {
 				log.Debug("Gap identified at ChainHeight:", dagChain[i].Height, ",PayloadCID:", dagChain[i].Payload.PayloadCid, ", between height:", dagChain[i-1].Height, " and ", dagChain[i].Height)
 				log.Debug("Missing blocks from(not including): ", prevDagBlockEnd, " to(not including): ", curBlockStart)
 				dagIssues = append(dagIssues, DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, MissingBlockHeightStart: prevDagBlockEnd + 1,
-					MissingBlockHeightEnd: curBlockStart - 1,
+					MissingBlockHeightEnd: curBlockStart - 1, // How can -1 be recorded??
 					TimestampIdentified:   time.Now().Unix(),
 					DAGBlockHeight:        dagChain[i].Height})
 				numGaps++
@@ -746,26 +687,10 @@ func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, [
 func (verifier *DagVerifier) InitRedisClient() {
 	redisURL := verifier.settings.Redis.Host + ":" + strconv.Itoa(verifier.settings.Redis.Port)
 	redisDb := verifier.settings.Redis.Db
-	//redisURL = "localhost:6379"
-	//redisDb = 0
-	log.Info("Connecting to redis at:", redisURL)
-	verifier.redisClient = redis.NewClient(&redis.Options{
-		Addr:     redisURL,
-		Password: "",
-		DB:       redisDb,
-		PoolSize: verifier.settings.DagVerifierSettings.RedisPoolSize,
-	})
-	pong, err := verifier.redisClient.Ping(ctx).Result()
-	//pong, err := verifier.redisClient.Ping().Result()
-	if err != nil {
-		log.Error("Unable to connect to redis at:")
-	}
-	log.Info("Connected successfully to Redis and received ", pong, " back")
+	verifier.redisClient = redisutils.InitRedisClient(redisURL, redisDb, verifier.settings.DagVerifierSettings.RedisPoolSize)
 }
 
 func (verifier *DagVerifier) InitSlackClient() {
 
-	verifier.slackClient = &http.Client{
-		Timeout: 10 * time.Second,
-	}
+	slackutils.InitSlackWorkFlowClient(verifier.settings.DagVerifierSettings.SlackNotifyURL)
 }
