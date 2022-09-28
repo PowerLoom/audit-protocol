@@ -26,6 +26,10 @@ type PruningServiceSettings_ struct {
 	IpfsTimeout                          int           `json:"ipfs_timeout_secs"`
 	SummaryProjectsPruneHeightBehindHead int           `json:"summary_projects_prune_height_behind_head"`
 	PruningHeightBehindOldestIndex       int           `json:"pruning_height_behind_oldest_index"`
+	Web3Storage                          struct {
+		TimeoutSecs int           `json:"timeout_secs"`
+		RateLimit   *RateLimiter_ `json:"rate_limit"`
+	} `json:"web3_storage"`
 }
 
 type _DagVerifierSettings_ struct {

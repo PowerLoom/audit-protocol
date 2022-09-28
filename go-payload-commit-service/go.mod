@@ -9,7 +9,7 @@ require (
 	github.com/powerloom/goutils v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.0
 	github.com/streadway/amqp v1.0.0
-	golang.org/x/time v0.0.0-20220609170525-579cf78fd858
+	golang.org/x/time v0.0.0-20220922220347-f3bd1da661af
 )
 
 require (

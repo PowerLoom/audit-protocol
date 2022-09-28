@@ -45,6 +45,7 @@ type PruningVerifier struct {
 type PruningVerificationReport struct {
 	TotalProjects          int
 	ArchivalFailedProjects int
+	Host                   string
 }
 
 type PruningIssueReport struct {
@@ -90,7 +91,7 @@ func InitW3sHTTPClient(settings *settings.SettingsObj) *http.Client {
 	}
 
 	w3sHttpClient := http.Client{
-		Timeout:   time.Duration(settings.Web3Storage.TimeoutSecs) * time.Second,
+		Timeout:   time.Duration(settings.PruningServiceSettings.Web3Storage.TimeoutSecs) * time.Second,
 		Transport: &t,
 	}
 	return &w3sHttpClient
@@ -109,13 +110,13 @@ func (verifier *PruningVerifier) InitW3sClient() {
 	}
 	tps := rate.Limit(1) //1 TPS
 	burst := 1
-	if verifier.settingsObj.Web3Storage.RateLimiter != nil {
-		burst = verifier.settingsObj.Web3Storage.RateLimiter.Burst
-		if verifier.settingsObj.Web3Storage.RateLimiter.RequestsPerSec == -1 {
+	if verifier.settingsObj.PruningServiceSettings.Web3Storage.RateLimit != nil {
+		burst = verifier.settingsObj.PruningServiceSettings.Web3Storage.RateLimit.Burst
+		if verifier.settingsObj.PruningServiceSettings.Web3Storage.RateLimit.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(verifier.settingsObj.Web3Storage.RateLimiter.RequestsPerSec)
+			tps = rate.Limit(verifier.settingsObj.PruningServiceSettings.Web3Storage.RateLimit.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for web3.storage at %v TPS with a burst of %d", tps, burst)
@@ -146,8 +147,8 @@ func (verifier *PruningVerifier) FetchProjectList() {
 func (verifier *PruningVerifier) Run() {
 	//Fetch projects list
 	verifier.FetchProjectList()
-	//Verify every 1/5th of pruningInterval
-	pruningVerifierSleepInterval := time.Duration(verifier.RunInterval) * time.Minute
+	//Verify every 1/3th of pruningInterval
+	pruningVerifierSleepInterval := time.Duration(verifier.settingsObj.PruningServiceInterval/3) * time.Minute
 	for {
 		verifier.ProjectVerificationStatus = make(map[string]*ProjectPruningVerificationStatus)
 		if !verifier.FetchPruningVerificationStatusFromRedis() {
@@ -164,6 +165,7 @@ func (verifier *PruningVerifier) Run() {
 func (verifier *PruningVerifier) VerifyPruningAndArchival() {
 	verifier.verificationReport = PruningVerificationReport{}
 	verifier.verificationReport.TotalProjects = len(verifier.Projects)
+	verifier.verificationReport.Host, _ = os.Hostname()
 	for index := range verifier.Projects {
 		verifier.VerifyPruningStatus(verifier.Projects[index])
 	}
@@ -216,17 +218,19 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(segment *ProjectDAGSegment
 
 		err = verifier.web3StorageClientRateLimiter.Wait(context.Background())
 		if err != nil {
+			retryCount++
 			log.Warnf("Web3Storage Rate Limiter wait timeout with error %+v", err)
 			time.Sleep(1 * time.Second)
 			continue
 		}
 		s, err := verifier.w3sClient.Status(context.Background(), rootCid)
 		if err != nil {
-			log.Errorf("Failed to fetch status of CID from web3.storage")
+			log.Errorf("Failed to fetch status of CID %s from web3.storage", segment.EndDAGCID)
 			return false, err.Error()
 		}
 		err = verifier.web3StorageClientRateLimiter.Wait(context.Background())
 		if err != nil {
+			retryCount++
 			log.Warnf("Web3Storage Rate Limiter wait timeout with error %+v", err)
 			time.Sleep(1 * time.Second)
 			continue
@@ -236,6 +240,7 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(segment *ProjectDAGSegment
 		if ok, err := verifier.FetchAndValidateCAR(segment); !ok {
 			return false, err
 		}
+		break
 		//TODO: Do we need to do exhasutive verification of whole archived chain segment?
 	}
 	return true, ""
@@ -247,6 +252,7 @@ func (verifier *PruningVerifier) DeleteCARFile(carFile string) {
 	if err != nil {
 		log.Errorf("Failed to delete file %s due to error %+v", carFile, err)
 	}
+	log.Debugf("Successfully deleted CAR File %s", carFile)
 }
 
 func (verifier *PruningVerifier) FetchAndValidateCAR(segment *ProjectDAGSegment) (bool, string) {
@@ -303,6 +309,7 @@ func (verifier *PruningVerifier) FetchAndValidateCAR(segment *ProjectDAGSegment)
 
 func (verifier *PruningVerifier) FetchCAR(segment *ProjectDAGSegment) (bool, string, string) {
 	urlString := verifier.settingsObj.Web3Storage.URL + "/car/" + segment.EndDAGCID
+	log.Debugf("Fetching CAR File rom web3.storage url %s", urlString)
 	errStr := ""
 	for retryCount := 0; ; {
 		if retryCount == *verifier.settingsObj.RetryCount {

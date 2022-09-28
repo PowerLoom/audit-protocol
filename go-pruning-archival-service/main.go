@@ -103,6 +103,9 @@ func SetDefaultPruneConfig() {
 			IPFSRateLimiter:                      &settings.RateLimiter_{Burst: 20, RequestsPerSec: 20},
 			SummaryProjectsPruneHeightBehindHead: 1000,
 		}
+		defaultSettings.Web3Storage.TimeoutSecs = 600
+		defaultSettings.Web3Storage.RateLimit = &settings.RateLimiter_{Burst: 1, RequestsPerSec: 1}
+
 		settingsObj.PruningServiceSettings = &defaultSettings
 	}
 }
@@ -296,7 +299,7 @@ func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid strin
 	fileName, opStatus := ExportDAGFromIPFS(projectId, startScore, endScore, lastDagCid)
 	if !opStatus {
 		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to export DAG for project %s at height %d. Will retry in next cycle", projectId, endScore)
-		return opStatus, errors.New("failed to export CAR File from IPFS")
+		return opStatus, errors.New("failed to export CAR File from IPFS at height " + strconv.Itoa(endScore))
 	}
 	//Can be Optimized: Consider batch upload of files if sizes are too small.
 	CID, opStatus := UploadFileToWeb3Storage(fileName)
@@ -304,7 +307,7 @@ func ArchiveDAG(projectId string, startScore int, endScore int, lastDagCid strin
 		log.WithField("CycleID", cycleDetails.CycleID).Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
 	} else {
 		log.WithField("CycleID", cycleDetails.CycleID).Debugf("Failed to upload CAR file %s to web3.storage", fileName)
-		errToReturn = errors.New("failed to upload CAR File to web3.storage")
+		errToReturn = errors.New("failed to upload CAR File to web3.storage" + fileName)
 	}
 	//Delete file from local storage.
 	err := os.Remove(fileName)
@@ -504,7 +507,8 @@ func PruneProjectInRedis(projectId string, startScore int, endScore int) {
 }
 
 func PruneZSetInRedis(key string, startScore int, endScore int) {
-	for i := 0; i < 3; i++ {
+	i := 0
+	for ; i < 3; i++ {
 		res := redisClient.ZRemRangeByScore(
 			ctx, key,
 			"-inf", //Always prune from start
@@ -521,8 +525,10 @@ func PruneZSetInRedis(key string, startScore int, endScore int) {
 			key, res.Val(), startScore, endScore)
 		break
 	}
-	log.WithField("CycleID", cycleDetails.CycleID).Errorf("Could not prune redis Zset %s between height %d to %d even after max-retries.",
-		key, startScore, endScore)
+	if i >= 3 {
+		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Could not prune redis Zset %s between height %d to %d even after max-retries.",
+			key, startScore, endScore)
+	}
 }
 
 func ExportDAGFromIPFS(projectId string, fromHeight int, toHeight int, dagCID string) (string, bool) {
@@ -859,20 +865,20 @@ func InitW3sClient() {
 	}
 
 	w3sHttpClient = http.Client{
-		Timeout:   time.Duration(settingsObj.Web3Storage.TimeoutSecs) * time.Second,
+		Timeout:   time.Duration(settingsObj.PruningServiceSettings.Web3Storage.TimeoutSecs) * time.Second,
 		Transport: &t,
 	}
 
 	//Default values
 	tps := rate.Limit(1) //3 TPS
 	burst := 1
-	if settingsObj.Web3Storage.RateLimiter != nil {
-		burst = settingsObj.Web3Storage.RateLimiter.Burst
-		if settingsObj.Web3Storage.RateLimiter.RequestsPerSec == -1 {
+	if settingsObj.PruningServiceSettings.Web3Storage.RateLimit != nil {
+		burst = settingsObj.PruningServiceSettings.Web3Storage.RateLimit.Burst
+		if settingsObj.PruningServiceSettings.Web3Storage.RateLimit.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.Web3Storage.RateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.PruningServiceSettings.Web3Storage.RateLimit.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for web3.storage at %v TPS with a burst of %d", tps, burst)

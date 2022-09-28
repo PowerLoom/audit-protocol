@@ -145,6 +145,13 @@
 		"backup_redis_zsets_to_file": false,
 		"oldest_project_index": "7d",
 		"pruning_height_behind_oldest_index": 100,
-		"summary_projects_prune_height_behind_head": 1000
+		"summary_projects_prune_height_behind_head": 1000,
+		"web3_storage" : {
+			"timeout_secs":600,
+			"rate_limit" :{
+				"req_per_sec": 1,
+				"burst": 1
+			}
+		}
 	}
 }

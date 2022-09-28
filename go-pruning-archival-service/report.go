@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -12,6 +13,7 @@ import (
 )
 
 type ProjectPruningReport struct {
+	HostName                  string `json:"Host"`
 	ProjectID                 string `json:"projectID"`
 	DAGSegmentsProcessed      int    `json:"DAGSegmentsProcessed"`
 	DAGSegmentsArchived       int    `json:"DAGSegmentsArchived"`
@@ -71,13 +73,15 @@ func UpdatePruningProjectReportInRedis(projectPruningReport *ProjectPruningRepor
 		log.Debugf("Successfully update projectPruningReport Details in redis as %+v", *projectPruningReport)
 		//TODO: Migrate to using slack App.
 		if projectPruningReport.DAGSegmentsArchivalFailed > 0 || projectPruningReport.UnPinFailed > 0 {
+			projectPruningReport.HostName, _ = os.Hostname()
 			report, _ := json.MarshalIndent(projectPruningReport, "", "\t")
 			slackutils.NotifySlackWorkflow(string(report), "High")
 			projectPruneState.ErrorInLastcycle = true
 		} else {
 			if projectPruneState.ErrorInLastcycle {
+				projectPruningReport.HostName, _ = os.Hostname()
 				//Send clear status
-				report, _ := json.Marshal(projectPruningReport)
+				report, _ := json.MarshalIndent(projectPruningReport, "", "\t")
 				slackutils.NotifySlackWorkflow(string(report), "Cleared")
 			}
 			projectPruneState.ErrorInLastcycle = false
