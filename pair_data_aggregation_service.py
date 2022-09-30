@@ -930,7 +930,7 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                     'Block heights found: %s', list(collected_heights)
                 )
         wait_for_snapshot_project_new_commit = False
-        current_audit_project_block_height = 0
+        tentative_audit_project_block_height = 0
         if common_blockheight_reached:
             summarized_result_l = [x.dict() for x in final_results]
             summarized_payload = {'data': summarized_result_l}
@@ -945,10 +945,10 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                     'Present common block height in V2 pairs summary snapshot is %s | Moved from %s',
                     common_blockheight_reached, last_common_block_height
                 )
-                current_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
+                tentative_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
                     project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id()
                 ))
-                current_audit_project_block_height  = int(current_audit_project_block_height) if current_audit_project_block_height else 0
+                tentative_audit_project_block_height  = int(tentative_audit_project_block_height) if tentative_audit_project_block_height else 0
                 
                 logger.debug('Sending v2 pairs summary payload to audit protocol')
                 # send to audit protocol for snapshot to be committed
@@ -974,7 +974,7 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                         )
                     else:
                         wait_for_snapshot_project_new_commit = True
-                        updated_audit_project_block_height = current_audit_project_block_height + 1
+                        updated_audit_project_block_height = tentative_audit_project_block_height + 1
         if wait_for_snapshot_project_new_commit:
             wait_cycles = 0
             while True:
@@ -998,7 +998,7 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                     continue
                 logger.info(
                     'Audit project height against V2 pairs summary snapshot is %s | Moved from %s',
-                    updated_audit_project_block_height, current_audit_project_block_height
+                    updated_audit_project_block_height, tentative_audit_project_block_height
                 )
                 begin_block_data = await get_oldest_block_and_timestamp(pair_contract_address)
 
