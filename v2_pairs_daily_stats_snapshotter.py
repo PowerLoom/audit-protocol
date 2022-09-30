@@ -230,10 +230,10 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
         wait_for_snapshot_project_new_commit = False
         if daily_stats_contracts:
             summarized_payload = {'data': daily_stats_contracts}
-            current_audit_project_block_height = await helper_functions.get_block_height(
-                project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
-                reader_redis_conn=redis_conn
-            )
+            tentative_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
+                project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id()
+            ))
+            tentative_audit_project_block_height  = int(tentative_audit_project_block_height) if tentative_audit_project_block_height else 0
             logger.debug('Sending pairs daily stats payload to audit protocol')
             # send to audit protocol for snapshot to be committed
             try:
@@ -256,7 +256,7 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                     )
                 else:
                     wait_for_snapshot_project_new_commit = True
-                    updated_audit_project_block_height = current_audit_project_block_height + 1
+                    updated_audit_project_block_height = tentative_audit_project_block_height + 1
 
         if wait_for_snapshot_project_new_commit:
             wait_cycles = 0
@@ -281,7 +281,7 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                     continue
                 logger.debug(
                     'Audit project height against pairs daily stats snapshot is %s | Moved from %s',
-                    updated_audit_project_block_height, current_audit_project_block_height
+                    updated_audit_project_block_height, tentative_audit_project_block_height
                 )
 
                 snapshot_zset_entry = uniswapDailyStatsSnapshotZset(
