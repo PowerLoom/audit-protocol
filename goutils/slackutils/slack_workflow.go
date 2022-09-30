@@ -14,6 +14,7 @@ import (
 type SlackNotifyReq struct {
 	Data          string `json:"errorDetails"`
 	IssueSeverity string `json:"severity"`
+	Service       string `json:"Service"`
 }
 
 type SlackResp struct {
@@ -34,13 +35,14 @@ func InitSlackWorkFlowClient(url string) {
 	}
 }
 
-func NotifySlackWorkflow(reportData string, severity string) error {
+func NotifySlackWorkflow(reportData string, severity string, service string) error {
 
 	reqURL := slackNotifyURL
 	var slackReq SlackNotifyReq
 
 	slackReq.Data = reportData
 	slackReq.IssueSeverity = severity
+	slackReq.Service = service
 	body, err := json.Marshal(slackReq)
 
 	if err != nil {

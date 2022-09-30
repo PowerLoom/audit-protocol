@@ -62,14 +62,14 @@ func UpdatePruningCycleDetailsInRedis() {
 		if cycleDetails.ProjectsProcessFailedCount > 0 {
 			cycleDetails.HostName, _ = os.Hostname()
 			report, _ := json.MarshalIndent(cycleDetails, "", "\t")
-			slackutils.NotifySlackWorkflow(string(report), "High")
+			slackutils.NotifySlackWorkflow(string(report), "High", "PruningService")
 			cycleDetails.ErrorInLastcycle = true
 		} else {
 			if cycleDetails.ErrorInLastcycle {
 				cycleDetails.ErrorInLastcycle = false
 				//Send clear status
 				report, _ := json.MarshalIndent(cycleDetails, "", "\t")
-				slackutils.NotifySlackWorkflow(string(report), "Cleared")
+				slackutils.NotifySlackWorkflow(string(report), "Cleared", "PruningService")
 			}
 		}
 		return

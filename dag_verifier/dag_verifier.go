@@ -520,7 +520,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 func (verifier *DagVerifier) NotifySlack(dagSummary *DagChainReport) error {
 	dagSummaryStr, _ := json.MarshalIndent(dagSummary, "", "\t")
 	//err := verifier.NotifySlackOfDAGSummary(dagSummary)
-	err := slackutils.NotifySlackWorkflow(string(dagSummaryStr), dagSummary.Severity)
+	err := slackutils.NotifySlackWorkflow(string(dagSummaryStr), dagSummary.Severity, "DAGVerifier")
 	if err != nil {
 		log.Errorf("Slack Notify failed with error %+v", err)
 	}

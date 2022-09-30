@@ -174,7 +174,7 @@ func (verifier *PruningVerifier) VerifyPruningAndArchival() {
 		//Notify on slack of Failure.
 		log.Errorf("Pruning Verification failed and report is %+v", verifier.verificationReport)
 		report, _ := json.Marshal(verifier.verificationReport)
-		slackutils.NotifySlackWorkflow(string(report), "High")
+		slackutils.NotifySlackWorkflow(string(report), "High", "PruningVerifier")
 		//TODO: How to auto-clear this.
 	}
 }
