@@ -945,10 +945,11 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                     'Present common block height in V2 pairs summary snapshot is %s | Moved from %s',
                     common_blockheight_reached, last_common_block_height
                 )
-                current_audit_project_block_height = await helper_functions.get_block_height(
-                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
-                    reader_redis_conn=redis_conn
-                )
+                current_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id()
+                ))
+                current_audit_project_block_height  = int(current_audit_project_block_height) if current_audit_project_block_height else 0
+                
                 logger.debug('Sending v2 pairs summary payload to audit protocol')
                 # send to audit protocol for snapshot to be committed
                 try:
