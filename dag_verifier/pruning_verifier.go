@@ -49,8 +49,9 @@ type PruningVerificationReport struct {
 }
 
 type PruningIssueReport struct {
-	ProjectID string         `json:"projectID"`
-	Errors    []SegmentError `json:"errors"`
+	ProjectID   string          `json:"projectID"`
+	Errors      []SegmentError  `json:"errors"`
+	ChainIssues []DagChainIssue `json:"dagChainIssues"`
 }
 type SegmentError struct {
 	Error     string `json:"errorData"`
@@ -157,7 +158,7 @@ func (verifier *PruningVerifier) Run() {
 		verifier.VerifyPruningAndArchival()
 		verifier.UpdatePruningVerificationStatusToRedis()
 
-		log.Info("Sleeping for " + pruningVerifierSleepInterval.String())
+		log.Info("PruningVerifier: Sleeping for " + pruningVerifierSleepInterval.String())
 		time.Sleep(pruningVerifierSleepInterval)
 	}
 }
@@ -184,13 +185,14 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 	log.Debugf("Project %s, lastVerificationStatus %+v", projectId, projectStatus)
 	for endHeightStr, dagSegment := range *dagSegments {
 		var pruningReport PruningIssueReport
+		pruningReport.ChainIssues = make([]DagChainIssue, 0)
 		pruningReport.ProjectID = projectId
 		endHeight, _ := strconv.Atoi(endHeightStr)
 		if endHeight > projectStatus.LastSegmentEndHeight {
 			log.Debugf("Project %s, verifying DAG Segment %+v", dagSegment)
 			var segment ProjectDAGSegment
 			json.Unmarshal([]byte(dagSegment), &segment)
-			archiveStatus, err := verifier.VerifyArchivalStatus(&segment)
+			archiveStatus, err, issues := verifier.VerifyArchivalStatus(projectId, &segment)
 			//NOT doing any action for redis Zset as in next cycle Zset will get trimmed from startScore
 			if !archiveStatus {
 				error := SegmentError{
@@ -198,13 +200,14 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 					EndHeight: segment.EndHeight,
 				}
 				pruningReport.Errors = append(pruningReport.Errors, error)
+				pruningReport.ChainIssues = *issues
 				verifier.verificationReport.ArchivalFailedProjects++
 			}
 		}
 	}
 }
 
-func (verifier *PruningVerifier) VerifyArchivalStatus(segment *ProjectDAGSegment) (bool, string) {
+func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment *ProjectDAGSegment) (bool, string, *[]DagChainIssue) {
 	//verifyStatus := false
 	//curl -i -X 'HEAD' 'https://api.web3.storage/car/bafyreiglb6wf4ps4nthoaqml6sxndccxn5utrwv4n46l5uc263vny5nidm' -H 'accept: */*'
 	//Response: - 200 OK with
@@ -212,9 +215,10 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(segment *ProjectDAGSegment
 	//For now checking if root DAGCid is availale as part of archived data.
 	rootCid, err := cid.Parse(segment.EndDAGCID)
 	if err != nil {
-		return false, err.Error()
+		return false, err.Error(), nil
 	}
-	for retryCount := 0; retryCount < 3; {
+	retryCount := 0
+	for retryCount < 3 {
 
 		err = verifier.web3StorageClientRateLimiter.Wait(context.Background())
 		if err != nil {
@@ -225,25 +229,72 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(segment *ProjectDAGSegment
 		}
 		s, err := verifier.w3sClient.Status(context.Background(), rootCid)
 		if err != nil {
-			log.Errorf("Failed to fetch status of CID %s from web3.storage", segment.EndDAGCID)
-			return false, err.Error()
-		}
-		err = verifier.web3StorageClientRateLimiter.Wait(context.Background())
-		if err != nil {
-			retryCount++
-			log.Warnf("Web3Storage Rate Limiter wait timeout with error %+v", err)
-			time.Sleep(1 * time.Second)
-			continue
+			log.Errorf("Project %s: Failed to fetch status of CID %s from web3.storage", projectId, segment.EndDAGCID)
+			return false, err.Error(), nil
 		}
 		log.Debugf("Status for CID %s is: %+v", segment.EndDAGCID, s)
+		if len(s.Pins) == 0 && len(s.Deals) == 0 {
+			log.Errorf("Project %s: No pins or deals found for the DAG Segment with root CID %s in web3.storage", projectId, segment.EndDAGCID)
+			return false, fmt.Sprintf("No pins or deals found for the DAG Segment with root CID %s in web3.storage", segment.EndDAGCID), nil
+		}
+		/* 		err = verifier.web3StorageClientRateLimiter.Wait(context.Background())
+		   		if err != nil {
+		   			retryCount++
+		   			log.Warnf("Web3Storage Rate Limiter wait timeout with error %+v", err)
+		   			time.Sleep(1 * time.Second)
+		   			continue
+		   		}
 
-		if ok, err := verifier.FetchAndValidateCAR(segment); !ok {
-			return false, err
+		   		if ok, err := verifier.FetchAndValidateCAR(segment); !ok {
+		   			return false, err
+		   		} */
+		issues, errStr := verifier.VerifyDAGSegment(projectId, segment)
+		if len(*issues) > 0 {
+			log.Errorf("Project %s: %d DAGChain Issues found in the DAG Segment with root CID %s in web3.storage", projectId, len(*issues), segment.EndDAGCID)
+			return false, fmt.Sprintf("%d DAGChain Issues found in the DAG Segment with root CID %s in web3.storage. PossibleCause: %s", len(*issues), segment.EndDAGCID, errStr), issues
 		}
 		break
-		//TODO: Do we need to do exhasutive verification of whole archived chain segment?
 	}
-	return true, ""
+	if retryCount >= 3 {
+		log.Warnf("Project %s: Failed to fetch status of CID %s from web3.storage after max retries", projectId, segment.EndDAGCID)
+		return false, fmt.Sprintf("Failed to fetch status of CID %s from web3.storage after max retries", segment.EndDAGCID), nil
+	}
+	return true, "", nil
+}
+
+func (verifier *PruningVerifier) VerifyDAGSegment(projectId string, segment *ProjectDAGSegment) (*[]DagChainIssue, string) {
+	dagHeight := segment.EndHeight
+	chainIssues := make([]DagChainIssue, 0)
+	prevBlockChainEndHeight := int64(0)
+	for cid := segment.EndDAGCID; dagHeight >= segment.BeginHeight; dagHeight-- {
+		log.Debugf("Project %s: DAG CID is %s at height %d", projectId, cid, dagHeight)
+		dagBlock, err := ipfsClient.DagGet(cid)
+		if err != nil {
+			log.Errorf("Project %s: Could not fetch DAG CID %s at DagHeight %d from IPFS due to error %+v and hence can't verify further DAGChain", projectId, cid, dagHeight, err)
+			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssues = append(chainIssues, chainIssue)
+			return &chainIssues, fmt.Sprintf("Could not fetch DAG CID %s at DagHeight %d from IPFS and hence can't verify further DAGChain", cid, dagHeight)
+		}
+		payload, err := ipfsClient.GetPayload(dagBlock.Data.Cid.LinkData, 3)
+		if err != nil {
+			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
+			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssues = append(chainIssues, chainIssue)
+			cid = dagBlock.PrevCid.LinkData
+			continue
+		}
+		//TODO: Add logic for out of order detection
+		if prevBlockChainEndHeight != 0 && payload.ChainHeightRange.Begin == prevBlockChainEndHeight+1 {
+			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
+			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssues = append(chainIssues, chainIssue)
+			cid = dagBlock.PrevCid.LinkData
+			continue
+		}
+		cid = dagBlock.PrevCid.LinkData
+	}
+	log.Debugf("Project %s: DAG Segment between height %d and %d with rootCID %s is valid", projectId, segment.BeginHeight, segment.EndHeight, segment.EndDAGCID)
+	return &chainIssues, ""
 }
 
 func (verifier *PruningVerifier) DeleteCARFile(carFile string) {

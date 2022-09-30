@@ -31,6 +31,8 @@ type PruningCycleDetails struct {
 	ProjectsProcessSuccessCount uint64 `json:"projectsProcessSuccessCount"`
 	ProjectsProcessFailedCount  uint64 `json:"projectsProcessFailedCount"`
 	ProjectsNotProcessedCount   uint64 `json:"projectsNotProcessedCount"`
+	HostName                    string `json:"-"`
+	ErrorInLastcycle            bool   `json:"-"`
 }
 
 func UpdatePruningCycleDetailsInRedis() {
@@ -55,6 +57,21 @@ func UpdatePruningCycleDetailsInRedis() {
 		}
 		key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_CYCLE_PROJECT_DETAILS, cycleDetails.CycleID)
 		redisClient.Expire(ctx, key, time.Duration(25*settingsObj.PruningServiceSettings.RunIntervalMins*int(time.Minute)))
+		//TODO: Migrate to using slack App.
+
+		if cycleDetails.ProjectsProcessFailedCount > 0 {
+			cycleDetails.HostName, _ = os.Hostname()
+			report, _ := json.MarshalIndent(cycleDetails, "", "\t")
+			slackutils.NotifySlackWorkflow(string(report), "High")
+			cycleDetails.ErrorInLastcycle = true
+		} else {
+			if cycleDetails.ErrorInLastcycle {
+				cycleDetails.ErrorInLastcycle = false
+				//Send clear status
+				report, _ := json.MarshalIndent(cycleDetails, "", "\t")
+				slackutils.NotifySlackWorkflow(string(report), "Cleared")
+			}
+		}
 		return
 	}
 	log.Errorf("Failed to update pruningCycleDetails %+v in redis after max retries.", cycleDetails)
@@ -72,20 +89,20 @@ func UpdatePruningProjectReportInRedis(projectPruningReport *ProjectPruningRepor
 		}
 		log.Debugf("Successfully update projectPruningReport Details in redis as %+v", *projectPruningReport)
 		//TODO: Migrate to using slack App.
-		if projectPruningReport.DAGSegmentsArchivalFailed > 0 || projectPruningReport.UnPinFailed > 0 {
-			projectPruningReport.HostName, _ = os.Hostname()
-			report, _ := json.MarshalIndent(projectPruningReport, "", "\t")
-			slackutils.NotifySlackWorkflow(string(report), "High")
-			projectPruneState.ErrorInLastcycle = true
-		} else {
-			if projectPruneState.ErrorInLastcycle {
-				projectPruningReport.HostName, _ = os.Hostname()
-				//Send clear status
-				report, _ := json.MarshalIndent(projectPruningReport, "", "\t")
-				slackutils.NotifySlackWorkflow(string(report), "Cleared")
-			}
-			projectPruneState.ErrorInLastcycle = false
-		}
+		/* 		if projectPruningReport.DAGSegmentsArchivalFailed > 0 || projectPruningReport.UnPinFailed > 0 {
+		   			projectPruningReport.HostName, _ = os.Hostname()
+		   			report, _ := json.MarshalIndent(projectPruningReport, "", "\t")
+		   			slackutils.NotifySlackWorkflow(string(report), "High")
+		   			projectPruneState.ErrorInLastcycle = true
+		   		} else {
+		   			if projectPruneState.ErrorInLastcycle {
+		   				projectPruningReport.HostName, _ = os.Hostname()
+		   				//Send clear status
+		   				report, _ := json.MarshalIndent(projectPruningReport, "", "\t")
+		   				slackutils.NotifySlackWorkflow(string(report), "Cleared")
+		   			}
+		   			projectPruneState.ErrorInLastcycle = false
+		   		} */
 		return
 	}
 	log.Errorf("Failed to update projectPruningReport %+v for cycle %+v in redis after max retries.", *projectPruningReport, cycleDetails)

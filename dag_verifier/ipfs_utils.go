@@ -38,12 +38,12 @@ func (client *IpfsClient) Init(settingsObj *settings.SettingsObj) {
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
+		Timeout:   time.Duration(5 * time.Minute),
 		Transport: &t,
 	}
 	log.Debug("Initializing the IPFS client with IPFS Daemon URL:", url)
 	client.ipfsClient = shell.NewShellWithClient(url, &ipfsHttpClient)
-	timeout := time.Duration(settingsObj.IpfsTimeout * 1000000000)
+	timeout := time.Duration(5 * time.Minute)
 	client.ipfsClient.SetTimeout(timeout)
 	log.Debugf("Setting IPFS timeout of %d seconds", timeout.Seconds())
 	tps := rate.Limit(10) //10 TPS
@@ -54,7 +54,7 @@ func (client *IpfsClient) Init(settingsObj *settings.SettingsObj) {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.IPFSRateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.DagVerifierSettings.IPFSRateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
@@ -79,6 +79,7 @@ func (client *IpfsClient) DagGet(dagCid string) (DagChainBlock, error) {
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		break
 	}
 	if i >= 3 {
 		log.Errorf("Failed to fetch CID %s even after retrying.", dagCid)

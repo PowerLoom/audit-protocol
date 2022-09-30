@@ -114,6 +114,7 @@ func Run() {
 	GetProjectsListFromRedis()
 
 	for {
+		GetProjectsListFromRedis()
 		if !settingsObj.PruningServiceSettings.PerformArchival && !settingsObj.PruningServiceSettings.PerformIPFSUnPin &&
 			!settingsObj.PruningServiceSettings.PruneRedisZsets {
 			log.Infof("None of the pruning features enabled. Not doing anything in current cycle")
@@ -121,7 +122,7 @@ func Run() {
 			continue
 		}
 		GetLastPrunedStatusFromRedis()
-		cycleDetails = PruningCycleDetails{}
+		cycleDetails = PruningCycleDetails{HostName: cycleDetails.HostName, ErrorInLastcycle: cycleDetails.ErrorInLastcycle}
 		cycleDetails.CycleID = uuid.New().String()
 		log.WithField("CycleID", cycleDetails.CycleID).Infof("Running Pruning Cycle")
 		VerifyAndPruneDAGChains()
