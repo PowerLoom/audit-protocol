@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	shell "github.com/ipfs/go-ipfs-api"
+	"github.com/powerloom/goutils/commonutils"
 	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
@@ -343,26 +343,6 @@ func UpdateDagSegmentStatusToRedis(projectID string, height int, dagSegment *Pro
 	return false
 }
 
-type asInt []string
-
-func (s asInt) Len() int {
-	return len(s)
-}
-func (s asInt) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-func (s asInt) Less(i, j int) bool {
-	iInt, err := strconv.Atoi(s[i])
-	if err != nil {
-		log.Fatalf("%s is not an integer due to err %+v", s[i], err)
-	}
-	jInt, err := strconv.Atoi(s[j])
-	if err != nil {
-		log.Fatalf("%s is not an integer  due to err", s[j], err)
-	}
-	return iInt < jInt
-}
-
 func ProcessProject(projectId string) int {
 	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Processing Project %s", projectId)
 	var projectReport ProjectPruningReport
@@ -383,17 +363,17 @@ func ProcessProject(projectId string) int {
 	}
 	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Height to Prune is %d for project %s", heightToPrune, projectId)
 	projectProcessed := false
-
+	dagSegments := commonutils.SortKeysAsNumber(&projectMetaData.DagChains)
 	//Sort DAGSegments by their height and then process.
-	dagSegments := make([]string, 0, len(projectMetaData.DagChains))
-	for k := range projectMetaData.DagChains {
-		dagSegments = append(dagSegments, k)
-		//log.Debugf("Key %s", k)
-	}
-	sort.Sort(asInt(dagSegments))
+	/* 	dagSegments := make([]string, 0, len(projectMetaData.DagChains))
+	   	for k := range projectMetaData.DagChains {
+	   		dagSegments = append(dagSegments, k)
+	   		//log.Debugf("Key %s", k)
+	   	}
+	   	sort.Sort(asInt(dagSegments)) */
 
 	//for dagSegmentEndHeightStr, dagChainSegment := range projectMetaData.DagChains {
-	for _, dagSegmentEndHeightStr := range dagSegments {
+	for _, dagSegmentEndHeightStr := range *dagSegments {
 		dagChainSegment := projectMetaData.DagChains[dagSegmentEndHeightStr]
 		dagSegmentEndHeight, err := strconv.Atoi(dagSegmentEndHeightStr)
 		if err != nil {

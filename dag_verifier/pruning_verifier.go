@@ -20,6 +20,7 @@ import (
 	"github.com/web3-storage/go-w3s-client"
 	"golang.org/x/time/rate"
 
+	"github.com/powerloom/goutils/commonutils"
 	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
 	"github.com/powerloom/goutils/slackutils"
@@ -27,7 +28,7 @@ import (
 
 type ProjectPruningVerificationStatus struct {
 	LastSegmentEndHeight int   `json:"lastSegmentEndHeight"`
-	SegmentWithErrors    []int `json:"segmentsWithErrors"`
+	SegmentWithErrors    []int `json:"segmentsWithErrors,omitempty"`
 }
 
 type PruningVerifier struct {
@@ -156,7 +157,6 @@ func (verifier *PruningVerifier) Run() {
 			continue
 		}
 		verifier.VerifyPruningAndArchival()
-		verifier.UpdatePruningVerificationStatusToRedis()
 
 		log.Info("PruningVerifier: Sleeping for " + pruningVerifierSleepInterval.String())
 		time.Sleep(pruningVerifierSleepInterval)
@@ -169,6 +169,7 @@ func (verifier *PruningVerifier) VerifyPruningAndArchival() {
 	verifier.verificationReport.Host, _ = os.Hostname()
 	for index := range verifier.Projects {
 		verifier.VerifyPruningStatus(verifier.Projects[index])
+		verifier.UpdatePruningVerificationStatusToRedis(verifier.Projects[index])
 	}
 	if verifier.verificationReport.ArchivalFailedProjects > 0 {
 		//Notify on slack of Failure.
@@ -180,10 +181,13 @@ func (verifier *PruningVerifier) VerifyPruningAndArchival() {
 }
 
 func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
-	dagSegments := verifier.FetchProjectDagSegments(projectId)
+	dagSegments := *(verifier.FetchProjectDagSegments(projectId))
 	projectStatus := verifier.ProjectVerificationStatus[projectId]
 	log.Debugf("Project %s, lastVerificationStatus %+v", projectId, projectStatus)
-	for endHeightStr, dagSegment := range *dagSegments {
+	sortedSegments := commonutils.SortKeysAsNumber(&dagSegments)
+	for _, endHeightStr := range *sortedSegments {
+		dagSegment := dagSegments[endHeightStr]
+		//for endHeightStr, dagSegment := range *dagSegments {
 		var pruningReport PruningIssueReport
 		pruningReport.ChainIssues = make([]DagChainIssue, 0)
 		pruningReport.ProjectID = projectId
@@ -200,9 +204,12 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 					EndHeight: segment.EndHeight,
 				}
 				pruningReport.Errors = append(pruningReport.Errors, error)
-				pruningReport.ChainIssues = *issues
+				if issues != nil {
+					pruningReport.ChainIssues = *issues
+				}
 				verifier.verificationReport.ArchivalFailedProjects++
 			}
+			verifier.ProjectVerificationStatus[projectId].LastSegmentEndHeight = endHeight
 		}
 	}
 }
@@ -457,20 +464,25 @@ func (verifier *PruningVerifier) FetchPruningVerificationStatusFromRedis() bool 
 	return false
 }
 
-func (verifier *PruningVerifier) UpdatePruningVerificationStatusToRedis() {
+func (verifier *PruningVerifier) UpdatePruningVerificationStatusToRedis(projectID string) {
 
 	for i := 0; i < 3; i++ {
 		log.Infof("Updating PruningVerification Status at key %s", redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS)
-		res := verifier.redisClient.HSet(ctx, redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS, verifier.ProjectVerificationStatus)
+		valueStr, err := json.Marshal(verifier.ProjectVerificationStatus[projectID])
+		if err != nil {
+			log.Fatalf("Unable to marshal ProjectVerificationStatus due to error %+v", err)
+			return
+		}
+		res := verifier.redisClient.HSet(ctx, redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS, projectID, valueStr)
 		if res.Err() != nil {
-			log.Warnf("Failed to update PruningVerification in redis..Retrying %d", i)
+			log.Warnf("Failed to update PruningVerification for project %s in redis due to errro %+v..Retrying %d", projectID, res.Err(), i)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Debugf("Updated PruningVerification status %+v successfully in redis", verifier.ProjectVerificationStatus)
+		log.Debugf("Updated PruningVerification status %+v for project %s successfully in redis", verifier.ProjectVerificationStatus[projectID], projectID)
 		return
 	}
-	log.Errorf("Failed to update PruningVerification status %+v in redis", verifier.ProjectVerificationStatus)
+	log.Errorf("Failed to update PruningVerification status %+v for project %s in redis", verifier.ProjectVerificationStatus[projectID], projectID)
 
 }
 
