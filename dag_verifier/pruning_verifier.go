@@ -50,9 +50,9 @@ type PruningVerificationReport struct {
 }
 
 type PruningIssueReport struct {
-	ProjectID   string          `json:"projectID"`
-	Errors      []SegmentError  `json:"errors"`
-	ChainIssues []DagChainIssue `json:"dagChainIssues"`
+	ProjectID    string          `json:"projectID"`
+	SegmentError SegmentError    `json:"error"`
+	ChainIssues  []DagChainIssue `json:"dagChainIssues"`
 }
 type SegmentError struct {
 	Error     string `json:"errorData"`
@@ -187,13 +187,12 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 	sortedSegments := commonutils.SortKeysAsNumber(&dagSegments)
 	for _, endHeightStr := range *sortedSegments {
 		dagSegment := dagSegments[endHeightStr]
-		//for endHeightStr, dagSegment := range *dagSegments {
 		var pruningReport PruningIssueReport
 		pruningReport.ChainIssues = make([]DagChainIssue, 0)
 		pruningReport.ProjectID = projectId
 		endHeight, _ := strconv.Atoi(endHeightStr)
 		if endHeight > projectStatus.LastSegmentEndHeight {
-			log.Debugf("Project %s, verifying DAG Segment %+v", dagSegment)
+			log.Debugf("Project %s, verifying DAG Segment %+v", projectId, dagSegment)
 			var segment ProjectDAGSegment
 			json.Unmarshal([]byte(dagSegment), &segment)
 			archiveStatus, err, issues := verifier.VerifyArchivalStatus(projectId, &segment)
@@ -203,15 +202,39 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 					Error:     fmt.Sprintf("endDAG CID %s is not available in web3.storage due to error %s", segment.EndDAGCID, err),
 					EndHeight: segment.EndHeight,
 				}
-				pruningReport.Errors = append(pruningReport.Errors, error)
+				pruningReport.SegmentError = error
 				if issues != nil {
 					pruningReport.ChainIssues = *issues
 				}
 				verifier.verificationReport.ArchivalFailedProjects++
+				verifier.ProjectVerificationStatus[projectId].SegmentWithErrors = append(verifier.ProjectVerificationStatus[projectId].SegmentWithErrors, segment.EndHeight)
+				verifier.AddPruningIssueReport(&pruningReport)
 			}
 			verifier.ProjectVerificationStatus[projectId].LastSegmentEndHeight = endHeight
 		}
 	}
+}
+
+func (verifier *PruningVerifier) AddPruningIssueReport(report *PruningIssueReport) {
+	var member redis.Z
+	member.Score = float64(report.SegmentError.EndHeight)
+	reportStr, _ := json.Marshal(report)
+	member.Member = reportStr
+	key := fmt.Sprintf(REDIS_KEY_PRUNING_ISSUES, report.ProjectID)
+	i := 0
+	for ; i < 3; i++ {
+		res := verifier.redisClient.ZAddNX(ctx, key, &member)
+		if res.Err() != nil {
+			log.Warnf("Failed to update pruning issues key for project %s due to error %+v Retrying %d.", report.ProjectID, res.Err(), i)
+			time.Sleep(30 * time.Second)
+			continue
+		}
+		break
+	}
+	if i >= 3 {
+		log.Errorf("Failed to update pruning issues key for project %s after max retries.", report.ProjectID)
+	}
+	log.Debugf("Updated pruning issues key for project %s successfully.", report.ProjectID)
 }
 
 func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment *ProjectDAGSegment) (bool, string, *[]DagChainIssue) {
@@ -448,6 +471,7 @@ func (verifier *PruningVerifier) FetchPruningVerificationStatusFromRedis() bool 
 			log.Debugf("No PruningVerification key found in redis and hence creating newly")
 			return true
 		}
+
 		for projectID, projectLastStatus := range res.Val() {
 			projectStatus := ProjectPruningVerificationStatus{}
 			err := json.Unmarshal([]byte(projectLastStatus), &projectStatus)
@@ -456,6 +480,14 @@ func (verifier *PruningVerifier) FetchPruningVerificationStatusFromRedis() bool 
 				return false
 			}
 			verifier.ProjectVerificationStatus[projectID] = &projectStatus
+		}
+		if len(res.Val()) < len(verifier.Projects) {
+			for index := range verifier.Projects {
+				if _, ok := verifier.ProjectVerificationStatus[verifier.Projects[index]]; !ok {
+					log.Debugf("New project %s detected, Adding it to verification status", verifier.Projects[index])
+					verifier.ProjectVerificationStatus[verifier.Projects[index]] = &ProjectPruningVerificationStatus{}
+				}
+			}
 		}
 		log.Debugf("Fetched PruningVerification status %+v successfully in redis", verifier.ProjectVerificationStatus)
 		return true
