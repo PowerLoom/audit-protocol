@@ -98,7 +98,7 @@ async def build_primary_index(
         writer_redis_conn: aioredis.Redis
 ):
     """
-        :param time_period: supported time_period strings as of now:  ['24h', '7d']
+        :param time_period: supported time_period strings as of now:  ['24h', '7d', '0']
     """
     # find markers
     # NOTE: every periodic run, the head although is always chosen to be the max height
@@ -107,6 +107,14 @@ async def build_primary_index(
     idx_tail_key = redis_keys.get_sliding_window_cache_tail_marker(project_id, time_period)
     head_marker = height_map.get('dag_block_height')
     tail_marker = None
+
+    # if time_period is 0 then just set head and exit
+    if time_period == '0':
+        await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id, time_period), head_marker)
+        sliding_cacher_logger.info('Set head at %s index for %s time_period data Project ID: %s', head_marker, time_period, project_id)
+        return
+        
+
     time_period_ts = convert_time_period_str_to_timestamp(time_period)
     markers = [await writer_redis_conn.get(k) for k in [idx_head_key, idx_tail_key]]
     if not all(markers):
