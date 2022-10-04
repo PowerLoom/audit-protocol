@@ -121,11 +121,38 @@
 			"req_per_sec": 10,
 			"burst": 10
 		},
+		"redis_pool_size":20,
 		"run_interval_secs": 300,
 		"additional_projects_to_track_prefixes" :[
 			"uniswap_V2PairsSummarySnapshot",
 			"uniswap_V2TokensSummarySnapshot",
 			"uniswap_V2DailyStatsSnapshot"
-		]
+		],
+		"pruning_verification": false
+	},
+	"pruning":{
+		"run_interval_mins": 600,
+		"segment_size": 720,
+		"concurrency":20,
+		"car_storage_path":"/tmp/",
+		"ipfs_rate_limit":{
+			"req_per_sec": 20,
+			"burst": 20
+		},
+		"ipfs_timeout_secs": 300,
+		"perform_archival": true,
+		"perform_ipfs_unpin": true,
+		"prune_redis_zsets":true,
+		"backup_redis_zsets_to_file": false,
+		"oldest_project_index": "7d",
+		"pruning_height_behind_oldest_index": 100,
+		"summary_projects_prune_height_behind_head": 1000,
+		"web3_storage" : {
+			"timeout_secs":600,
+			"rate_limit" :{
+				"req_per_sec": 1,
+				"burst": 1
+			}
+		}
 	}
 }

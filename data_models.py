@@ -4,6 +4,19 @@ import json
 from enum import Enum
 
 
+class ProjectDAGChainSegmentMetadata(BaseModel):
+    beginHeight: int
+    endHeight: int
+    endDAGCID: str
+    storageType: str
+
+
+class ProjectStateMetadata(BaseModel):
+    projectID: str
+    dagChains: List[ProjectDAGChainSegmentMetadata]
+
+
+
 class AuditRecordTxEventData(BaseModel):
     txHash: str
     projectId: str
