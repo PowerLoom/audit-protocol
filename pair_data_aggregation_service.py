@@ -290,7 +290,7 @@ async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contr
 
     # liquidty data
     liquidity_head_marker = await writer_redis_conn.get(
-        redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '24h'))
+        redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '0'))
     liquidity_head_marker = int(liquidity_head_marker.decode('utf-8')) if liquidity_head_marker else 0
     liquidity_data = await get_dag_block_by_height(
         project_id_token_reserve,
