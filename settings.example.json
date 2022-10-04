@@ -127,7 +127,8 @@
 			"uniswap_V2PairsSummarySnapshot",
 			"uniswap_V2TokensSummarySnapshot",
 			"uniswap_V2DailyStatsSnapshot"
-		]
+		],
+		"pruning_verification": false
 	},
 	"pruning":{
 		"run_interval_mins": 600,

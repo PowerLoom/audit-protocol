@@ -40,6 +40,7 @@ type _DagVerifierSettings_ struct {
 	IPFSRateLimiter              *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
 	Concurrency                  int           `json:"concurrency"`
 	RedisPoolSize                int           `json:"redis_pool_size"`
+	PruningVerification          bool          `json:"pruning_verification"`
 }
 
 //TODO: Move settings into a common package to be used by all go services under audit-protocol.

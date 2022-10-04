@@ -27,18 +27,23 @@ func main() {
 	var dagVerifier DagVerifier
 	dagVerifier.Initialize(settingsObj, &pairContractAddresses)
 	var wg sync.WaitGroup
-	var pruningVerifier PruningVerifier
-	pruningVerifier.Init(settingsObj)
-	wg.Add(1)
+	//For now just using settings to determine this in case multiple namespaces are being run.
+	//In future dag verifier would also work with multiple namespaces, this can be removed once implemented.
+	if settingsObj.DagVerifierSettings.PruningVerification {
+		var pruningVerifier PruningVerifier
+		pruningVerifier.Init(settingsObj)
+		wg.Add(1)
 
-	go func() {
-		defer wg.Done()
-		pruningVerifier.Run()
-	}()
-
+		go func() {
+			defer wg.Done()
+			pruningVerifier.Run()
+		}()
+	}
 	dagVerifier.Run()
 
-	wg.Wait()
+	if settingsObj.DagVerifierSettings.PruningVerification {
+		wg.Wait()
+	}
 }
 
 func PopulatePairContractList(pairContractAddr string, pairContractListFile string) {
