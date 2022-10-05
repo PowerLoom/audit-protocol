@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import sys
+import os
 
 sliding_cacher_logger = logging.getLogger(__name__)
 sliding_cacher_logger.setLevel(logging.DEBUG)
@@ -26,6 +27,12 @@ stderr_handler.setLevel(logging.ERROR)
 sliding_cacher_logger.addHandler(stderr_handler)
 sliding_cacher_logger.debug("Initialized logger")
 # coloredlogs.install(level="DEBUG", logger=sliding_cacher_logger, stream=sys.stdout)
+
+# read all pair-contracts
+PAIR_CONTRACTS = []
+if os.path.exists('static/cached_pair_addresses.json'):
+    f = open('static/cached_pair_addresses.json', 'r')
+    PAIR_CONTRACTS = json.loads(f.read())
 
 
 def acquire_bounded_semaphore(fn):
@@ -57,12 +64,10 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
     head_block = await dag_utils.get_dag_block(head_cid)
     present_ts = int(head_block['timestamp'])
     while current_height < head:
-        dag_cid = await helper_functions.get_dag_cid(
-            project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
+        dag_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=current_height, 
+            reader_redis_conn=redis_conn, pair_contracts=PAIR_CONTRACTS
         )
-        # dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        dag_block = await dag_utils.get_dag_block(dag_cid)
-        # dag_blocks[dag_cid] = dag_block
         if present_ts - dag_block['timestamp'] <= time_period_ts:
             return current_height
         current_height += 1
@@ -77,12 +82,10 @@ async def find_tail(head: int, project_id: str, time_period_ts: int, redis_conn:
     head_block = await dag_utils.get_dag_block(head_cid)
     present_ts = int(head_block['timestamp'])
     while current_height < head:
-        dag_cid = await helper_functions.get_dag_cid(
-            project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
+        dag_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=current_height, 
+            reader_redis_conn=redis_conn, pair_contracts=PAIR_CONTRACTS
         )
-        # dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        dag_block = await dag_utils.get_dag_block(dag_cid)
-        # dag_blocks[dag_cid] = dag_block
         if present_ts - dag_block['timestamp'] <= time_period_ts:
             return current_height
         current_height += 1
@@ -164,15 +167,11 @@ async def get_max_height_pair_project(
         return Exception("Can\'t fetch max block height against project ID: %s", project_id)
     try:
         max_height = int(max_height.decode('utf-8'))
-        #dag_cid = await helper_functions.get_dag_cid(
-        #    project_id=project_id, block_height=max_height, reader_redis_conn=writer_redis_conn
-        #)
-        #dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        payload_cid = await retrieval_utils.retrieve_payload_cid(project_id, max_height, writer_redis_conn)
-        _payload_data = await retrieval_utils.retrieve_payload_data(payload_cid, writer_redis_conn=writer_redis_conn)
-        payload_data = json.loads(_payload_data)
-        #height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
-        height_map[project_id] = {"source_height": payload_data["chainHeightRange"]["end"],"dag_block_height": max_height}
+        dag_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=max_height, 
+            reader_redis_conn=writer_redis_conn, pair_contracts=PAIR_CONTRACTS
+        )
+        height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
     except Exception as err:
         return err
     finally:
@@ -186,10 +185,10 @@ async def adjust_projects_head_by_source_height(source_height_map, smallest_sour
         while cycles <= 10 and int(smallest_source_height) != int(source_height_map[project_map_id]["source_height"]):
             cycles += 1
             dag_block_height -= 1
-            dag_cid = await helper_functions.get_dag_cid(
-                project_id=project_map_id, block_height=dag_block_height, reader_redis_conn=writer_redis_conn
+            dag_block = await retrieval_utils.get_dag_block_by_height(
+                project_id=project_map_id, block_height=dag_block_height, 
+                reader_redis_conn=writer_redis_conn, pair_contracts=PAIR_CONTRACTS
             )
-            dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
             source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
             source_height_map[project_map_id]["dag_block_height"] = dag_block_height
 
