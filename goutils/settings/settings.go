@@ -1,4 +1,4 @@
-package main
+package settings
 
 import (
 	"encoding/json"
@@ -8,9 +8,39 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type _RateLimiter struct {
+type RateLimiter_ struct {
 	Burst          int `json:"burst"`
 	RequestsPerSec int `json:"req_per_sec"`
+}
+
+type PruningServiceSettings_ struct {
+	RunIntervalMins                      int           `json:"run_interval_mins"`
+	IPFSRateLimiter                      *RateLimiter_ `json:"ipfs_rate_limit"`
+	Concurrency                          int           `json:"concurrency"`
+	CARStoragePath                       string        `json:"car_storage_path"`
+	PerformArchival                      bool          `json:"perform_archival"`
+	PerformIPFSUnPin                     bool          `json:"perform_ipfs_unpin"`
+	PruneRedisZsets                      bool          `json:"prune_redis_zsets"`
+	OldestProjectIndex                   string        `json:"oldest_project_index"`
+	BackUpRedisZSets                     bool          `json:"backup_redis_zsets_to_file"`
+	IpfsTimeout                          int           `json:"ipfs_timeout_secs"`
+	SummaryProjectsPruneHeightBehindHead int           `json:"summary_projects_prune_height_behind_head"`
+	PruningHeightBehindOldestIndex       int           `json:"pruning_height_behind_oldest_index"`
+	Web3Storage                          struct {
+		TimeoutSecs int           `json:"timeout_secs"`
+		RateLimit   *RateLimiter_ `json:"rate_limit"`
+	} `json:"web3_storage"`
+}
+
+type _DagVerifierSettings_ struct {
+	SlackNotifyURL               string        `json:"slack_notify_URL"`
+	RunIntervalSecs              int           `json:"run_interval_secs"`
+	SuppressNotificationTimeSecs int64         `json:"suppress_notification_for_secs"`
+	SummaryProjectsToTrack       []string      `json:"additional_projects_to_track_prefixes"`
+	IPFSRateLimiter              *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
+	Concurrency                  int           `json:"concurrency"`
+	RedisPoolSize                int           `json:"redis_pool_size"`
+	PruningVerification          bool          `json:"pruning_verification"`
 }
 
 //TODO: Move settings into a common package to be used by all go services under audit-protocol.
@@ -20,7 +50,7 @@ type SettingsObj struct {
 	WebhookListener struct {
 		Host        string        `json:"host"`
 		Port        int           `json:"port"`
-		RateLimiter *_RateLimiter `json:"rate_limit,omitempty"`
+		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
 	IpfsURL          string `json:"ipfs_url"`
 	SnapshotInterval int    `json:"snapshot_interval"`
@@ -39,7 +69,7 @@ type SettingsObj struct {
 		} `json:"setup"`
 	} `json:"rabbitmq"`
 	ContractCallBackend   string        `json:"contract_call_backend"`
-	ContractRateLimiter   *_RateLimiter `json:"contract_rate_limit,omitempty"`
+	ContractRateLimiter   *RateLimiter_ `json:"contract_rate_limit,omitempty"`
 	RetryCount            *int          `json:"retry_count"`
 	RetryIntervalSecs     int           `json:"retry_interval_secs"`
 	HttpClientTimeoutSecs int           `json:"http_client_timeout_secs"`
@@ -100,7 +130,7 @@ type SettingsObj struct {
 	UnpinMode                  string        `json:"unpin_mode"`
 	MaxPendingEvents           int           `json:"max_pending_events"`
 	IpfsTimeout                int           `json:"ipfs_timeout"`
-	IPFSRateLimiter            *_RateLimiter `json:"ipfs_rate_limit,omitempty"`
+	IPFSRateLimiter            *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
 	SpanExpireTimeout          int           `json:"span_expire_timeout"`
 	APIKey                     string        `json:"api_key"`
 	AiohtttpTimeouts           struct {
@@ -114,12 +144,14 @@ type SettingsObj struct {
 		TimeoutSecs     int           `json:"timeout_secs"`
 		MaxIdleConns    int           `json:"max_idle_conns"`
 		IdleConnTimeout int           `json:"idle_conn_timeout"`
-		RateLimiter     *_RateLimiter `json:"rate_limit,omitempty"`
+		RateLimiter     *RateLimiter_ `json:"rate_limit,omitempty"`
 		UploadURLSuffix string        `json:"upload_url_suffix"`
 	} `json:"web3_storage"`
+	DagVerifierSettings    _DagVerifierSettings_    `json:"dag_verifier"`
+	PruningServiceSettings *PruningServiceSettings_ `json:"pruning"`
 }
 
-func ParseSettings(settingsFile string) SettingsObj {
+func ParseSettings(settingsFile string) *SettingsObj {
 	var settingsObj SettingsObj
 	log.Info("Reading Settings:", settingsFile)
 	data, err := os.ReadFile(settingsFile)
@@ -136,7 +168,7 @@ func ParseSettings(settingsFile string) SettingsObj {
 	}
 	SetDefaults(&settingsObj)
 	log.Infof("Final Settings Object being used %+v", settingsObj)
-	return settingsObj
+	return &settingsObj
 }
 
 func SetDefaults(settingsObj *SettingsObj) {
@@ -158,5 +190,17 @@ func SetDefaults(settingsObj *SettingsObj) {
 	}
 	if settingsObj.Web3Storage.UploadURLSuffix == "" {
 		settingsObj.Web3Storage.UploadURLSuffix = "/upload"
+	}
+	if settingsObj.DagVerifierSettings.RunIntervalSecs == 0 {
+		settingsObj.DagVerifierSettings.RunIntervalSecs = 300
+	}
+	if settingsObj.DagVerifierSettings.SlackNotifyURL == "" {
+		log.Warnf("Slack Notification URL is not set, any issues observed by this service will not be notified.")
+	}
+	if settingsObj.DagVerifierSettings.SuppressNotificationTimeSecs == 0 {
+		settingsObj.DagVerifierSettings.SuppressNotificationTimeSecs = 1800
+	}
+	if settingsObj.DagVerifierSettings.Concurrency == 0 {
+		settingsObj.DagVerifierSettings.Concurrency = 10
 	}
 }

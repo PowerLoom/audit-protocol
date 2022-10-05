@@ -2,7 +2,7 @@ from gunicorn.app.base import BaseApplication
 from gunicorn.glogging import Logger
 from loguru import logger
 from config import settings
-from webhook_listener import app
+from dag_finalizer import app
 import os
 import logging
 import sys

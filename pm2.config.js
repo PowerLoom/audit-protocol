@@ -1,6 +1,6 @@
 // this means if app restart {MAX_RESTART} times in 1 min then it stops
 const MAX_RESTART = 10;
-const MIN_UPTIME = 60000; 
+const MIN_UPTIME = 60000;
 
 const NODE_ENV = "development" // process.env.NODE_ENV || 'development';
 const CWD = "/home/ubuntu/audit-protocol-private/"
@@ -8,8 +8,8 @@ const CWD = "/home/ubuntu/audit-protocol-private/"
 module.exports = {
   apps : [
     {
-      name   : "audit-protocol-webhooks",
-      script : "python3 ./gunicorn_webhook_launcher.py",
+      name   : "audit-protocol-dag-finalizer",
+      script : "python3 ./gunicorn_dag_finalizer_launcher.py",
       cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
@@ -69,6 +69,18 @@ module.exports = {
       name   : "audit-protocol-dag-verifier",
       script : "./dagChainVerifier",
       cwd : CWD+"dag_verifier",
+      max_restarts: MAX_RESTART,
+      min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
+      env: {
+        NODE_ENV: NODE_ENV,
+      },
+      args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
+    },
+    {
+      name   : "audit-protocol-pruning-archival-service",
+      script : "./pruningArchivalService",
+      cwd : CWD+"go-pruning-archival-service",
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,

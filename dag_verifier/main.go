@@ -4,21 +4,21 @@ import (
 	// "context"
 
 	"encoding/json"
-	"fmt"
-	"io/ioutil"
 	"os"
-	"strconv"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/sirupsen/logrus/hooks/writer"
+
+	"github.com/powerloom/goutils/logger"
+	"github.com/powerloom/goutils/settings"
 )
 
 var ipfsClient IpfsClient
 var pairContractAddresses []string
 
 func main() {
-	initLogger()
-	settingsObj := ParseSettings("../settings.json")
+	logger.InitLogger()
+	settingsObj := settings.ParseSettings("../settings.json")
 	var pairContractAddress string
 	if len(os.Args) == 3 {
 		pairContractAddress = os.Args[2]
@@ -26,43 +26,24 @@ func main() {
 	PopulatePairContractList(pairContractAddress, "../static/cached_pair_addresses.json")
 	var dagVerifier DagVerifier
 	dagVerifier.Initialize(settingsObj, &pairContractAddresses)
-	dagVerifier.Run()
-}
+	var wg sync.WaitGroup
+	//For now just using settings to determine this in case multiple namespaces are being run.
+	//In future dag verifier would also work with multiple namespaces, this can be removed once implemented.
+	if settingsObj.DagVerifierSettings.PruningVerification {
+		var pruningVerifier PruningVerifier
+		pruningVerifier.Init(settingsObj)
+		wg.Add(1)
 
-func initLogger() {
-	log.SetOutput(ioutil.Discard) // Send all logs to nowhere by default
-
-	log.AddHook(&writer.Hook{ // Send logs with level higher than warning to stderr
-		Writer: os.Stderr,
-		LogLevels: []log.Level{
-			log.PanicLevel,
-			log.FatalLevel,
-			log.ErrorLevel,
-			log.WarnLevel,
-		},
-	})
-	log.AddHook(&writer.Hook{ // Send info and debug logs to stdout
-		Writer: os.Stdout,
-		LogLevels: []log.Level{
-			log.TraceLevel,
-			log.InfoLevel,
-			log.DebugLevel,
-		},
-	})
-	if len(os.Args) < 2 {
-		fmt.Println("Pass loglevel as an argument if you don't want default(INFO) to be set.")
-		fmt.Println("Values to be passed for logLevel: ERROR(2),INFO(4),DEBUG(5)")
-		log.SetLevel(log.InfoLevel)
-	} else {
-		logLevel, err := strconv.ParseUint(os.Args[1], 10, 32)
-		if err != nil || logLevel > 6 {
-			log.SetLevel(log.InfoLevel)
-		} else {
-			//TODO: Need to come up with approach to dynamically update logLevel.
-			log.SetLevel(log.Level(logLevel))
-		}
+		go func() {
+			defer wg.Done()
+			pruningVerifier.Run()
+		}()
 	}
-	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
+	dagVerifier.Run()
+
+	if settingsObj.DagVerifierSettings.PruningVerification {
+		wg.Wait()
+	}
 }
 
 func PopulatePairContractList(pairContractAddr string, pairContractListFile string) {

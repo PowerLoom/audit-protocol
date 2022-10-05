@@ -151,7 +151,8 @@ async def create_dag_block_timebound(
     payload_cid: str,
     timestamp: int,
     reader_redis_conn: aioredis.Redis,
-    writer_redis_conn: aioredis.Redis
+    writer_redis_conn: aioredis.Redis,
+    prev_cid_fetch: bool = True
 ) -> Tuple[str, DAGBlock]:
     try:
         future_create_dag_block = create_dag_block(
@@ -161,7 +162,8 @@ async def create_dag_block_timebound(
             payload_cid=payload_cid,
             timestamp=timestamp,
             reader_redis_conn=reader_redis_conn,
-            writer_redis_conn=writer_redis_conn
+            writer_redis_conn=writer_redis_conn,
+            prev_cid_fetch=prev_cid_fetch
         )
         return await asyncio.wait_for(
             future_create_dag_block,
@@ -180,24 +182,27 @@ async def create_dag_block(
         payload_cid: str,
         timestamp: int,
         reader_redis_conn: aioredis.Redis,
-        writer_redis_conn: aioredis.Redis
+        writer_redis_conn: aioredis.Redis,
+        prev_cid_fetch: bool = True
 ) -> Tuple[str, DAGBlock]:
     """ Get the last dag cid using the tentativeBlockHeight"""
     # a lock on a project does not exist more than settings.webhook_listener.redis_lock_lifetime seconds.
-    try:
-        future_dag_cid = helper_functions.get_dag_cid(
-            project_id=project_id,
-            block_height=tentative_block_height - 1,
-            reader_redis_conn=reader_redis_conn
-        )
-        last_dag_cid = await asyncio.wait_for(
-            future_dag_cid,
-            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
-            timeout=settings.webhook_listener.redis_lock_lifetime/2 * 0.8
-        )
-    except Exception as e:
-        logger.error("Failure while getting dag cid from Redis zset of project CIDs, Exception: %s", e, exc_info=True)
-        raise
+    last_dag_cid = None
+    if prev_cid_fetch:
+        try:
+            future_dag_cid = helper_functions.get_dag_cid(
+                project_id=project_id,
+                block_height=tentative_block_height - 1,
+                reader_redis_conn=reader_redis_conn
+            )
+            last_dag_cid = await asyncio.wait_for(
+                future_dag_cid,
+                # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
+                timeout=settings.webhook_listener.redis_lock_lifetime/2 * 0.8
+            )
+        except Exception as e:
+            logger.error("Failure while getting dag cid from Redis zset of project CIDs, Exception: %s", e, exc_info=True)
+            raise
 
     """ Fill up the dag """
     dag = DAGBlock(

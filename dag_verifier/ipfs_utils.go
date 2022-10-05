@@ -10,6 +10,7 @@ import (
 
 	shell "github.com/ipfs/go-ipfs-api"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/powerloom/goutils/settings"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
@@ -19,7 +20,7 @@ type IpfsClient struct {
 	ipfsClientRateLimiter *rate.Limiter
 }
 
-func (client *IpfsClient) Init(settingsObj *SettingsObj) {
+func (client *IpfsClient) Init(settingsObj *settings.SettingsObj) {
 	url := settingsObj.IpfsURL
 	_, err := ma.NewMultiaddr(url)
 	if err == nil {
@@ -37,12 +38,12 @@ func (client *IpfsClient) Init(settingsObj *SettingsObj) {
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
+		Timeout:   time.Duration(5 * time.Minute),
 		Transport: &t,
 	}
 	log.Debug("Initializing the IPFS client with IPFS Daemon URL:", url)
 	client.ipfsClient = shell.NewShellWithClient(url, &ipfsHttpClient)
-	timeout := time.Duration(settingsObj.IpfsTimeout * 1000000000)
+	timeout := time.Duration(5 * time.Minute)
 	client.ipfsClient.SetTimeout(timeout)
 	log.Debugf("Setting IPFS timeout of %d seconds", timeout.Seconds())
 	tps := rate.Limit(10) //10 TPS
@@ -78,9 +79,10 @@ func (client *IpfsClient) DagGet(dagCid string) (DagChainBlock, error) {
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		break
 	}
 	if i >= 3 {
-		log.Error("Failed to fetch even after retrying.")
+		log.Errorf("Failed to fetch CID %s even after retrying.", dagCid)
 		return dagBlock, err
 	}
 	log.Tracef("Fetched the dag Block with CID %s, BlockInfo:%+v", dagCid, dagBlock)
