@@ -51,6 +51,7 @@
 		"req_per_sec": 100,
 		"burst": 100
 	},
+	"ipfs_reader_url":"/ip4/192.168.99.100/tcp/5001",
 	"snapshot_interval": 4,
 	"contract_call_backend": "http://127.0.0.1:8888/writer",
 	"contract_rate_limit" :{
