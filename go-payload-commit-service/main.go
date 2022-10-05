@@ -352,8 +352,11 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				WaitQueueForConsensus[payloadCommit.ProjectId] = &payloadCommit
 				QueueLock.Unlock()
 				//TODO: Notify polling go-routine
+				return true
 			}
-			return err == nil
+			if err != nil {
+				return false
+			}
 		}
 	}
 	return AddToPendingTxns(&payloadCommit, txHash)
