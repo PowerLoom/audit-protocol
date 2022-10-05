@@ -53,6 +53,7 @@ type SettingsObj struct {
 		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
 	IpfsURL          string `json:"ipfs_url"`
+	IpfsReaderURL    string `json:"ipfs_reader_url`
 	SnapshotInterval int    `json:"snapshot_interval"`
 	Rlimit           struct {
 		FileDescriptors int `json:"file_descriptors"`
