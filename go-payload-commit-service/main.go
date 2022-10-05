@@ -152,7 +152,6 @@ func main() {
 	InitTxManagerClient()
 	InitDAGFinalizerCallbackClient()
 	InitW3sClient()
-
 	var wg sync.WaitGroup
 	if settingsObj.UseConsensus {
 		wg.Add(1)
@@ -163,6 +162,7 @@ func main() {
 			PollConsensusForConfirmations()
 		}()
 	}
+
 	log.Info("Starting RabbitMq Consumer")
 	RegisterSignalHandles()
 
