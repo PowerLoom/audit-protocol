@@ -3,20 +3,19 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
-	"time"
-
-	cid "github.com/ipfs/go-cid"
-	mc "github.com/multiformats/go-multicodec"
-	mh "github.com/multiformats/go-multihash"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/writer"
 )
 
-type TestPayload struct {
+/* type TestPayload struct {
 	Field1 string `json:f1`
 	Field2 string `json:f2`
 }
@@ -61,7 +60,8 @@ type AuditContractErrResp struct {
 		} `json:"details"`
 	} `json:"error"`
 }
-
+*/
+/*
 func writerHandler(w http.ResponseWriter, req *http.Request) {
 	log.Infof("Received http request %+v : ", *req)
 	var resp AuditContractCommitResp
@@ -98,9 +98,102 @@ func WebhookListener(w http.ResponseWriter, req *http.Request) {
 	}
 	log.Infof("Sent response %+v for webhook callback of length %d", resp, length)
 }
+*/
+
+func InitLogger() {
+	log.SetOutput(ioutil.Discard) // Send all logs to nowhere by default
+
+	log.AddHook(&writer.Hook{ // Send logs with level higher than warning to stderr
+		Writer: os.Stderr,
+		LogLevels: []log.Level{
+			log.PanicLevel,
+			log.FatalLevel,
+			log.ErrorLevel,
+			log.WarnLevel,
+		},
+	})
+	log.AddHook(&writer.Hook{ // Send info and debug logs to stdout
+		Writer: os.Stdout,
+		LogLevels: []log.Level{
+			log.TraceLevel,
+			log.InfoLevel,
+			log.DebugLevel,
+		},
+	})
+	if len(os.Args) < 2 {
+		fmt.Println("Pass loglevel as an argument if you don't want default(INFO) to be set.")
+		fmt.Println("Values to be passed for logLevel: ERROR(2),INFO(4),DEBUG(5)")
+		log.SetLevel(log.DebugLevel)
+	} else {
+		logLevel, err := strconv.ParseUint(os.Args[1], 10, 32)
+		if err != nil || logLevel > 6 {
+			log.SetLevel(log.DebugLevel) //TODO: Change default level to error
+		} else {
+			//TODO: Need to come up with approach to dynamically update logLevel.
+			log.SetLevel(log.Level(logLevel))
+		}
+	}
+	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
+}
+
+type SubmitSnapshotResponse struct {
+	Status               string `json:"status"`
+	DelayedSubmission    bool   `json:"delayedSubmission"`
+	FinalizedSnapshotCID string `json:"finalizedSnapshotCID"`
+}
+
+const SNAPSHOT_CONSENSUS_STATUS_ACCEPTED string = "ACCEPTED"
+const SNAPSHOT_CONSENSUS_STATUS_FINALIZED string = "FINALIZED"
+
+type SubmitSnapshotRequest struct {
+	Epoch       int64  `json:"epoch"`
+	ProjectID   string `json:"projectID"`
+	InstanceID  string `json:"instanceID"`
+	SnapshotCID string `json:"snapshotCID"`
+}
+
+func SimulateConsensusServer() {
+	InitLogger()
+	http.HandleFunc("/submitSnapshot", DetermineConsensus)
+	http.HandleFunc("/checkForSnapshotConfirmation", DetermineConsensus)
+	port := 9030
+	log.SetLevel(log.DebugLevel)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Infof("Starting HTTP server on port %d in a go routine.", port)
+		http.ListenAndServe(fmt.Sprint(":", port), nil)
+	}()
+	wg.Wait()
+}
+
+func FNV32a(text string) uint32 {
+	algorithm := fnv.New32a()
+	algorithm.Write([]byte(text))
+	return algorithm.Sum32()
+}
+
+func DetermineConsensus(w http.ResponseWriter, req *http.Request) {
+	var snapshotReq SubmitSnapshotRequest
+	bytes, _ := ioutil.ReadAll(req.Body)
+	json.Unmarshal(bytes, &snapshotReq)
+	log.Infof("Received http request for URL %s %+v : ", req.URL, snapshotReq)
+	hash := FNV32a(snapshotReq.ProjectID)
+	status := SNAPSHOT_CONSENSUS_STATUS_FINALIZED
+
+	if strings.Contains(req.URL.Path, "submitSnapshot") && hash%2 == 0 {
+		status = SNAPSHOT_CONSENSUS_STATUS_ACCEPTED
+	}
+	resp := SubmitSnapshotResponse{Status: status, DelayedSubmission: false, FinalizedSnapshotCID: snapshotReq.SnapshotCID}
+	respBytes, _ := json.Marshal(resp)
+	log.Infof("Responding 200 OK with %+v", resp)
+	w.Write(respBytes)
+}
 
 func main() {
-	conn, err := GetConn("amqp://guest:guest@localhost:5672/")
+	SimulateConsensusServer()
+	/* conn, err := GetConn("amqp://guest:guest@localhost:5672/")
 	if err != nil {
 		panic(err)
 	}
@@ -175,5 +268,5 @@ func main() {
 		//break
 		time.Sleep(5 * time.Second)
 	}
-	wg.Wait()
+	wg.Wait() */
 }

@@ -38,6 +38,8 @@ var settingsObj *settings.SettingsObj
 var consts ConstsObj
 var rmqConnection *Conn
 var exitChan chan bool
+var WaitQueueForConsensus map[string]*PayloadCommit
+var QueueLock sync.Mutex
 
 //Rate Limiter Objects
 var dagFinalizerClientRateLimiter *rate.Limiter
@@ -138,6 +140,10 @@ func main() {
 	RegisterSignalHandles()
 	logger.InitLogger()
 	settingsObj = settings.ParseSettings("../settings.json")
+	if settingsObj.InstanceId == "" {
+		log.Fatalf("InstanceID is set to null, please generate and set a unique instanceID")
+		os.Exit(1)
+	}
 	ParseConsts("../dev_consts.json")
 	InitIPFSClient()
 	InitRedisClient()
@@ -145,9 +151,21 @@ func main() {
 	InitDAGFinalizerCallbackClient()
 	log.Info("Starting RabbitMq Consumer")
 	InitW3sClient()
+	var wg sync.WaitGroup
+	if settingsObj.UseConsensus {
+		wg.Add(1)
+		InitConsensusClient()
+		WaitQueueForConsensus = make(map[string]*PayloadCommit, 100) //TODO Make this queueSize configurable
+		go func() {
+			defer wg.Done()
+			PollConsensusForConfirmations()
+		}()
+	}
 
 	InitRabbitmqConsumer()
-
+	if settingsObj.UseConsensus {
+		wg.Wait()
+	}
 }
 
 func ParseConsts(constsFile string) {
@@ -321,13 +339,29 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 		txHash, status = GenerateTokenHash(&payloadCommit)
 		payloadCommit.ApiKeyHash = txHash
 		if !status {
-			log.Errorf("Irrecoverable error occurred and hence ignoring snapshots for processing.")
+			log.Errorf("Irrecoverable error occurred for project %s and commitId %s with tentativeBlockHeight %d and hence ignoring snapshot for processing.",
+				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
 			return true
 		}
+		//Wait for consensus
+		if settingsObj.UseConsensus {
+			//TODO: Move this queue to redis
+			status, err := SubmitSnapshotForConsensus(&payloadCommit)
+			if status == SNAPSHOT_CONSENSUS_STATUS_ACCEPTED {
+				QueueLock.Lock()
+				WaitQueueForConsensus[payloadCommit.ProjectId] = &payloadCommit
+				QueueLock.Unlock()
+				//TODO: Notify polling go-routine
+			}
+			return err == nil
+		}
 	}
+	return AddToPendingTxns(&payloadCommit, txHash)
+}
 
+func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string) bool {
 	/*Add to redis pendingTransactions*/
-	err = AddToPendingTxnsInRedis(&payloadCommit, txHash)
+	err := AddToPendingTxnsInRedis(payloadCommit, txHash)
 	if err != nil {
 		//TODO: Not retrying further..need to think of project recovery from this point.
 		log.Errorf("Unable to add transaction to PendingTxns after max retries for project %s and commitId %s with tentativeBlockHeight %d.",
@@ -336,7 +370,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	}
 	if payloadCommit.SkipAnchorProof {
 		//Notify DAG finalizer service as we are skipping proof anchor on chain.
-		retryType := InvokeDAGFinalizerCallback(&payloadCommit)
+		retryType := InvokeDAGFinalizerCallback(payloadCommit)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
 			//TODO: Not retrying further..need to think of project recovery from this point.
 			log.Warnf("MAX Retries reached while trying to invoke DAG finalizer for project %s and commitId %s with tentativeBlockHeight %d.",
@@ -497,6 +531,7 @@ func validSnapshot(payloadCommit *PayloadCommit, lastTentativeBlockHeight int) (
 		log.Debugf("Skip validating with previousSnapshot as chainHeightrange is not present in the snapshot for projectID %s", payloadCommit.ProjectId)
 		return true, nil
 	}
+	payloadCommit.EpochEndBlockHeight = currentSnapshotData.ChainHeightRange.End
 	// Check if this is a duplicate snapshot of previously submitted one and ignore if so.
 	// We could've used snapshotCID to compare with previous one, but a snapshotter can submit incorrect snapshot at same chainHeightRange?
 	// Fetch previously submitted payLoad and compare chainHeight to confirm duplicate.

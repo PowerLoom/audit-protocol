@@ -1,4 +1,5 @@
 {
+	"instance_id":"unique-uuid",
 	"host": "127.0.0.1",
 	"port": 9000,
 	"keepalive_secs": 600,
@@ -154,5 +155,16 @@
 				"burst": 1
 			}
 		}
+	},
+	"use_consensus": true,
+	"consensus_config":{
+		"service_url": "",
+		"rate_limit":{
+			"req_per_sec": 1,
+			"burst": 1
+		},
+		"timeout_secs": 30,
+		"max_idle_conns": 5,
+		"idle_conn_timeout":0
 	}
 }

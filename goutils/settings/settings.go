@@ -149,6 +149,17 @@ type SettingsObj struct {
 	} `json:"web3_storage"`
 	DagVerifierSettings    _DagVerifierSettings_    `json:"dag_verifier"`
 	PruningServiceSettings *PruningServiceSettings_ `json:"pruning"`
+	UseConsensus           bool                     `json:"use_consensus"`
+	ConsensusConfig        ConsensusConfig_         `json:"consensus_config"`
+	InstanceId             string                   `json:"instance_id"`
+}
+
+type ConsensusConfig_ struct {
+	ServiceURL      string        `json:"service_url"`
+	RateLimiter     *RateLimiter_ `json:"rate_limit"`
+	TimeoutSecs     int           `json:"timeout_secs"`
+	MaxIdleConns    int           `json:"max_idle_conns"`
+	IdleConnTimeout int           `json:"idle_conn_timeout"`
 }
 
 func ParseSettings(settingsFile string) *SettingsObj {
