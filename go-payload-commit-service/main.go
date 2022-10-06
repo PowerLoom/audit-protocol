@@ -192,10 +192,10 @@ func InitRabbitmqConsumer() {
 	if err != nil {
 		panic(err)
 	}
-	rmqExchangeName := settingsObj.Rabbitmq.Setup.Core.Exchange
+	rmqExchangeName := settingsObj.Rabbitmq.Setup.Core.Exchange + settingsObj.InstanceId
 	//TODO: These settings need to be moved to json config.
-	rmqQueueName := "audit-protocol-commit-payloads"
-	rmqRoutingKey := "commit-payloads"
+	rmqQueueName := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.QueueNamePrefix + settingsObj.InstanceId
+	rmqRoutingKey := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + settingsObj.InstanceId
 
 	err = rmqConnection.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, settingsObj.PayloadCommitConcurrency)
 	if err != nil {
@@ -359,7 +359,8 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			}
 		}
 	}
-	return AddToPendingTxns(&payloadCommit, txHash)
+	AddToPendingTxns(&payloadCommit, txHash)
+	return true
 }
 
 func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string) bool {

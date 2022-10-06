@@ -22,7 +22,17 @@
 		"port": 5672,
 		"setup": {
 			"core": {
-				"exchange": "audit-protocol-backend"
+				"exchange": "audit-protocol-backend:"
+			},
+			"queues":{
+				"commit-payloads":{
+					"queue_name_prefix":"audit-protocol-commit-payloads:",
+					"routing_key_prefix":"commit-payloads:"
+				},
+				"diff-requests":{
+					"queue_name_prefix":"audit-protocol-diff-requests:",
+					"routing_key_prefix":"diff-calculation:"
+				}
 			}
 		}
 	},

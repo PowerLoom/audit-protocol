@@ -66,6 +66,16 @@ type SettingsObj struct {
 			Core struct {
 				Exchange string `json:"exchange"`
 			} `json:"core"`
+			Queues struct {
+				CommitPayloads struct {
+					QueueNamePrefix  string `json:"queue_name_prefix"`
+					RoutingKeyPrefix string `json:"routing_key_prefix"`
+				} `json:"commit-payloads"`
+				DiffRequests struct {
+					QueueNamePrefix  string `json:"queue_name_prefix"`
+					RoutingKeyPrefix string `json:"routing_key_prefix"`
+				} `json:"diff-requests"`
+			} `json:"queues"`
 		} `json:"setup"`
 	} `json:"rabbitmq"`
 	ContractCallBackend   string        `json:"contract_call_backend"`

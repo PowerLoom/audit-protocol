@@ -1,6 +1,6 @@
 from pydantic import BaseModel, validator
 from data_models import BloomFilterSettings
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Dict
 import json
 
 
@@ -36,12 +36,24 @@ class RedisConfig(BaseModel):
     password: Optional[str]
 
 
+class RabbitMQQueueConfig(BaseModel):
+    queue_name_prefix: str
+    routing_key_prefix: str
+
+
+class RabbitMQCoreConfig(BaseModel):
+    exchange: str
+
+class RabbitMQSetupConfig(BaseModel):
+    core : RabbitMQCoreConfig
+    queues: Dict[str,RabbitMQQueueConfig]
+
 class RabbitMQConfig(BaseModel):
     user: str
     password: str
     host: str
     port: int
-    setup: dict
+    setup: RabbitMQSetupConfig
 
 
 class TableNames(BaseModel):
@@ -55,6 +67,7 @@ class PruneSettings(BaseModel):
     segment_size: int = 700
 
 class Settings(BaseModel):
+    instance_id: str
     host: str
     port: str
     keepalive_secs: int = 600

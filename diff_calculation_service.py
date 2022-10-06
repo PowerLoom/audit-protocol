@@ -1,6 +1,8 @@
 from exceptions import SelfExitException, GenericExitOnSignal
 from multiprocessing import Process, log_to_stderr
 from utils.redis_conn import REDIS_CONN_CONF, get_redis_conn_from_pool
+from utils.rabbitmq_utils import RabbitmqSelectLoopInteractor, get_rabbitmq_queue_name
+
 from typing import Dict, Union
 from config import settings
 from uuid import uuid4
@@ -17,7 +19,6 @@ import time
 from signal import signal, pause, SIGINT, SIGTERM, SIGQUIT, SIGCHLD, SIG_DFL
 import os
 import sys
-from utils.rabbitmq_utils import RabbitmqSelectLoopInteractor
 
 formatter = logging.Formatter('%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s')
 diff_service_main_logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class DiffCalculationCallbackWorker(Process):
         self._id = unique_id
         self._worker_name = name+self._id
         self._shutdown_initiated = False
-        self._queue_name = 'audit-protocol-diff-requests'
+        self._queue_name = get_rabbitmq_queue_name('diff-requests')
 
     def signal_handler(self, signum, frame):
         if signum in [SIGINT, SIGTERM, SIGQUIT] and not self._shutdown_initiated:

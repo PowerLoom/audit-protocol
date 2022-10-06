@@ -1,6 +1,6 @@
 from data_models import DiffCalculationRequest
 from fastapi import FastAPI, Request, Response, Header
-from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
+from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_routing_key ,get_rabbitmq_queue_name, get_rabbitmq_core_exchange
 from config import settings
 from utils import redis_keys
 from utils import helper_functions
@@ -264,7 +264,7 @@ async def payload_to_dag_processor_task(event_data):
                     # always ensure exchanges and queues are initialized as part of launch sequence,
                     # not to be checked here
                     exchange = await channel.get_exchange(
-                        name=settings.rabbitmq.setup['core']['exchange'],
+                        name=get_rabbitmq_core_exchange(),
                         ensure=False
                     )
                     for queued_tentative_height_ in pending_confirmation_callbacks_txs_filtered_map.keys():
@@ -307,7 +307,7 @@ async def payload_to_dag_processor_task(event_data):
                         )
                         await exchange.publish(
                             message=message,
-                            routing_key='commit-payloads'
+                            routing_key=get_rabbitmq_routing_key('commit-payloads')
                         )
                         custom_logger.debug(
                             'Re-Published payload against commit ID %s , tentative block height %s for '
@@ -518,16 +518,14 @@ async def payload_to_dag_processor_task(event_data):
                 )
                 async with app.rmq_channel_pool.acquire() as channel:
                     # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
-                    exchange = await channel.get_exchange(
-                        settings.rabbitmq.setup['core']['exchange']
-                    )
+                    exchange = await channel.get_exchange(get_rabbitmq_core_exchange())
                     message = Message(
                         diff_calculation_request.json().encode('utf-8'),
                         delivery_mode=DeliveryMode.PERSISTENT,
                     )
                     await exchange.publish(
                         message=message,
-                        routing_key='diff-calculation'
+                        routing_key= get_rabbitmq_routing_key('diff-requests')
                     )
                     custom_logger.debug(
                         'Published diff calculation request | At height %s | Project %s',
@@ -644,7 +642,7 @@ async def payload_to_dag_processor_task(event_data):
                             # always ensure exchanges and queues are initialized as part of launch sequence,
                             # not to be checked here
                             exchange = await channel.get_exchange(
-                                name=settings.rabbitmq.setup['core']['exchange'],
+                                name=get_rabbitmq_core_exchange(),
                                 ensure=False
                             )
                             message = Message(
@@ -653,7 +651,7 @@ async def payload_to_dag_processor_task(event_data):
                             )
                             await exchange.publish(
                                 message=message,
-                                routing_key='diff-calculation'
+                                routing_key=get_rabbitmq_routing_key('diff-requests')
                             )
                             custom_logger.debug(
                                 'Published diff calculation request | At height %s | Project %s',

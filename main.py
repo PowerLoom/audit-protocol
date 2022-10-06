@@ -8,7 +8,7 @@ import utils.diffmap_utils
 from config import settings
 from uuid import uuid4
 from utils.redis_conn import RedisPool
-from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
+from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_core_exchange, get_rabbitmq_routing_key
 from utils import helper_functions
 from utils import redis_keys
 from functools import partial
@@ -186,7 +186,7 @@ async def commit_payload(
     # push payload for commit to rabbitmq queue
     async with request.app.rmq_channel_pool.acquire() as channel:
         exchange = await channel.get_exchange(
-            name=settings.rabbitmq.setup['core']['exchange'],
+            name=get_rabbitmq_core_exchange(),
             # always ensure exchanges and queues are initialized as part of launch sequence, not to be checked here
             ensure=False
         )
@@ -197,7 +197,7 @@ async def commit_payload(
 
         await exchange.publish(
             message=message,
-            routing_key='commit-payloads'
+            routing_key=get_rabbitmq_routing_key('commit-payloads')
         )
         rest_logger.debug(
             'Published payload against commit ID %s to RabbitMQ payload commit service queue', payload_commit_id
