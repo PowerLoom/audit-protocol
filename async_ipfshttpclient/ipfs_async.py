@@ -3,11 +3,11 @@ import asyncio
 from config import settings
 
 ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs_url)
-ipfs_reader_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
+ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
 
 async def init_ipfs_client():
     await ipfs_write_client.init_session()
-    await ipfs_reader_client.init_session()
+    await ipfs_read_client.init_session()
     print(f"Initialized IPFS clients!!")
 
 

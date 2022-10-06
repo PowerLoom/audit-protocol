@@ -2,6 +2,8 @@ from httpx import AsyncClient
 from io import BytesIO
 import json
 
+class IPFSAsyncClientError(Exception):
+    pass
 
 class DAGBlock:
     def __init__(self, json_body: str):
@@ -24,6 +26,8 @@ class DAGSection:
             url=f'/dag/put?pin={str(pin).lower()}',
             files=files
         )
+        if r.status_code != 200:
+            raise IPFSAsyncClientError(f"IPFS client error: dag-put operation, response:{r}")
         try:
             return json.loads(r.text)
         except json.JSONDecodeError:
@@ -32,6 +36,8 @@ class DAGSection:
     async def get(self, dag_cid):
         response_body = ''
         async with self._client.stream(method='POST', url=f'/dag/get?arg={dag_cid}') as response:
+            if response.status_code != 200:
+                raise IPFSAsyncClientError(f"IPFS client error: dag-get operation, response:{response}")
             async for chunk in response.aiter_text():
                 response_body += chunk
         return DAGBlock(response_body)

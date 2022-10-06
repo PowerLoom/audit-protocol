@@ -11,7 +11,7 @@ from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
 from utils import helper_functions
 from utils import redis_keys
 from utils import retrieval_utils
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.ipfs_async import ipfs_write_client, ipfs_read_client
 from utils.redis_conn import RedisPool, provide_redis_conn
 from utils.retrieval_utils import get_dag_block_by_height, SNAPSHOT_STATUS_MAP
 from redis import asyncio as aioredis
@@ -476,7 +476,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
 
             # parse and store dag chain cids on IPFS
             volume_cids = await asyncio.gather(
-                ipfs_client.add_json(uniswapPairSummary24hCidRange(
+                ipfs_write_client.add_json(uniswapPairSummary24hCidRange(
                     resultant=uniswapPairSummaryCid24hResultant(
                         trade_volume_24h_cids={
                             "latest_dag_cid": dag_chain_24h[0]['dagCid'],
@@ -485,7 +485,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                         latestTimestamp_volume_24h=str(dag_chain_24h[0]['timestamp'])
                     )
                 ).dict()),
-                ipfs_client.add_json(uniswapPairSummary7dCidRange(
+                ipfs_write_client.add_json(uniswapPairSummary7dCidRange(
                     resultant=uniswapPairSummaryCid7dResultant(
                         trade_volume_7d_cids={
                             "latest_dag_cid": dag_chain_7d[0]['dagCid'],
@@ -495,7 +495,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                     )
                 ).dict())
             )
-            # data = await ipfs_client.cat(volume_cids[0])
+            # data = await ipfs_read_client.cat(volume_cids[0])
             # print(f"cid get: {data}")
 
             # store last recent logs, these will be used to show recent transaction for perticular contract
@@ -584,8 +584,8 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
 
             # fetch stored cids from IPFS
             [trade_volume_cids_24h, trade_volume_cids_7d] = await asyncio.gather(
-                ipfs_client.cat(cached_trade_volume_data["aggregated_volume_cid_24h"]),
-                ipfs_client.cat(cached_trade_volume_data["aggregated_volume_cid_7d"])
+                ipfs_read_client.cat(cached_trade_volume_data["aggregated_volume_cid_24h"]),
+                ipfs_read_client.cat(cached_trade_volume_data["aggregated_volume_cid_7d"])
             )
 
             # parse and patch CID for 24h trade volume
@@ -700,13 +700,13 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             latestTimestamp_volume_7d = sliding_window_front_7d[0]['timestamp'] if sliding_window_front_7d else \
             trade_volume_cids_7d['resultant']['latestTimestamp_volume_7d']
             volume_cids = await asyncio.gather(
-                ipfs_client.add_json(uniswapPairSummary24hCidRange(
+                ipfs_write_client.add_json(uniswapPairSummary24hCidRange(
                     resultant=uniswapPairSummaryCid24hResultant(
                         trade_volume_24h_cids=trade_volume_cids_24h["resultant"]["trade_volume_24h_cids"],
                         latestTimestamp_volume_24h=str(latestTimestamp_volume_24h)
                     )
                 ).dict()),
-                ipfs_client.add_json(uniswapPairSummary7dCidRange(
+                ipfs_write_client.add_json(uniswapPairSummary7dCidRange(
                     resultant=uniswapPairSummaryCid7dResultant(
                         trade_volume_7d_cids=trade_volume_cids_7d["resultant"]["trade_volume_7d_cids"],
                         latestTimestamp_volume_7d=str(latestTimestamp_volume_7d)
