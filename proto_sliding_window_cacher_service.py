@@ -54,10 +54,10 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
     sliding_cacher_logger.debug(f"Seeking tail starting for projectId: {project_id}:{time_period_ts}")
     
     current_height = tail
-    head_cid = await helper_functions.get_dag_cid(
-        project_id=project_id, block_height=head, reader_redis_conn=redis_conn
+    head_block = await retrieval_utils.get_dag_block_by_height(
+        project_id=project_id, block_height=head, 
+        reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
     )
-    head_block = await dag_utils.get_dag_block(head_cid)
     present_ts = int(head_block['timestamp'])
     while current_height < head:
         dag_block = await retrieval_utils.get_dag_block_by_height(
@@ -76,10 +76,10 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
 async def find_tail(head: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
     sliding_cacher_logger.debug(f"Seeking tail for the first time | projectId: {project_id}:{time_period_ts}")
     current_height = 1
-    head_cid = await helper_functions.get_dag_cid(
-        project_id=project_id, block_height=head, reader_redis_conn=redis_conn
+    head_block = await retrieval_utils.get_dag_block_by_height(
+        project_id=project_id, block_height=head, 
+        reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
     )
-    head_block = await dag_utils.get_dag_block(head_cid)
     present_ts = int(head_block['timestamp'])
     while current_height < head:
         dag_block = await retrieval_utils.get_dag_block_by_height(
