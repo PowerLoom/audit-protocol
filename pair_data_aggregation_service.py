@@ -52,7 +52,7 @@ async def get_dag_blocks_in_range(project_id, from_block, to_block, reader_redis
     dag_chain = []
     for i in range(from_block, to_block + 1):
         try:
-            t = await get_dag_block_by_height(project_id, i, reader_redis_conn, PAIR_CONTRACTS)
+            t = await get_dag_block_by_height(project_id, i, reader_redis_conn, len(PAIR_CONTRACTS))
         except Exception as e:
             logger.error( f"Error: can't get dag block with msg: {str(e)} | \
                 projectId:{project_id}, block_height:{i}", exc_info=True)
@@ -107,13 +107,13 @@ async def get_oldest_block_and_timestamp(pair_contract_address, redis_conn):
             project_id_trade_volume,
             volume_tail_marker_24h,
             redis_conn,
-            pair_contracts=PAIR_CONTRACTS
+            cache_size_unit=len(PAIR_CONTRACTS)
         ),
         get_dag_block_by_height(
             project_id_trade_volume,
             volume_tail_marker_7d,
             redis_conn,
-            pair_contracts=PAIR_CONTRACTS
+            cache_size_unit=len(PAIR_CONTRACTS)
         )
     )
 
@@ -282,7 +282,7 @@ async def calculate_pair_liquidity(writer_redis_conn: aioredis.Redis, pair_contr
         project_id_token_reserve,
         liquidity_head_marker,
         writer_redis_conn,
-        pair_contracts=PAIR_CONTRACTS
+        cache_size_unit=len(PAIR_CONTRACTS)
     )
 
     if not liquidity_data:
