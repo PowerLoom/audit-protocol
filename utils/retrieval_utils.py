@@ -1,5 +1,5 @@
 from eth_utils import keccak
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.ipfs_async import ipfs_read_client
 from utils import redis_keys
 from utils import helper_functions
 from utils import dag_utils
@@ -421,7 +421,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     #     retrieval_utils_logger.debug(r)
 
     """ Retrieve the DAG block from ipfs """
-    _block = await ipfs_client.dag.get(block_dag_cid)
+    _block = await ipfs_read_client.dag.get(block_dag_cid)
     block = _block.as_json()
     # block = preprocess_dag(block)
     if data_flag == 0:
@@ -430,7 +430,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     payload = dict()
 
     """ Get the payload Data """
-    payload_data = await ipfs_client.cat(block['data']['cid']['/'])
+    payload_data = await ipfs_read_client.cat(block['data']['cid']['/'])
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
@@ -472,7 +472,7 @@ async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
         #retrieval_utils_logger.debug(payload_cid)
 
     """ Get the payload Data from ipfs """
-    _payload_data = await ipfs_client.cat(payload_cid)
+    _payload_data = await ipfs_read_client.cat(payload_cid)
     payload_data = _payload_data.decode('utf-8')
     return payload_data
 
