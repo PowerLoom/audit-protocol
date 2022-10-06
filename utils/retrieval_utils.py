@@ -501,6 +501,8 @@ def prune_dag_block_cache(cache_size_unit, shared_cache):
     # prune result list and make it a dict again
     shared_cache = dict(ordered_items[:pruning_length])
 
+    print(f"Pruned IPFS dag-block cache | keys-lenght: {len(shared_cache)}")
+
 async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis, cache_size_unit):
     dag_block = {}
     # init global shared cache if doesn't exit
