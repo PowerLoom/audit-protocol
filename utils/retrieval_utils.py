@@ -482,3 +482,51 @@ async def get_blocks_from_container(container_id, dag_cids: list):
         Given the dag_cids, get those dag block from the given container
     """
     pass
+
+
+### SHARED IN-MEMORY CACHE FOR DAG BLOCK DATA ####
+### INCLUDES PAYLOAD DATA ########################
+SHARED_DAG_BLOCKS_CACHE = {}
+
+def prune_dag_block_cache(cache_size_unit, shared_cache):
+
+    # only prune when size of cache greater than cache_size_unit * 5
+    if len(shared_cache) <= cache_size_unit * 5:
+        return
+
+    # prune to make size of dict cache_size * 4
+    pruning_length = cache_size_unit * 4
+    # sort dict
+    ordered_items = sorted(shared_cache.items(), key=lambda item: item[1]['block_height'])
+    # prune result list and make it a dict again
+    shared_cache = dict(ordered_items[:pruning_length])
+
+async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis, cache_size_unit):
+    dag_block = {}
+    # init global shared cache if doesn't exit
+    if 'SHARED_DAG_BLOCKS_CACHE' not in globals():
+        global SHARED_DAG_BLOCKS_CACHE
+        SHARED_DAG_BLOCKS_CACHE = {}
+
+    dag_cid = await helper_functions.get_dag_cid(
+        project_id=project_id,
+        block_height=block_height,
+        reader_redis_conn=reader_redis_conn
+    )
+    if not dag_cid:
+        return {}
+
+    # use cache if available
+    if dag_cid and SHARED_DAG_BLOCKS_CACHE.get(dag_cid, False):
+        return SHARED_DAG_BLOCKS_CACHE.get(dag_cid)['data']
+
+    dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+    dag_block = dag_block if dag_block else {}
+    
+    dag_block["dagCid"] = dag_cid
+
+    # cache result
+    SHARED_DAG_BLOCKS_CACHE[dag_cid] = {'data': dag_block, 'block_height': block_height}
+    prune_dag_block_cache(cache_size_unit, SHARED_DAG_BLOCKS_CACHE)
+
+    return dag_block

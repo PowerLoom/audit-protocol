@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import sys
+import os
 
 sliding_cacher_logger = logging.getLogger(__name__)
 sliding_cacher_logger.setLevel(logging.DEBUG)
@@ -49,7 +50,7 @@ def convert_time_period_str_to_timestamp(time_period_str: str):
     return ts_map.get(time_period_str, 60 * 60)  # 1 hour timestamp returned by default
 
 
-async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts: int, redis_conn: aioredis.Redis):
+async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
     current_height = tail
     head_cid = await helper_functions.get_dag_cid(
         project_id=project_id, block_height=head, reader_redis_conn=redis_conn
@@ -57,19 +58,17 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
     head_block = await dag_utils.get_dag_block(head_cid)
     present_ts = int(head_block['timestamp'])
     while current_height < head:
-        dag_cid = await helper_functions.get_dag_cid(
-            project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
+        dag_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=current_height, 
+            reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
         )
-        # dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        dag_block = await dag_utils.get_dag_block(dag_cid)
-        # dag_blocks[dag_cid] = dag_block
         if present_ts - dag_block['timestamp'] <= time_period_ts:
             return current_height
         current_height += 1
     return None
 
 
-async def find_tail(head: int, project_id: str, time_period_ts: int, redis_conn: aioredis.Redis):
+async def find_tail(head: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
     current_height = 1
     head_cid = await helper_functions.get_dag_cid(
         project_id=project_id, block_height=head, reader_redis_conn=redis_conn
@@ -77,12 +76,10 @@ async def find_tail(head: int, project_id: str, time_period_ts: int, redis_conn:
     head_block = await dag_utils.get_dag_block(head_cid)
     present_ts = int(head_block['timestamp'])
     while current_height < head:
-        dag_cid = await helper_functions.get_dag_cid(
-            project_id=project_id, block_height=current_height, reader_redis_conn=redis_conn
+        dag_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=current_height, 
+            reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
         )
-        # dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        dag_block = await dag_utils.get_dag_block(dag_cid)
-        # dag_blocks[dag_cid] = dag_block
         if present_ts - dag_block['timestamp'] <= time_period_ts:
             return current_height
         current_height += 1
@@ -94,11 +91,12 @@ async def build_primary_index(
         project_id: str,
         time_period: str,
         height_map: dict,
+        registered_projects: list,
         semaphore: asyncio.BoundedSemaphore,
         writer_redis_conn: aioredis.Redis
 ):
     """
-        :param time_period: supported time_period strings as of now:  ['24h', '7d']
+        :param time_period: supported time_period strings as of now:  ['24h', '7d', '0']
     """
     # find markers
     # NOTE: every periodic run, the head although is always chosen to be the max height
@@ -107,11 +105,19 @@ async def build_primary_index(
     idx_tail_key = redis_keys.get_sliding_window_cache_tail_marker(project_id, time_period)
     head_marker = height_map.get('dag_block_height')
     tail_marker = None
+
+    # if time_period is 0 then just set head and exit
+    if time_period == '0':
+        await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id, time_period), head_marker)
+        sliding_cacher_logger.info('Set head at %s index for %s time_period data Project ID: %s', head_marker, time_period, project_id)
+        return
+        
+
     time_period_ts = convert_time_period_str_to_timestamp(time_period)
     markers = [await writer_redis_conn.get(k) for k in [idx_head_key, idx_tail_key]]
     if not all(markers):
         sliding_cacher_logger.info('Finding %s tail marker for the first time for project %s', time_period, project_id)
-        tail_marker = await find_tail(head_marker, project_id, time_period_ts, writer_redis_conn)
+        tail_marker = await find_tail(head_marker, project_id, time_period_ts, registered_projects, writer_redis_conn)
         if not tail_marker:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s for %s calculation', project_id, time_period
@@ -125,7 +131,7 @@ async def build_primary_index(
         )
     else:
         tail_marker = int(markers[1])
-        tail_ahead = await seek_ahead_tail(head_marker, tail_marker, project_id, time_period_ts, writer_redis_conn)
+        tail_ahead = await seek_ahead_tail(head_marker, tail_marker, project_id, time_period_ts, registered_projects, writer_redis_conn)
         if not tail_ahead:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s to seek tail ahead for %s calculation | present head: %s',
@@ -147,6 +153,7 @@ async def build_primary_index(
 async def get_max_height_pair_project(
     project_id: str,
     height_map: dict,
+    registered_projects: list,
     semaphore: asyncio.BoundedSemaphore,
     writer_redis_conn: aioredis.Redis
 ):
@@ -156,32 +163,28 @@ async def get_max_height_pair_project(
         return Exception("Can\'t fetch max block height against project ID: %s", project_id)
     try:
         max_height = int(max_height.decode('utf-8'))
-        #dag_cid = await helper_functions.get_dag_cid(
-        #    project_id=project_id, block_height=max_height, reader_redis_conn=writer_redis_conn
-        #)
-        #dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        payload_cid = await retrieval_utils.retrieve_payload_cid(project_id, max_height, writer_redis_conn)
-        _payload_data = await retrieval_utils.retrieve_payload_data(payload_cid, writer_redis_conn=writer_redis_conn)
-        payload_data = json.loads(_payload_data)
-        #height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
-        height_map[project_id] = {"source_height": payload_data["chainHeightRange"]["end"],"dag_block_height": max_height}
+        dag_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=max_height, 
+            reader_redis_conn=writer_redis_conn, cache_size_unit=len(registered_projects)/2
+        )
+        height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
     except Exception as err:
         return err
     finally:
         return max_height
 
 
-async def adjust_projects_head_by_source_height(source_height_map, smallest_source_height, writer_redis_conn):
+async def adjust_projects_head_by_source_height(source_height_map, smallest_source_height, registered_projects, writer_redis_conn):
     for project_map_id, project_map in source_height_map.items():
         dag_block_height = int(project_map["dag_block_height"])
         cycles = 0
         while cycles <= 10 and int(smallest_source_height) != int(source_height_map[project_map_id]["source_height"]):
             cycles += 1
             dag_block_height -= 1
-            dag_cid = await helper_functions.get_dag_cid(
-                project_id=project_map_id, block_height=dag_block_height, reader_redis_conn=writer_redis_conn
+            dag_block = await retrieval_utils.get_dag_block_by_height(
+                project_id=project_map_id, block_height=dag_block_height, 
+                reader_redis_conn=writer_redis_conn, cache_size_unit=len(registered_projects)/2
             )
-            dag_block = await retrieval_utils.retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
             source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
             source_height_map[project_map_id]["dag_block_height"] = dag_block_height
 
@@ -205,6 +208,7 @@ async def build_primary_indexes():
         fn = get_max_height_pair_project(**{
             'project_id': project_id,
             'height_map': project_source_height_map,
+            'registered_projects': registered_projects,
             'semaphore': semaphore,
             'writer_redis_conn': writer_redis_conn
         })
@@ -224,7 +228,7 @@ async def build_primary_indexes():
         smallest_source_height = int(project_map["source_height"]) if int(project_map["source_height"]) < int(smallest_source_height) else int(smallest_source_height)
 
     try:
-        await adjust_projects_head_by_source_height(project_source_height_map, smallest_source_height, writer_redis_conn)
+        await adjust_projects_head_by_source_height(project_source_height_map, smallest_source_height, registered_projects, writer_redis_conn)
     except Exception as err:
         sliding_cacher_logger.error(' can\'t adjust projects height for smallest source height | error_msg: %s', err)
         return
@@ -237,6 +241,7 @@ async def build_primary_indexes():
                 'project_id': project_id,
                 'time_period': time_period,
                 'height_map': height_map,
+                'registered_projects': registered_projects,
                 'semaphore': semaphore,
                 'writer_redis_conn': writer_redis_conn
             })
