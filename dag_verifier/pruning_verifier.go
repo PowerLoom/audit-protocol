@@ -174,7 +174,7 @@ func (verifier *PruningVerifier) VerifyPruningAndArchival() {
 	if verifier.verificationReport.ArchivalFailedProjects > 0 {
 		//Notify on slack of Failure.
 		log.Errorf("Pruning Verification failed and report is %+v", verifier.verificationReport)
-		report, _ := json.Marshal(verifier.verificationReport)
+		report, _ := json.MarshalIndent(verifier.verificationReport, "", "\t")
 		slackutils.NotifySlackWorkflow(string(report), "High", "PruningVerifier")
 		//TODO: How to auto-clear this.
 	}
@@ -195,6 +195,10 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 			log.Debugf("Project %s, verifying DAG Segment %+v", projectId, dagSegment)
 			var segment ProjectDAGSegment
 			json.Unmarshal([]byte(dagSegment), &segment)
+			if segment.StorageType != "COLD" {
+				log.Debugf("Segment not yet archived and still in HOT Storage, hence skipping archival verification")
+				continue
+			}
 			archiveStatus, err, issues := verifier.VerifyArchivalStatus(projectId, &segment)
 			//NOT doing any action for redis Zset as in next cycle Zset will get trimmed from startScore
 			if !archiveStatus {
@@ -243,6 +247,7 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment 
 	//Response: - 200 OK with
 	//expires: Sun, 24 Sep 2023 09:47:03 GMT
 	//For now checking if root DAGCid is availale as part of archived data.
+
 	rootCid, err := cid.Parse(segment.EndDAGCID)
 	if err != nil {
 		return false, err.Error(), nil
