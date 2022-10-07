@@ -30,7 +30,7 @@ class AsyncIPFSClient:
                 base_url=self._base_url,
                 timeout=Timeout(timeout=5.0),
                 follow_redirects=False,
-                limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
+                limits=Limits(max_connections=100, max_keepalive_connections=50, keepalive_expiry=None)
             )
             self.dag = DAGSection(self._client)
 
