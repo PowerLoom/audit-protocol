@@ -1,9 +1,17 @@
+import sys
+import os
+current = os.path.dirname(os.path.realpath(__file__))
+parent = os.path.dirname(current)
+sys.path.append(parent)
+
 from httpx import AsyncClient, Timeout, Limits
 from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
-from dag import DAGSection, IPFSAsyncClientError
-import utils
+from async_ipfshttpclient.dag import DAGSection, IPFSAsyncClientError
+from config import settings
+import async_ipfshttpclient.utils as utils
 import json
+import asyncio
 
 class AsyncIPFSClient:
     def __init__(
@@ -13,17 +21,18 @@ class AsyncIPFSClient:
 
     ):
         self._base_url, self._host_numeric = utils.addr.multiaddr_to_url_data(addr, api_base)
-        print(self._base_url, self._host_numeric)
         self.dag = None
+        self._client = None
 
     async def init_session(self):
-        self._client = AsyncClient(
-            base_url=self._base_url,
-            timeout=Timeout(timeout=5.0),
-            follow_redirects=False,
-            limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
-        )
-        self.dag = DAGSection(self._client)
+        if not self._client:
+            self._client = AsyncClient(
+                base_url=self._base_url,
+                timeout=Timeout(timeout=5.0),
+                follow_redirects=False,
+                limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
+            )
+            self.dag = DAGSection(self._client)
 
     def add_str(self, string, **kwargs):
         # TODO
@@ -69,3 +78,19 @@ class AsyncIPFSClient:
             return json.loads(json_data)
         except json.JSONDecodeError:
             return json_data
+
+
+
+ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs_url)
+ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
+
+
+async def init_ipfs_client():
+    await ipfs_write_client.init_session()
+    await ipfs_read_client.init_session()
+    print(f"Initialized IPFS clients!!")
+
+
+
+tasks = asyncio.gather(init_ipfs_client())
+asyncio.get_event_loop().run_until_complete(tasks)

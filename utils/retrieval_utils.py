@@ -1,5 +1,5 @@
 from eth_utils import keccak
-from async_ipfshttpclient.ipfs_async import ipfs_read_client
+from async_ipfshttpclient.main import ipfs_read_client
 from utils import redis_keys
 from utils import helper_functions
 from utils import dag_utils
@@ -496,7 +496,14 @@ async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
 
     """ Get the payload Data from ipfs """
     _payload_data = await ipfs_read_client.cat(payload_cid)
-    payload_data = _payload_data.decode('utf-8')
+    if not _payload_data:
+        return None
+
+    if isinstance(_payload_data, str):
+        payload_data = _payload_data
+    else:
+        payload_data = payload_data.decode('utf-8')
+
     return payload_data
 
 
@@ -523,8 +530,6 @@ def prune_dag_block_cache(cache_size_unit, shared_cache):
     ordered_items = sorted(shared_cache.items(), key=lambda item: item[1]['block_height'])
     # prune result list and make it a dict again
     shared_cache = dict(ordered_items[:pruning_length])
-
-    print(f"Pruned IPFS dag-block cache | keys-lenght: {len(shared_cache)}")
 
 async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis, cache_size_unit):
     dag_block = {}
