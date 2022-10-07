@@ -11,7 +11,7 @@ from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
 from utils import helper_functions
 from utils import redis_keys
 from utils import retrieval_utils
-from async_ipfshttpclient.ipfs_async import ipfs_write_client, ipfs_read_client
+from async_ipfshttpclient.main import ipfs_write_client, ipfs_read_client
 from utils.redis_conn import RedisPool, provide_redis_conn
 from utils.retrieval_utils import get_dag_block_by_height, SNAPSHOT_STATUS_MAP
 from redis import asyncio as aioredis
@@ -633,9 +633,9 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             )
 
             # parse and patch CID for 24h trade volume
-            trade_volume_cids_24h = json.loads(trade_volume_cids_24h.decode('utf-8')) if trade_volume_cids_24h else {}
+            trade_volume_cids_24h = json.loads(trade_volume_cids_24h) if trade_volume_cids_24h else {}
             # parse and patch CID for 7d trade volume
-            trade_volume_cids_7d = json.loads(trade_volume_cids_7d.decode('utf-8')) if trade_volume_cids_7d else {}
+            trade_volume_cids_7d = json.loads(trade_volume_cids_7d) if trade_volume_cids_7d else {}
 
             if sliding_window_back_24h:
                 [back_total_volume, back_fees, back_token0_volume, back_token1_volume, back_token0_volume_usd,
