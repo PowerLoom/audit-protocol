@@ -31,22 +31,22 @@ class AsyncIpfsClient:
         return await async_(self.cat)(*args, **kwargs)
 
 
-client = ipfshttpclient.connect(settings.ipfs_url)
+# client = ipfshttpclient.connect(settings.ipfs_url)
 
-async_ipfs_client = AsyncIpfsClient(
-    get=client.dag.get,
-    put=client.dag.put,
-    add_json=client.add_json,
-    add_str=client.add_str,
-    cat=client.cat,
-)
+# async_ipfs_client = AsyncIpfsClient(
+#     get=client.dag.get,
+#     put=client.dag.put,
+#     add_json=client.add_json,
+#     add_str=client.add_str,
+#     cat=client.cat,
+# )
 
-# Monkey patch the ipfs client
-client.dag.get = async_ipfs_client.async_get
-client.dag.put = async_ipfs_client.async_put
-client.cat = async_ipfs_client.async_cat
-client.add_json = async_ipfs_client.async_add_json
-client.add_str = async_ipfs_client.async_add_str
+# # Monkey patch the ipfs client
+# client.dag.get = async_ipfs_client.async_get
+# client.dag.put = async_ipfs_client.async_put
+# client.cat = async_ipfs_client.async_cat
+# client.add_json = async_ipfs_client.async_add_json
+# client.add_str = async_ipfs_client.async_add_str
 
 
 async def test_async_funcs():

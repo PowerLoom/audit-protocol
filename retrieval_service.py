@@ -85,7 +85,7 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                         last_pruned_height < int(request_info['to_height'])):
                     """ Get the data directly through the IPFS client """
                     block_dag = await ipfs_read_client.dag.get(block_cid)
-                    block_dag = preprocess_dag(block_dag)
+                    block_dag = preprocess_dag(block_dag.as_json())
 
                     payload_data = await ipfs_read_client.cat(block_dag['data']['cid'])
                     if isinstance(payload_data, bytes):
