@@ -134,7 +134,7 @@ async def get_dag_block(dag_cid: str):
 async def put_dag_block(dag_json: str):
     dag_json = dag_json.encode('utf-8')
     out = await ipfs_write_client.dag.put(io.BytesIO(dag_json), pin=True)
-    dag_cid = out.as_json()['Cid']['/']
+    dag_cid = out['Cid']['/']
 
     return dag_cid
 
