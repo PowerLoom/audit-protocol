@@ -6,7 +6,6 @@ from utils import redis_keys
 from utils import helper_functions
 from utils import diffmap_utils
 from utils import dag_utils
-from utils.ipfs_async import client as ipfs_client
 from utils.redis_conn import RedisPool
 from aio_pika import ExchangeType, DeliveryMode, Message
 from tenacity import retry_if_exception, wait_random_exponential, stop_after_attempt, retry, AsyncRetrying, wait_random

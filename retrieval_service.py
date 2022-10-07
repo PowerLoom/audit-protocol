@@ -7,7 +7,7 @@ from bloom_filter import BloomFilter
 import coloredlogs
 from utils import helper_functions
 from utils import redis_keys
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.main import ipfs_read_client
 from utils.diffmap_utils import preprocess_dag
 from utils.backup_utils import get_backup_data
 from utils import retrieval_utils
@@ -84,11 +84,11 @@ async def retrieve_files(reader_redis_conn=None, writer_redis_conn=None):
                 if (block_height > (max_block_height - settings.max_ipfs_blocks)) or (
                         last_pruned_height < int(request_info['to_height'])):
                     """ Get the data directly through the IPFS client """
-                    _block_dag = await ipfs_client.dag.get(block_cid)
+                    _block_dag = await ipfs_read_client.dag.get(block_cid)
                     block_dag = _block_dag.as_json()
                     block_dag = preprocess_dag(block_dag)
 
-                    payload_data = await ipfs_client.cat(block_dag['data']['cid'])
+                    payload_data = await ipfs_read_client.cat(block_dag['data']['cid'])
                     if isinstance(payload_data, bytes):
                         payload_data = payload_data.decode('utf-8')
 
