@@ -4,9 +4,7 @@ current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
 sys.path.append(parent)
 
-from httpx import AsyncClient, Timeout, Limits
-from starlette.background import BackgroundTask
-from starlette.responses import StreamingResponse
+from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
 from async_ipfshttpclient.dag import DAGSection, IPFSAsyncClientError
 from config import settings
 import async_ipfshttpclient.utils as utils
@@ -26,11 +24,14 @@ class AsyncIPFSClient:
 
     async def init_session(self):
         if not self._client:
+            self._async_transport = AsyncHTTPTransport(
+                limits=Limits(max_connections=100, max_keepalive_connections=50, keepalive_expiry=None)
+            )
             self._client = AsyncClient(
                 base_url=self._base_url,
                 timeout=Timeout(timeout=5.0),
                 follow_redirects=False,
-                limits=Limits(max_connections=100, max_keepalive_connections=50, keepalive_expiry=None)
+                transport=self._async_transport
             )
             self.dag = DAGSection(self._client)
 
