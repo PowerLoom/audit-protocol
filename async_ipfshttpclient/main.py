@@ -25,7 +25,7 @@ class AsyncIPFSClient:
     async def init_session(self):
         if not self._client:
             self._async_transport = AsyncHTTPTransport(
-                limits=Limits(max_connections=100, max_keepalive_connections=50, keepalive_expiry=None)
+                limits=Limits(max_connections=100, max_keepalive_connections=50, keepalive_expiry=1800)
             )
             self._client = AsyncClient(
                 base_url=self._base_url,
