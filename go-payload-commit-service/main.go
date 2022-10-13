@@ -41,6 +41,8 @@ var exitChan chan bool
 var WaitQueueForConsensus map[string]*PayloadCommit
 var QueueLock sync.Mutex
 
+var ProjectLocks map[string]*sync.Mutex
+
 //Rate Limiter Objects
 var dagFinalizerClientRateLimiter *rate.Limiter
 var web3StorageClientRateLimiter *rate.Limiter
@@ -151,6 +153,7 @@ func main() {
 	InitDAGFinalizerCallbackClient()
 	log.Info("Starting RabbitMq Consumer")
 	InitW3sClient()
+	ProjectLocks = make(map[string]*sync.Mutex)
 	var wg sync.WaitGroup
 	if settingsObj.UseConsensus {
 		wg.Add(1)
@@ -206,6 +209,113 @@ func InitRabbitmqConsumer() {
 	<-exitChan
 }
 
+func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
+	projectLock, ok := ProjectLocks[payloadCommit.ProjectId]
+	if !ok {
+		ProjectLocks[payloadCommit.ProjectId] = new(sync.Mutex)
+		projectLock = ProjectLocks[payloadCommit.ProjectId]
+	}
+	for retryCount := 0; ; retryCount++ {
+		if retryCount > 5 {
+			log.Warnf("Could not acquire projectLock for project %s and commitId %s, after max retires.",
+				payloadCommit.ProjectId, payloadCommit.CommitId)
+			return false
+		}
+		if !projectLock.TryLock() {
+			log.Debugf("Could not acquire projectLock for project %s and commitId %s, trying after sleeping for 2 secs.",
+				payloadCommit.ProjectId, payloadCommit.CommitId)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		break
+	}
+	projectLock.Lock()
+	defer projectLock.Unlock()
+
+	lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
+	if err != nil {
+		return false
+	}
+	//Note: Once we bring in consensus, tentativeBlockHeight should be updated only once consensus is achieved
+	payloadCommit.TentativeBlockHeight = lastTentativeBlockHeight + 1
+	if lastTentativeBlockHeight > 0 {
+		isValidSnapshot, err := validSnapshot(payloadCommit, lastTentativeBlockHeight)
+		if err != nil {
+			log.Errorf("Could not validate current snapshot for project %s with commitId %s",
+				payloadCommit.ProjectId, payloadCommit.CommitId)
+			return false
+		}
+		if !isValidSnapshot {
+			log.Warnf("Invalid snapshot received for project %s at tentativeBlockHeight %d and ignoring it",
+				payloadCommit.ProjectId, lastTentativeBlockHeight)
+			return true
+		}
+	}
+	var ipfsStatus bool
+	if payloadCommit.Web3Storage {
+		var wg sync.WaitGroup
+		var w3sStatus bool
+		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Uploading payload to web3.storage and IPFS.",
+			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ipfsStatus = UploadSnapshotToIPFS(payloadCommit)
+			if !ipfsStatus {
+				return
+			}
+			log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
+				payloadCommit.SnapshotCID, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var snapshotCid string
+			snapshotCid, w3sStatus = UploadToWeb3Storage(payloadCommit)
+			if !w3sStatus {
+				return
+			}
+			log.Debugf("web3.storage upload Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
+				snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
+			//SnapshotCID from web3.storage is not used directly.
+			//payloadCommit.SnapshotCID = snapshotCid
+		}()
+
+		wg.Wait()
+		if !ipfsStatus {
+			log.Errorf("Failed to add to IPFS. IPFSStatus %b , web3.storage status %b", ipfsStatus, w3sStatus)
+			return false
+		}
+		if !w3sStatus {
+			//Since web3.storage is only used as a backup, we proceed even if web3.storage upload fails as IPFS upload is successful
+			log.Errorf("Failed to upload to web3.storage status %b. Continuing with processing.", w3sStatus)
+		}
+	} else {
+		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Adding payload to IPFS.",
+			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
+		ipfsStatus = UploadSnapshotToIPFS(payloadCommit)
+		if !ipfsStatus {
+			return false
+		}
+	}
+
+	err = StorePayloadCidInRedis(payloadCommit)
+	if err != nil {
+		log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",
+			payloadCommit.ProjectId, payloadCommit.CommitId, err)
+		return false
+	}
+	//Update TentativeBlockHeight for the project
+	err = UpdateTentativeBlockHeight(payloadCommit)
+	if err != nil {
+		log.Errorf("Failed to update tentativeBlockHeight for the project %s with commitId %s due to error %+v",
+			payloadCommit.ProjectId, payloadCommit.CommitId, err)
+		return false
+	}
+	return true
+}
+
 func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	if d.Body == nil {
 		log.Errorf("Received message %+v from rabbitmq without message body! Ignoring and not processing it.", d)
@@ -226,85 +336,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			log.Warnf("Message got redelivered from rabbitmq for project %s and commitId %s",
 				payloadCommit.ProjectId, payloadCommit.CommitId)
 		}
-		lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
-		if err != nil {
-			return false
-		}
-		//Note: Once we bring in consensus, tentativeBlockHeight should be updated only once consensus is achieved
-		payloadCommit.TentativeBlockHeight = lastTentativeBlockHeight + 1
-		if lastTentativeBlockHeight > 0 {
-			isValidSnapshot, err := validSnapshot(&payloadCommit, lastTentativeBlockHeight)
-			if err != nil {
-				log.Errorf("Could not validate current snapshot for project %s with commitId %s",
-					payloadCommit.ProjectId, payloadCommit.CommitId)
-				return false
-			}
-			if !isValidSnapshot {
-				log.Warnf("Invalid snapshot received for project %s at tentativeBlockHeight %d and ignoring it",
-					payloadCommit.ProjectId, lastTentativeBlockHeight)
-				return true
-			}
-		}
-		var ipfsStatus bool
-		if payloadCommit.Web3Storage {
-			var wg sync.WaitGroup
-			var w3sStatus bool
-			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Uploading payload to web3.storage and IPFS.",
-				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				ipfsStatus = UploadSnapshotToIPFS(&payloadCommit)
-				if !ipfsStatus {
-					return
-				}
-				log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
-					payloadCommit.SnapshotCID, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-			}()
-
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				var snapshotCid string
-				snapshotCid, w3sStatus = UploadToWeb3Storage(&payloadCommit)
-				if !w3sStatus {
-					return
-				}
-				log.Debugf("web3.storage upload Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
-					snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-				//SnapshotCID from web3.storage is not used directly.
-				//payloadCommit.SnapshotCID = snapshotCid
-			}()
-
-			wg.Wait()
-			if !ipfsStatus {
-				log.Errorf("Failed to add to IPFS. IPFSStatus %b , web3.storage status %b", ipfsStatus, w3sStatus)
-				return false
-			}
-			if !w3sStatus {
-				//Since web3.storage is only used as a backup, we proceed even if web3.storage upload fails as IPFS upload is successful
-				log.Errorf("Failed to upload to web3.storage status %b. Continuing with processing.", w3sStatus)
-			}
-		} else {
-			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Adding payload to IPFS.",
-				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
-			ipfsStatus = UploadSnapshotToIPFS(&payloadCommit)
-			if !ipfsStatus {
-				return false
-			}
-		}
-
-		err = StorePayloadCidInRedis(&payloadCommit)
-		if err != nil {
-			log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",
-				payloadCommit.ProjectId, payloadCommit.CommitId, err)
-			return false
-		}
-		//Update TentativeBlockHeight for the project
-		err = UpdateTentativeBlockHeight(&payloadCommit)
-		if err != nil {
-			log.Errorf("Failed to update tentativeBlockHeight for the project %s with commitId %s due to error %+v",
-				payloadCommit.ProjectId, payloadCommit.CommitId, err)
+		if !ProcessUnCommittedSnapshot(&payloadCommit) {
 			return false
 		}
 	} else {
