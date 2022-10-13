@@ -165,11 +165,12 @@ type SettingsObj struct {
 }
 
 type ConsensusConfig_ struct {
-	ServiceURL      string        `json:"service_url"`
-	RateLimiter     *RateLimiter_ `json:"rate_limit"`
-	TimeoutSecs     int           `json:"timeout_secs"`
-	MaxIdleConns    int           `json:"max_idle_conns"`
-	IdleConnTimeout int           `json:"idle_conn_timeout"`
+	ServiceURL          string        `json:"service_url"`
+	RateLimiter         *RateLimiter_ `json:"rate_limit"`
+	TimeoutSecs         int           `json:"timeout_secs"`
+	MaxIdleConns        int           `json:"max_idle_conns"`
+	IdleConnTimeout     int           `json:"idle_conn_timeout"`
+	FinalizationWaiTime int64         `json:"finalization_wait_time_secs"`
 }
 
 func ParseSettings(settingsFile string) *SettingsObj {

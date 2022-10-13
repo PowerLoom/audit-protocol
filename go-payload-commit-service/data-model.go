@@ -24,14 +24,15 @@ type PayloadCommit struct {
 	CommitId  string `json:"commitId"`
 	Payload   json.RawMessage
 	// following two can be used to substitute for not supplying the payload but the CID and hash itself
-	SnapshotCID          string `json:"snapshotCID"`
-	ApiKeyHash           string `json:"apiKeyHash"`
-	TentativeBlockHeight int    `json:"tentativeBlockHeight"`
-	Resubmitted          bool   `json:"resubmitted"`
-	ResubmissionBlock    int    `json:"resubmissionBlock"` // corresponds to lastTouchedBlock in PendingTransaction model
-	Web3Storage          bool   `json:"web3Storage"`       //This flag indicates to store the payload in web3.storage instead of IPFS.
-	SkipAnchorProof      bool   `json:"skipAnchorProof"`
-	EpochEndBlockHeight  int64  `json:"epochEndBlockHeight,omitEmpty"`
+	SnapshotCID           string `json:"snapshotCID"`
+	ApiKeyHash            string `json:"apiKeyHash"`
+	TentativeBlockHeight  int    `json:"tentativeBlockHeight"`
+	Resubmitted           bool   `json:"resubmitted"`
+	ResubmissionBlock     int    `json:"resubmissionBlock"` // corresponds to lastTouchedBlock in PendingTransaction model
+	Web3Storage           bool   `json:"web3Storage"`       //This flag indicates to store the payload in web3.storage instead of IPFS.
+	SkipAnchorProof       bool   `json:"skipAnchorProof"`
+	EpochEndBlockHeight   int64  `json:"-"`
+	ConsensusSubmissionTs int64  `json:"-"`
 }
 
 type _ChainHeightRange_ struct {

@@ -22,7 +22,7 @@
 		"port": 5672,
 		"setup": {
 			"core": {
-				"exchange": "audit-protocol-backend:"
+				"exchange": "audit-protocol-backend"
 			},
 			"queues":{
 				"commit-payloads":{
@@ -175,6 +175,7 @@
 		},
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
-		"idle_conn_timeout":0
+		"idle_conn_timeout":0,
+		"finalization_wait_time_secs": 60
 	}
 }

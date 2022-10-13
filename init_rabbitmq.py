@@ -30,7 +30,7 @@ def init_queue(ch: pika.adapters.blocking_connection.BlockingChannel, queue_name
 def init_exchanges_queues():
     c = create_rabbitmq_conn()
     ch: pika.adapters.blocking_connection.BlockingChannel = c.channel()
-    exchange_name = settings.rabbitmq.setup.core.exchange + settings.instance_id
+    exchange_name = settings.rabbitmq.setup.core.exchange
     ch.exchange_declare(exchange=exchange_name, exchange_type='direct', durable=True)
     print('Initialized rabbitmq Direct exchange: %s', exchange_name)
     to_be_inited = settings.rabbitmq.setup.queues

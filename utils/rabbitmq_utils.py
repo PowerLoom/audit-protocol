@@ -29,7 +29,7 @@ def get_rabbitmq_queue_name(queueType: str):
     return settings.rabbitmq.setup.queues[queueType].queue_name_prefix + settings.instance_id
 
 def get_rabbitmq_core_exchange():
-    return settings.rabbitmq.setup.core.exchange + settings.instance_id
+    return settings.rabbitmq.setup.core.exchange
 
 
 

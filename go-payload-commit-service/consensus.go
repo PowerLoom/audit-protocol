@@ -71,6 +71,12 @@ func PollConsensusForConfirmations() {
 			//TODO: Scale this based on number of items in queue.
 			log.Debugf("%d entries are waiting for consensus", len(WaitQueueForConsensus))
 			for snapshotCID, value := range WaitQueueForConsensus {
+				timeNow := time.Now().UnixMicro()
+				if timeNow > value.ConsensusSubmissionTs+settingsObj.ConsensusConfig.FinalizationWaiTime*1000000 {
+					log.Warnf("Finalization threshold crossed for %s project at epoch %d with snapshot %s at tentativeHeight %d.",
+						value.ProjectId, value.EpochEndBlockHeight, value.SnapshotCID, value.TentativeBlockHeight)
+					value.ConsensusSubmissionTs = timeNow
+				}
 				ProcessPendingSnapshot(snapshotCID, value)
 			}
 		}
@@ -105,6 +111,7 @@ func ProcessPendingSnapshot(snapshotCID string, payload *PayloadCommit) {
 }
 
 func SubmitSnapshotForConsensus(payload *PayloadCommit) (string, error) {
+	payload.ConsensusSubmissionTs = time.Now().UnixMicro()
 	return SendRequestToConsensusService(payload, http.MethodPost, *settingsObj.RetryCount, "/submitSnapshot")
 }
 

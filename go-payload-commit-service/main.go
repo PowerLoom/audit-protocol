@@ -192,7 +192,7 @@ func InitRabbitmqConsumer() {
 	if err != nil {
 		panic(err)
 	}
-	rmqExchangeName := settingsObj.Rabbitmq.Setup.Core.Exchange + settingsObj.InstanceId
+	rmqExchangeName := settingsObj.Rabbitmq.Setup.Core.Exchange
 	//TODO: These settings need to be moved to json config.
 	rmqQueueName := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.QueueNamePrefix + settingsObj.InstanceId
 	rmqRoutingKey := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + settingsObj.InstanceId
@@ -500,7 +500,7 @@ func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error)
 				log.Errorf("Failed to fetch Payload with CID %s from IPFS even after max retries due to error %+v.", payloadCid, err)
 				return &payload, errors.New(SKIP_SNAPSHOT_VALIDATION_ERR_STR)
 			}
-			log.Errorf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
+			log.Warnf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
 			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			i++
 			continue
