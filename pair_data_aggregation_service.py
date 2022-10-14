@@ -920,7 +920,7 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                     dagHeight=updated_audit_project_block_height
                 )
 
-                print(f"snapshot_zset_entry: {snapshot_zset_entry.json()}")
+                logger.debug(f"Prepared snapshot redis-zset entry: {snapshot_zset_entry.json()}")
 
                 # store in snapshots zset
                 result = await asyncio.gather(
@@ -937,9 +937,10 @@ async def v2_pairs_data(async_httpx_client: AsyncClient):
                     ),
                     redis_conn.set(
                         redis_keys.get_uniswap_pair_snapshot_last_block_height(),
-                        common_blockheight_reached)
+                        common_blockheight_reached),
+                        
                 )
-                print(f"result: {result}")
+                logger.debug(f"Updated snapshot details in redis, ops results: {result}")
 
                 # prune zset
                 block_height_zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_snapshot_summary_zset())
