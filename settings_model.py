@@ -60,6 +60,7 @@ class Settings(BaseModel):
     keepalive_secs: int = 600
     rlimit: dict
     ipfs_url: str
+    ipfs_reader_url: str
     rabbitmq: RabbitMQConfig
     snapshot_interval: int
     seed: str

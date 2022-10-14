@@ -1,6 +1,6 @@
 from config import settings
 from maticvigil.EVCore import EVCore
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.main import ipfs_write_client, ipfs_read_client
 from utils import redis_keys
 from utils import helper_functions
 from data_models import PendingTransaction, DAGBlock
@@ -119,7 +119,7 @@ async def get_dag_block(dag_cid: str):
     try:
         async with async_timeout.timeout(settings.ipfs_timeout) as cm:
             try:
-                dag = await ipfs_client.dag.get(dag_cid)
+                dag = await ipfs_read_client.dag.get(dag_cid)
             except Exception as e:
                 e_obj = e
     except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
@@ -133,8 +133,8 @@ async def get_dag_block(dag_cid: str):
 
 async def put_dag_block(dag_json: str):
     dag_json = dag_json.encode('utf-8')
-    out = await ipfs_client.dag.put(io.BytesIO(dag_json), pin=True)
-    dag_cid = out.as_json()['Cid']['/']
+    out = await ipfs_write_client.dag.put(io.BytesIO(dag_json), pin=True)
+    dag_cid = out['Cid']['/']
 
     return dag_cid
 

@@ -14,6 +14,8 @@ sed -i "s/cache:indexesRequested/cache:indexesRequested:$NAMESPACE/g" proto_slid
 sed -i "s/audit-protocol-proto-indexer/$NAMESPACE-audit-protocol-proto-indexer/g" pm2.config.js
 sed -i "s/audit-protocol-dag-verifier/$NAMESPACE-audit-protocol-dag-verifier/g" pm2.config.js
 
+sed -i "s/NAMESPACE = \"UNISWAPV2\"/NAMESPACE = \"$NAMESPACE\"/g" register_pair_projects_for_indexing.py
+
 echo "Building dag_verifier after changes"
 cd dag_verifier
 go build .
