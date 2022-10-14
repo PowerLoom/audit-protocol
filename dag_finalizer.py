@@ -6,7 +6,6 @@ from utils import redis_keys
 from utils import helper_functions
 from utils import diffmap_utils
 from utils import dag_utils
-from utils.ipfs_async import client as ipfs_client
 from utils.redis_conn import RedisPool
 from aio_pika import ExchangeType, DeliveryMode, Message
 from tenacity import retry_if_exception, wait_random_exponential, stop_after_attempt, retry, AsyncRetrying, wait_random
@@ -107,7 +106,7 @@ async def payload_to_dag_processor_task(event_data):
     """ Get data from the event """
     project_id = event_data['event_data']['projectId']
     tx_hash = event_data['txHash']
-    asyncio.current_task(asyncio.get_running_loop()).set_name('TxProcessor-' + tx_hash)
+    asyncio.current_task(asyncio.get_running_loop()).set_name('TxProcessor-'+tx_hash)
     custom_logger = CustomAdapter(rest_logger, {'txHash': tx_hash})
     tentative_block_height_event_data = int(event_data['event_data']['tentativeBlockHeight'])
     writer_redis_conn: aioredis.Redis = app.writer_redis_pool
@@ -232,13 +231,8 @@ async def payload_to_dag_processor_task(event_data):
             num_block_to_wait_for_resubmission = 10
             pending_confirmation_callbacks_txs_filtered = list(filter(
                 lambda x:
-                (PendingTransaction.parse_raw(x[0]).lastTouchedBlock != -1 and
-                 PendingTransaction.parse_raw(x[0]).lastTouchedBlock != 0 and
-                 PendingTransaction.parse_raw(
-                     x[0]).lastTouchedBlock + num_block_to_wait_for_resubmission <= tentative_block_height_event_data
-                 )
-                or (PendingTransaction.parse_raw(x[0]).lastTouchedBlock == 0 and
-                    int(x[1]) + num_block_to_wait_for_resubmission <= tentative_block_height_event_data),
+                    PendingTransaction.parse_raw(x[0]).lastTouchedBlock == 0 and
+                    int(x[1]) + num_block_to_wait_for_resubmission <= tentative_block_height_event_data,
                 pending_confirmation_callbacks_txs
             ))
             custom_logger.info(

@@ -1,4 +1,4 @@
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.main import ipfs_read_client
 from utils.redis_conn import RedisPool
 from utils import redis_keys
 from web3 import Web3
@@ -28,13 +28,13 @@ def pretty_relative_time(time_diff_secs):
     return '{} {}'.format(shown_num, unit + (' ago' if shown_num == 1 else 's ago'))
 
 async def get_dag_cid_output(dag_cid):
-    out = await ipfs_client.dag.get(dag_cid)
+    out = await ipfs_read_client.dag.get(dag_cid)
     if not out:
         return {}
     return out.as_json()
 
 async def get_payload_cid_output(cid):
-    out = await ipfs_client.cat(cid)
+    out = await ipfs_read_client.cat(cid)
     if not out:
         return {}
     return json.loads(out.decode('utf-8'))

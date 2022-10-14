@@ -1,5 +1,5 @@
 from eth_utils import keccak
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.main import ipfs_read_client
 from utils import redis_keys
 from utils import helper_functions
 from utils import dag_utils
@@ -353,17 +353,41 @@ async def retrieve_block_status(
         payload_cid = r[0].decode('utf-8')
 
         project_pending_txns_key_zset = redis_keys.get_pending_transactions_key(project_id)
-        r = await reader_redis_conn.zrangebyscore(
+        pending_txs = await reader_redis_conn.zrangebyscore(
             name=project_pending_txns_key_zset,
             min=block_height,
             max=block_height,
             withscores=False
         )
-        if len(r) == 0:
+        if len(pending_txs) == 0:
             block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
             return block_status
+        
+        all_empty_txhash = True
+        for tx in pending_txs:
+            pending_txn = PendingTransaction.parse_raw(tx)
+            # itrate until we find a entry with txHash
+            if pending_txn.txHash == None or pending_txn.txHash == "":
+                continue
+            
+            # set this false, when atleast one txHash exist
+            all_empty_txhash = False
+            
+            # check if tx is confirmed
+            if pending_txn.lastTouchedBlock == -1:
+                block_status.tx_hash = tx.get("txHash")
+                block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
+                block_status.payload_cid = payload_cid
+                return
+
+        # if all the entry had empty txHash
+        if all_empty_txhash:
+            block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
+            return block_status
+        
+        # if txHash was there but none with lastTouchedBlock == -1 then take latest pending tx
         block_status.payload_cid = payload_cid
-        pending_txn = PendingTransaction.parse_raw(r[0])
+        pending_txn = PendingTransaction.parse_raw(pending_txs[0])
         block_status.tx_hash = pending_txn.txHash
         block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMATION_PENDING']
 
@@ -376,7 +400,6 @@ async def retrieve_block_status(
             max=block_height,
             withscores=False
         )
-
         if len(r) == 0:
             #This scenario can happen when a project's blockHeight is pushed ahead
             # and current height is not present in the project DAG.
@@ -421,7 +444,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     #     retrieval_utils_logger.debug(r)
 
     """ Retrieve the DAG block from ipfs """
-    _block = await ipfs_client.dag.get(block_dag_cid)
+    _block = await ipfs_read_client.dag.get(block_dag_cid)
     block = _block.as_json()
     # block = preprocess_dag(block)
     if data_flag == 0:
@@ -430,7 +453,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     payload = dict()
 
     """ Get the payload Data """
-    payload_data = await ipfs_client.cat(block['data']['cid']['/'])
+    payload_data = await ipfs_read_client.cat(block['data']['cid']['/'])
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
@@ -472,8 +495,15 @@ async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
         #retrieval_utils_logger.debug(payload_cid)
 
     """ Get the payload Data from ipfs """
-    _payload_data = await ipfs_client.cat(payload_cid)
-    payload_data = _payload_data.decode('utf-8')
+    _payload_data = await ipfs_read_client.cat(payload_cid)
+    if not _payload_data:
+        return None
+
+    if isinstance(_payload_data, str):
+        payload_data = _payload_data
+    else:
+        payload_data = payload_data.decode('utf-8')
+
     return payload_data
 
 
@@ -482,3 +512,52 @@ async def get_blocks_from_container(container_id, dag_cids: list):
         Given the dag_cids, get those dag block from the given container
     """
     pass
+
+
+### SHARED IN-MEMORY CACHE FOR DAG BLOCK DATA ####
+### INCLUDES PAYLOAD DATA ########################
+SHARED_DAG_BLOCKS_CACHE = {}
+
+def prune_dag_block_cache(cache_size_unit, shared_cache):
+    cache_size_unit = cache_size_unit if cache_size_unit and isinstance(cache_size_unit, int) else 180
+    
+    # only prune when size of cache greater than cache_size_unit * 5
+    if len(shared_cache) <= cache_size_unit * 5:
+        return
+
+    # prune to make size of dict cache_size * 4
+    pruning_length = cache_size_unit * 4
+    # sort dict
+    ordered_items = sorted(shared_cache.items(), key=lambda item: item[1]['block_height'])
+    # prune result list and make it a dict again
+    shared_cache = dict(ordered_items[:pruning_length])
+
+async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis, cache_size_unit):
+    dag_block = {}
+    # init global shared cache if doesn't exit
+    if 'SHARED_DAG_BLOCKS_CACHE' not in globals():
+        global SHARED_DAG_BLOCKS_CACHE
+        SHARED_DAG_BLOCKS_CACHE = {}
+
+    dag_cid = await helper_functions.get_dag_cid(
+        project_id=project_id,
+        block_height=block_height,
+        reader_redis_conn=reader_redis_conn
+    )
+    if not dag_cid:
+        return {}
+
+    # use cache if available
+    if dag_cid and SHARED_DAG_BLOCKS_CACHE.get(dag_cid, False):
+        return SHARED_DAG_BLOCKS_CACHE.get(dag_cid)['data']
+
+    dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+    dag_block = dag_block if dag_block else {}
+    
+    dag_block["dagCid"] = dag_cid
+
+    # cache result
+    SHARED_DAG_BLOCKS_CACHE[dag_cid] = {'data': dag_block, 'block_height': block_height}
+    prune_dag_block_cache(cache_size_unit, SHARED_DAG_BLOCKS_CACHE)
+
+    return dag_block

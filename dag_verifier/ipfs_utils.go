@@ -21,7 +21,10 @@ type IpfsClient struct {
 }
 
 func (client *IpfsClient) Init(settingsObj *settings.SettingsObj) {
-	url := settingsObj.IpfsURL
+	url := settingsObj.IpfsReaderURL
+	if url == "" {
+		url = settingsObj.IpfsURL
+	}
 	_, err := ma.NewMultiaddr(url)
 	if err == nil {
 		// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.

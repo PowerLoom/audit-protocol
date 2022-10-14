@@ -1,6 +1,6 @@
 from config import settings
 from maticvigil.EVCore import EVCore
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.main import ipfs_write_client, ipfs_read_client
 from utils import redis_keys
 from utils import helper_functions
 from data_models import PendingTransaction, DAGBlock
@@ -119,7 +119,7 @@ async def get_dag_block(dag_cid: str):
     try:
         async with async_timeout.timeout(settings.ipfs_timeout) as cm:
             try:
-                dag = await ipfs_client.dag.get(dag_cid)
+                dag = await ipfs_read_client.dag.get(dag_cid)
             except Exception as e:
                 e_obj = e
     except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
@@ -133,8 +133,8 @@ async def get_dag_block(dag_cid: str):
 
 async def put_dag_block(dag_json: str):
     dag_json = dag_json.encode('utf-8')
-    out = await ipfs_client.dag.put(io.BytesIO(dag_json), pin=True)
-    dag_cid = out.as_json()['Cid']['/']
+    out = await ipfs_write_client.dag.put(io.BytesIO(dag_json), pin=True)
+    dag_cid = out['Cid']['/']
 
     return dag_cid
 
@@ -213,8 +213,6 @@ async def create_dag_block(
         timestamp=timestamp
     )
 
-    logger.debug("DAG created: %s", dag)
-
     """ Convert dag structure to json and put it on ipfs dag """
     # IPFS operations should raise exceptions well ahead of time
     try:
@@ -227,8 +225,12 @@ async def create_dag_block(
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise DAGCreationException from e
-
+    else:
+        logger.debug("DAG created: %s", dag)
     """ Update redis keys """
+    block_height_key = redis_keys.get_block_height_key(project_id=project_id)
+    _ = await writer_redis_conn.set(block_height_key, tentative_block_height)
+
     last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id)
     _ = await writer_redis_conn.set(last_dag_cid_key, dag_cid)
 
@@ -236,9 +238,6 @@ async def create_dag_block(
         name=redis_keys.get_dag_cids_key(project_id),
         mapping={dag_cid: tentative_block_height}
     )
-
-    block_height_key = redis_keys.get_block_height_key(project_id=project_id)
-    _ = await writer_redis_conn.set(block_height_key, tentative_block_height)
 
     return dag_cid, dag
 
