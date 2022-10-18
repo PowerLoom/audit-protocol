@@ -164,7 +164,8 @@
 			"rate_limit" :{
 				"req_per_sec": 1,
 				"burst": 1
-			}
+			},
+			"upload_chunk_size_mb": 50
 		}
 	},
 	"use_consensus": true,
