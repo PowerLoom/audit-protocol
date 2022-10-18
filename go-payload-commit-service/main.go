@@ -687,6 +687,29 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, txHash string) error {
 
 	if payload.Resubmitted {
 		pendingtxn.LastTouchedBlock = payload.ResubmissionBlock
+		//Check if a pendingEntry Exists, if so remove the old one and then create the new entry
+		res := redisClient.ZRangeByScore(ctx, key,
+			&redis.ZRangeBy{
+				Min: strconv.Itoa(payload.TentativeBlockHeight),
+				Max: strconv.Itoa(payload.TentativeBlockHeight),
+			})
+		if res.Err() == nil {
+			log.Debugf("Removing old pendingTxn entries %+v for project %s at tentativeHeight %d", res.Val(), payload.ProjectId, payload.TentativeBlockHeight)
+			removeRes := redisClient.ZRemRangeByScore(ctx, key,
+				strconv.Itoa(payload.TentativeBlockHeight),
+				strconv.Itoa(payload.TentativeBlockHeight))
+			if removeRes.Err() != nil {
+				log.Warnf("Failed to remove pendingTxn entry %+v from redis due to error %+v", res.Val(), removeRes.Err())
+			}
+		} else {
+			if res.Err() != redis.Nil {
+				log.Warnf("Failed to fetch pendingTxns for payloadCid %s for project %s with commitID %s from redis with err %+v",
+					payload.SnapshotCID, payload.ProjectId, payload.CommitId, res.Err(), *settingsObj.RetryCount)
+			} else {
+				log.Debugf("No pendingTxn entry present for project %s at tentativeHeight %d. Payload is %+v",
+					payload.ProjectId, payload.TentativeBlockHeight, payload)
+			}
+		}
 	} else {
 		pendingtxn.LastTouchedBlock = consts.SubmittedTxnStates.CallbackPending
 	}
