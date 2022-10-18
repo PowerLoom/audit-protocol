@@ -105,7 +105,7 @@ func SetDefaultPruneConfig() {
 		}
 		defaultSettings.Web3Storage.TimeoutSecs = 600
 		defaultSettings.Web3Storage.RateLimit = &settings.RateLimiter_{Burst: 1, RequestsPerSec: 1}
-
+		defaultSettings.Web3Storage.UploadChunkSizeMB = 50
 		settingsObj.PruningServiceSettings = &defaultSettings
 	}
 }
@@ -594,7 +594,7 @@ func UploadFileToWeb3Storage(fileName string) (string, bool) {
 		log.WithField("CycleID", cycleDetails.CycleID).Errorf("Unable to stat file %s due to error %+v", fileName, err)
 		return "", false
 	}
-	targetSize := 100 * 1024 * 1024 // 100MiB chunks
+	targetSize := settingsObj.PruningServiceSettings.Web3Storage.UploadChunkSizeMB * 1024 * 1024 // 100MiB chunks
 
 	fileReader := bufio.NewReader(file)
 
