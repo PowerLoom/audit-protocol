@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,6 +25,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/powerloom/goutils/logger"
+	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
 )
 
@@ -83,6 +85,7 @@ func (r retryType) String() string {
 }
 
 func RegisterSignalHandles() {
+	log.Info("Setting up signal Handlers")
 	signalChanel := make(chan os.Signal, 1)
 	signal.Notify(signalChanel,
 		syscall.SIGHUP,
@@ -137,23 +140,35 @@ type ConstsObj struct {
 	SubmittedTxnStates SubmittedTransactionStates `json:"submittedTxnStates"`
 }
 
-func main() {
-
-	RegisterSignalHandles()
-	logger.InitLogger()
+func ParseSettings() {
 	settingsObj = settings.ParseSettings("../settings.json")
-	if settingsObj.InstanceId == "" {
+	if settingsObj.UseConsensus && settingsObj.InstanceId == "" {
 		log.Fatalf("InstanceID is set to null, please generate and set a unique instanceID")
 		os.Exit(1)
 	}
 	ParseConsts("../dev_consts.json")
+}
+
+func SetupProjects() {
+	projects := redisutils.FetchStoredProjects(context.Background(), redisClient, math.MaxInt64)
+	ProjectLocks = make(map[string]*sync.Mutex, len(projects))
+	for index := range projects {
+		var lock sync.Mutex
+		ProjectLocks[projects[index]] = &lock
+	}
+}
+
+func main() {
+
+	logger.InitLogger()
+	ParseSettings()
 	InitIPFSClient()
 	InitRedisClient()
 	InitTxManagerClient()
 	InitDAGFinalizerCallbackClient()
-	log.Info("Starting RabbitMq Consumer")
 	InitW3sClient()
-	ProjectLocks = make(map[string]*sync.Mutex)
+	SetupProjects()
+
 	var wg sync.WaitGroup
 	if settingsObj.UseConsensus {
 		wg.Add(1)
@@ -164,6 +179,8 @@ func main() {
 			PollConsensusForConfirmations()
 		}()
 	}
+	log.Info("Starting RabbitMq Consumer")
+	RegisterSignalHandles()
 
 	InitRabbitmqConsumer()
 	if settingsObj.UseConsensus {
@@ -212,22 +229,10 @@ func InitRabbitmqConsumer() {
 func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 	projectLock, ok := ProjectLocks[payloadCommit.ProjectId]
 	if !ok {
-		ProjectLocks[payloadCommit.ProjectId] = new(sync.Mutex)
+		var lock sync.Mutex
+		ProjectLocks[payloadCommit.ProjectId] = &lock
 		projectLock = ProjectLocks[payloadCommit.ProjectId]
-	}
-	for retryCount := 0; ; retryCount++ {
-		if retryCount > 5 {
-			log.Warnf("Could not acquire projectLock for project %s and commitId %s, after max retires.",
-				payloadCommit.ProjectId, payloadCommit.CommitId)
-			return false
-		}
-		if !projectLock.TryLock() {
-			log.Debugf("Could not acquire projectLock for project %s and commitId %s, trying after sleeping for 2 secs.",
-				payloadCommit.ProjectId, payloadCommit.CommitId)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		break
+		log.Debugf("Lock object not present for project %s, creating it.", payloadCommit.ProjectId)
 	}
 	projectLock.Lock()
 	defer projectLock.Unlock()
@@ -1014,7 +1019,7 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 }
 
 func InitTxManagerClient() {
-
+	log.Info("InitTxManagerClient")
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
@@ -1054,17 +1059,7 @@ func InitTxManagerClient() {
 func InitRedisClient() {
 	redisURL := fmt.Sprintf("%s:%d", settingsObj.Redis.Host, settingsObj.Redis.Port)
 	redisDb := settingsObj.Redis.Db
-	log.Infof("Connecting to redis DB %d at %s", redisDb, redisURL)
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     redisURL,
-		Password: settingsObj.Redis.Password,
-		DB:       redisDb,
-	})
-	pong, err := redisClient.Ping(ctx).Result()
-	if err != nil {
-		log.Errorf("Unable to connect to redis at %s with error %+v", redisURL, err)
-	}
-	log.Info("Connected successfully to Redis and received ", pong, " back")
+	redisClient = redisutils.InitRedisClient(redisURL, redisDb, settingsObj.PayloadCommitConcurrency)
 }
 
 func InitIPFSClient() {
@@ -1105,7 +1100,10 @@ func InitIPFSClient() {
 	ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
 
 }
+
 func InitW3sClient() {
+	log.Info("InitW3sClient")
+
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.Web3Storage.MaxIdleConns,
@@ -1137,6 +1135,8 @@ func InitW3sClient() {
 }
 
 func InitDAGFinalizerCallbackClient() {
+	log.Info("InitDAGFinalizerCallbackClient")
+
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
