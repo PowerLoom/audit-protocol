@@ -734,9 +734,7 @@ async def get_block_status(
         project_id=projectId,
         reader_redis_conn=reader_redis_conn
     )
-    if max_block_height == 0:
-        response.status_code = 400
-        return {'error': 'Project does not have any blocks'}
+
     rest_logger.debug(max_block_height)
 
     block_status = await retrieval_utils.retrieve_block_status(project_id=projectId,
