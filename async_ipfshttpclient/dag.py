@@ -34,10 +34,9 @@ class DAGSection:
             return r.text
 
     async def get(self, dag_cid):
-        response_body = ''
-        async with self._client.stream(method='POST', url=f'/dag/get?arg={dag_cid}') as response:
-            if response.status_code != 200:
-                raise IPFSAsyncClientError(f"IPFS client error: dag-get operation, response:{response}")
-            async for chunk in response.aiter_text():
-                response_body += chunk
-        return DAGBlock(response_body)
+
+        response = await self._client.post(url=f'/dag/get?arg={dag_cid}')       
+        if response.status_code != 200:
+            raise IPFSAsyncClientError(f"IPFS client error: dag-get operation, response:{response}")
+        
+        return DAGBlock(response.text) 

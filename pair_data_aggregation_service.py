@@ -454,11 +454,13 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             return
 
         if not cached_trade_volume_data:
+            logger.debug(f"Starting to fetch 24h dag-chain for the first time, range: {tail_marker_24h} - {head_marker_24h} | projectId: {project_id_trade_volume}")
             dag_chain_24h = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_24h, head_marker_24h,
                                                           writer_redis_conn)
             if not dag_chain_24h:
                 return
 
+            logger.debug(f"Starting to fetch 7d dag-chain for the first time, range: {tail_marker_7d} - {head_marker_7d} | projectId: {project_id_trade_volume}")
             dag_chain_7d = await get_dag_blocks_in_range(project_id_trade_volume, tail_marker_7d, head_marker_7d,
                                                          writer_redis_conn)
             if not dag_chain_7d:
@@ -510,6 +512,15 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
             sliding_window_front_7d = []
             sliding_window_back_7d = []
 
+            logger.debug(
+                "Starting to fetch 24h sliding window, front: {0} - {1}, back: {2} - {3} | projectId: {4}"
+                .format(
+                    cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h, 
+                    cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h - 1, 
+                    project_id_trade_volume
+                )
+            )
+
             # if 24h head moved ahead
             if head_marker_24h > cached_trade_volume_data["processed_head_marker_24h"]:
                 # front of the chain where head=current_head and tail=last_head
@@ -529,6 +540,15 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
                     tail_marker_24h - 1,
                     writer_redis_conn
                 )
+
+            logger.debug(
+                "Starting to fetch 7d sliding window, front: {0} - {1}, back: {2} - {3} | projectId: {4}"
+                .format(
+                    cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d, 
+                    cached_trade_volume_data['processed_tail_marker_7d'], tail_marker_7d - 1, 
+                    project_id_trade_volume
+                )
+            )
 
             # if 7d head moved ahead
             if head_marker_7d > cached_trade_volume_data["processed_head_marker_24h"]:
@@ -555,6 +575,7 @@ async def process_pairs_trade_volume_and_reserves(writer_redis_conn: aioredis.Re
 
             if not sliding_window_front_7d and not sliding_window_back_7d:
                 return
+            
 
             sliding_window_front_24h_cids = []
             sliding_window_back_24h_cids = []

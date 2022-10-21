@@ -51,6 +51,8 @@ def convert_time_period_str_to_timestamp(time_period_str: str):
 
 
 async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
+    sliding_cacher_logger.debug(f"Seeking tail starting for projectId: {project_id}:{time_period_ts}")
+    
     current_height = tail
     head_block = await retrieval_utils.get_dag_block_by_height(
         project_id=project_id, block_height=head, 
@@ -63,12 +65,16 @@ async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts:
             reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
         )
         if present_ts - dag_block['timestamp'] <= time_period_ts:
+            sliding_cacher_logger.debug(f"Found tail after traversing {abs(current_height - tail)} blocks for projectId: {project_id}:{time_period_ts}")
             return current_height
         current_height += 1
+    
+    sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
     return None
 
 
 async def find_tail(head: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
+    sliding_cacher_logger.debug(f"Seeking tail for the first time | projectId: {project_id}:{time_period_ts}")
     current_height = 1
     head_block = await retrieval_utils.get_dag_block_by_height(
         project_id=project_id, block_height=head, 
@@ -81,8 +87,11 @@ async def find_tail(head: int, project_id: str, time_period_ts: int, registered_
             reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
         )
         if present_ts - dag_block['timestamp'] <= time_period_ts:
+            sliding_cacher_logger.debug(f"Found first time tail after traversing {abs(current_height)} blocks for projectId: {project_id}:{time_period_ts}")
             return current_height
         current_height += 1
+
+    sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
     return None
 
 
@@ -202,6 +211,7 @@ async def build_primary_indexes():
     project_source_height_map = {}
 
 
+    sliding_cacher_logger.debug("Fetching maximum height for all projectIds")
     tasks = list()
     semaphore = asyncio.BoundedSemaphore(20)
     for project_id, ts_arr in project_id_to_register_series.items():
@@ -227,12 +237,14 @@ async def build_primary_indexes():
     for project_map_id, project_map in project_source_height_map.items():
         smallest_source_height = int(project_map["source_height"]) if int(project_map["source_height"]) < int(smallest_source_height) else int(smallest_source_height)
 
+    sliding_cacher_logger.debug(f"Adjusting all projects height to match common minimum height: {smallest_source_height}")
     try:
         await adjust_projects_head_by_source_height(project_source_height_map, smallest_source_height, registered_projects, writer_redis_conn)
-    except Exception as err:
-        sliding_cacher_logger.error(' can\'t adjust projects height for smallest source height | error_msg: %s', err)
+    except Exception as exc:
+        sliding_cacher_logger.error(f"can\'t adjust projects height for smallest source height | error_msg: {exc}")
         return
 
+    sliding_cacher_logger.debug(f"Start building indexes for all projects | project_count:{len(project_id_to_register_series)}")
     tasks = list()
     for project_id, ts_arr in project_id_to_register_series.items():
         for time_period in ts_arr:
