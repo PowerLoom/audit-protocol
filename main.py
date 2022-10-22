@@ -174,13 +174,15 @@ async def commit_payload(
     rest_logger.debug(f"Created the unique payload commit id: {payload_commit_id}")
 
     web3_storage_flag = req_args.get('web3Storage', False)
+    source_chain_details = req_args.get('sourceChainDetails')
     payload_for_commit = PayloadCommit(**{
         'projectId': project_id,
         'commitId': payload_commit_id,
         'payload': payload,
         #'tentativeBlockHeight': last_tentative_block_height,
         'web3Storage': web3_storage_flag,
-        'skipAnchorProof': skip_anchor_proof_tx
+        'skipAnchorProof': skip_anchor_proof_tx,
+        'sourceChainDetails': source_chain_details
     })
 
     # push payload for commit to rabbitmq queue

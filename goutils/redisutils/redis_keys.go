@@ -13,3 +13,5 @@ const REDIS_KEY_PROJECT_METADATA string = "projectID:%s:dagSegments"
 
 const REDIS_KEY_PROJECT_TAIL_INDEX string = "projectID:%s:slidingCache:%s:tail"
 const REDIS_KEY_PRUNING_VERIFICATION_STATUS string = "projects:pruningVerificationStatus"
+
+const REDIS_KEY_PROJECT_EPOCH_SIZE string = "projectID:%s:epochSize"

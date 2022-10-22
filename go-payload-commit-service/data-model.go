@@ -19,10 +19,17 @@ type PendingTransaction struct {
 	EventData        RecordTxEventData `json:"event_data"`
 }
 
+type SourceChainDetails_ struct {
+	ChainID          int `json:"chainID"`
+	EpochStartHeight int `json:"epochStartHeight"`
+	EpochEndHeight   int `json:"epochEndHeight"`
+}
+
 type PayloadCommit struct {
-	ProjectId string `json:"projectId"`
-	CommitId  string `json:"commitId"`
-	Payload   json.RawMessage
+	ProjectId          string              `json:"projectId"`
+	CommitId           string              `json:"commitId"`
+	SourceChainDetails SourceChainDetails_ `json:"sourceChainDetails"`
+	Payload            json.RawMessage
 	// following two can be used to substitute for not supplying the payload but the CID and hash itself
 	SnapshotCID           string `json:"snapshotCID"`
 	ApiKeyHash            string `json:"apiKeyHash"`
