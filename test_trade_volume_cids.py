@@ -1,4 +1,5 @@
-from async_ipfshttpclient.main import ipfs_read_client
+from config import settings
+from async_ipfshttpclient.main import AsyncIPFSClient
 from utils.redis_conn import RedisPool
 from utils import redis_keys
 from web3 import Web3
@@ -27,13 +28,14 @@ def pretty_relative_time(time_diff_secs):
     shown_num = int(number)
     return '{} {}'.format(shown_num, unit + (' ago' if shown_num == 1 else 's ago'))
 
-async def get_dag_cid_output(dag_cid):
+
+async def get_dag_cid_output(dag_cid, ipfs_read_client: AsyncIPFSClient):
     out = await ipfs_read_client.dag.get(dag_cid)
     if not out:
         return {}
     return out.as_json()
 
-async def get_payload_cid_output(cid):
+async def get_payload_cid_output(cid, ipfs_read_client: AsyncIPFSClient):
     out = await ipfs_read_client.cat(cid)
     if not out:
         return {}
@@ -63,10 +65,10 @@ def read_json_file(directory:str, file_name: str):
     return json_data
 
         
-
 async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
-
-    data = await get_payload_cid_output(data_cid)
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    await ipfs_client.init_session()
+    data = await get_payload_cid_output(data_cid, ipfs_client)
     timePeriod = 'trade_volume_24h_cids' if timePeriod == '24h' else 'trade_volume_7d_cids'
     trade_volume_cids = data['resultant'][timePeriod]
 
@@ -76,8 +78,8 @@ async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
 
     #TODO: proceed only CID has dagCids and payload cids
     latestDagCid = trade_volume_cids['latest_dag_cid']
-    latestDagData = await get_dag_cid_output(latestDagCid)
-    lastestPayloadData = await get_payload_cid_output(latestDagData['data']['cid']['/'])
+    latestDagData = await get_dag_cid_output(latestDagCid, ipfs_client)
+    lastestPayloadData = await get_payload_cid_output(latestDagData['data']['cid']['/'], ipfs_client)
     pair_tokens_data = await redis_read_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(Web3.toChecksumAddress(lastestPayloadData['contract'])))
     token0_symbol = pair_tokens_data[b"token0_symbol"].decode('utf-8') if pair_tokens_data else "Token0"
     token1_symbol = pair_tokens_data[b"token1_symbol"].decode('utf-8') if pair_tokens_data else "Token1"
@@ -95,10 +97,10 @@ async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
     raw_event_logs = []
     dag_block_count = 1
     while (trade_volume_cids['oldest_dag_cid'] != dag_cid):
-        dagBlockData = await get_dag_cid_output(dag_cid)
+        dagBlockData = await get_dag_cid_output(dag_cid, ipfs_client)
 
         payload_cid = dagBlockData['data']['cid']['/']
-        payloadData = await get_payload_cid_output(payload_cid)
+        payloadData = await get_payload_cid_output(payload_cid, ipfs_client)
 
         ts = int(round(datetime.now().timestamp())) - payloadData["timestamp"]
         table.add_row(

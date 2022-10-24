@@ -1,4 +1,5 @@
-from async_ipfshttpclient.main import ipfs_read_client
+from async_ipfshttpclient.main import AsyncIPFSClient
+from config import settings
 from utils.redis_conn import RedisPool
 from utils import redis_keys
 from web3 import Web3
@@ -27,13 +28,15 @@ def pretty_relative_time(time_diff_secs):
     shown_num = int(number)
     return '{} {}'.format(shown_num, unit + (' ago' if shown_num == 1 else 's ago'))
 
-async def get_dag_cid_output(dag_cid):
+
+async def get_dag_cid_output(dag_cid, ipfs_read_client: AsyncIPFSClient):
     out = await ipfs_read_client.dag.get(dag_cid)
     if not out:
         return {}
     return out.as_json()
 
-async def get_payload_cid_output(cid):
+
+async def get_payload_cid_output(cid, ipfs_read_client: AsyncIPFSClient):
     out = await ipfs_read_client.cat(cid)
     if not out:
         return {}
@@ -41,14 +44,16 @@ async def get_payload_cid_output(cid):
 
 
 async def verify_dag_block_calculations(dag_cid):
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    await ipfs_client.init_session()
     aioredis_pool = RedisPool()
     await aioredis_pool.populate()
     redis_read_conn = aioredis_pool.reader_redis_pool
 
-    dagBlockData = await get_dag_cid_output(dag_cid)
+    dagBlockData = await get_dag_cid_output(dag_cid, ipfs_client)
 
     payload_cid = dagBlockData['data']['cid']
-    payloadData = await get_payload_cid_output(payload_cid)
+    payloadData = await get_payload_cid_output(payload_cid, ipfs_client)
 
     pair_tokens_data = await redis_read_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(Web3.toChecksumAddress(payloadData['contract'])))
     token0_symbol = pair_tokens_data[b"token0_symbol"].decode('utf-8') if pair_tokens_data else "Token0"
@@ -87,10 +92,10 @@ async def verify_dag_block_calculations(dag_cid):
     console.print("\n")
 
         
-
 async def verify_trade_volume_cids(data_cid):
-
-    data = await get_payload_cid_output(data_cid)
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    await ipfs_client.init_session()
+    data = await get_payload_cid_output(data_cid, ipfs_client)
     trade_volume_24h_cids = data['resultant']['trade_volume_24h_cids']
 
     print(f"\nTotal trade volume 24h cids objects: {len(trade_volume_24h_cids)}\n")
@@ -100,10 +105,10 @@ async def verify_trade_volume_cids(data_cid):
         dag_cid = trade_volume_24h_cids[25]['dagCid']
         payload_cid = trade_volume_24h_cids[25]['payloadCid']
 
-        dagBlockData = await get_dag_cid_output(dag_cid)
+        dagBlockData = await get_dag_cid_output(dag_cid, ipfs_client)
 
         payload_cid = dagBlockData['data']['cid']
-        payloadData = await get_payload_cid_output(payload_cid)
+        payloadData = await get_payload_cid_output(payload_cid, ipfs_client)
 
         print(f"dagBlockData: {dagBlockData}")
         print(f"payloadData: {payloadData}")

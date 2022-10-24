@@ -3,8 +3,7 @@ from utils.redis_conn import RedisPool
 from utils import helper_functions
 from utils.retrieval_utils import retrieve_payload_data
 from redis import asyncio as aioredis
-from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
-from utils import retrieval_utils
+from async_ipfshttpclient.main import AsyncIPFSClient
 import asyncio
 import json
 from httpx import AsyncClient, Timeout, Limits
@@ -67,7 +66,12 @@ def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pai
     return linked_contract_snapshot
 
 
-async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redis_conn=None):
+async def v2_pairs_daily_stats_snapshotter(
+        async_httpx_client: AsyncClient,
+        ipfs_write_client,
+        ipfs_read_client,
+        redis_conn=None
+):
     try:
         if not redis_conn:
             aioredis_pool = RedisPool()
@@ -148,8 +152,8 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
 
             # fetch current and 24h old snapshot payload
             dag_block_latest, dag_block_24h = await asyncio.gather(
-                retrieve_payload_data(latest_pair_summary_timestamp_payloadCID),
-                retrieve_payload_data(pair_snapshot_payloadCID_24h)
+                retrieve_payload_data(latest_pair_summary_timestamp_payloadCID, ipfs_read_client),
+                retrieve_payload_data(pair_snapshot_payloadCID_24h, ipfs_read_client)
             )
             dag_block_latest = json.loads(dag_block_latest).get("data", None) if dag_block_latest else None
             dag_block_24h = json.loads(dag_block_24h).get("data", None) if dag_block_24h else None
@@ -260,8 +264,12 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                 await asyncio.sleep(10)
 
                 block_status = await retrieve_block_status(
-                    redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
-                    0, updated_audit_project_block_height, redis_conn, redis_conn
+                    project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                    project_block_height=0,
+                    block_height=updated_audit_project_block_height,
+                    reader_redis_conn=redis_conn,
+                    writer_redis_conn=redis_conn,
+                    ipfs_read_client=ipfs_read_client
                 )
                 if block_status.status < 3:
                     continue

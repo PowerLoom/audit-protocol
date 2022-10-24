@@ -4,7 +4,7 @@ from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
 from config import settings
 from utils import redis_keys
 from utils import helper_functions
-from utils import diffmap_utils
+from async_ipfshttpclient.main import AsyncIPFSClientSingleton
 from utils import dag_utils
 from utils.redis_conn import RedisPool
 from aio_pika import ExchangeType, DeliveryMode, Message
@@ -95,6 +95,10 @@ async def startup_boilerplate():
             connect=settings.aiohtttp_timeouts.connect
         )
     )
+    app.ipfs_singleton = AsyncIPFSClientSingleton()
+    await app.ipfs_singleton.init_sessions()
+    app.ipfs_writer_client = app.ipfs_singleton._ipfs_write_client
+    app.ipfs_reader_client = app.ipfs_singleton._ipfs_read_client
 
 
 @retry(
@@ -466,7 +470,8 @@ async def payload_to_dag_processor_task(event_data):
                         timestamp=event_data['event_data']['timestamp'],
                         reader_redis_conn=reader_redis_conn,
                         writer_redis_conn=writer_redis_conn,
-                        prev_cid_fetch=fetch_prev_cid_for_dag_block_creation
+                        prev_cid_fetch=fetch_prev_cid_for_dag_block_creation,
+                        ipfs_write_client=app.ipfs_write_client
                     )
                     custom_logger.info('Created DAG block with CID %s at height %s', _dag_cid,
                                        tentative_block_height_event_data)
@@ -612,7 +617,8 @@ async def payload_to_dag_processor_task(event_data):
                                 timestamp=int(pending_tx_obj.event_data.timestamp),
                                 reader_redis_conn=reader_redis_conn,
                                 writer_redis_conn=writer_redis_conn,
-                                prev_cid_fetch=pending_q_fetch_prev_cid_for_dag_block_creation
+                                prev_cid_fetch=pending_q_fetch_prev_cid_for_dag_block_creation,
+                                ipfs_write_client=app.ipfs_write_client
                             )
                             custom_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
                                                _tt_block_height)

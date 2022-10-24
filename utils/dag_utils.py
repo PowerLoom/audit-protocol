@@ -1,6 +1,6 @@
 from config import settings
 from maticvigil.EVCore import EVCore
-from async_ipfshttpclient.main import ipfs_write_client, ipfs_read_client
+from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils import helper_functions
 from data_models import PendingTransaction, DAGBlock
@@ -114,7 +114,7 @@ async def save_event_data(event_data: dict, pending_tx_set_entry: bytes, writer_
     )
 
 
-async def get_dag_block(dag_cid: str):
+async def get_dag_block(dag_cid: str, ipfs_read_client: AsyncIPFSClient):
     e_obj = None
     try:
         async with async_timeout.timeout(settings.ipfs_timeout) as cm:
@@ -131,7 +131,7 @@ async def get_dag_block(dag_cid: str):
     return dag.as_json()
 
 
-async def put_dag_block(dag_json: str):
+async def put_dag_block(dag_json: str, ipfs_write_client: AsyncIPFSClient):
     dag_json = dag_json.encode('utf-8')
     out = await ipfs_write_client.dag.put(io.BytesIO(dag_json), pin=True)
     dag_cid = out['Cid']['/']
@@ -139,9 +139,9 @@ async def put_dag_block(dag_json: str):
     return dag_cid
 
 
-async def get_payload(payload_cid: str):
+async def get_payload(payload_cid: str, ipfs_read_client: AsyncIPFSClient):
     """ Given the payload cid, retrieve the payload. Payloads are also DAG blocks """
-    return await get_dag_block(payload_cid)
+    return await get_dag_block(payload_cid, ipfs_read_client)
 
 
 async def create_dag_block_timebound(
@@ -152,6 +152,7 @@ async def create_dag_block_timebound(
     timestamp: int,
     reader_redis_conn: aioredis.Redis,
     writer_redis_conn: aioredis.Redis,
+    ipfs_write_client: AsyncIPFSClient,
     prev_cid_fetch: bool = True
 ) -> Tuple[str, DAGBlock]:
     try:
@@ -163,6 +164,7 @@ async def create_dag_block_timebound(
             timestamp=timestamp,
             reader_redis_conn=reader_redis_conn,
             writer_redis_conn=writer_redis_conn,
+            ipfs_write_client=ipfs_write_client,
             prev_cid_fetch=prev_cid_fetch
         )
         return await asyncio.wait_for(
@@ -183,6 +185,7 @@ async def create_dag_block(
         timestamp: int,
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
+        ipfs_write_client: AsyncIPFSClient,
         prev_cid_fetch: bool = True
 ) -> Tuple[str, DAGBlock]:
     """ Get the last dag cid using the tentativeBlockHeight"""
@@ -216,7 +219,7 @@ async def create_dag_block(
     """ Convert dag structure to json and put it on ipfs dag """
     # IPFS operations should raise exceptions well ahead of time
     try:
-        future_dag = put_dag_block(dag.json())
+        future_dag = put_dag_block(dag.json(), ipfs_write_client)
         dag_cid = await asyncio.wait_for(
             future_dag,
             # 80% of half life to account for worst case where delay is increased and subseq operations need to complete

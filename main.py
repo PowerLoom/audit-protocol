@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
-
+from async_ipfshttpclient.main import AsyncIPFSClientSingleton
 import utils.diffmap_utils
 from config import settings
 from uuid import uuid4
@@ -96,6 +96,9 @@ async def startup_boilerplate():
     #     contract_address=settings.audit_contract,
     #     app_name='auditrecords'
     # )
+    app.ipfs_singleton = AsyncIPFSClientSingleton()
+    await app.ipfs_singleton.init_sessions()
+    app.ipfs_read_client = app.ipfs_singleton._ipfs_read_client
 
 
 async def get_max_block_height(project_id: str, reader_redis_conn: aioredis.Redis):
@@ -571,7 +574,8 @@ async def get_payloads(
         to_height=to_height,
         project_id=projectId,
         data_flag=data,
-        reader_redis_conn=reader_redis_conn
+        reader_redis_conn=reader_redis_conn,
+        ipfs_read_client=request.app.ipfs_read_client
     )
 
     current_height = to_height
@@ -596,7 +600,12 @@ async def get_payloads(
         # NOTE: not yet clear why the earlier call to retrieval_utils.fetch_blocks() would not populate `dag_blocks` map
         if dag_blocks.get(cur_dag_cid) is None:
             # rest_logger.debug("Fetching block from IPFS")
-            block = await retrieval_utils.retrieve_block_data(cur_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
+            block = await retrieval_utils.retrieve_block_data(
+                block_dag_cid=cur_dag_cid,
+                ipfs_read_client=request.app.ipfs_read_client,
+                writer_redis_conn=writer_redis_conn,
+                data_flag=data_flag
+            )
         else:
             # rest_logger.debug("Block already fetched")
             block = dag_blocks.get(cur_dag_cid)
@@ -708,7 +717,12 @@ async def get_block(
 
     prev_dag_cid = r[0].decode('utf-8')
 
-    block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+    block = await retrieval_utils.retrieve_block_data(
+        block_dag_cid=prev_dag_cid,
+        ipfs_read_client=request.app.ipfs_read_client,
+        writer_redis_conn=writer_redis_conn,
+        data_flag=0
+    )
 
     return {prev_dag_cid: block}
 
@@ -739,11 +753,14 @@ async def get_block_status(
         return {'error': 'Project does not have any blocks'}
     rest_logger.debug(max_block_height)
 
-    block_status = await retrieval_utils.retrieve_block_status(project_id=projectId,
-                                                               project_block_height=max_block_height,
-                                                               block_height=block_height,
-                                                               reader_redis_conn=reader_redis_conn,
-                                                               writer_redis_conn=writer_redis_conn)
+    block_status = await retrieval_utils.retrieve_block_status(
+        project_id=projectId,
+        project_block_height=max_block_height,
+        block_height=block_height,
+        reader_redis_conn=reader_redis_conn,
+        writer_redis_conn=writer_redis_conn,
+        ipfs_read_client=request.app.ipfs_read_client
+    )
 
     if block_status is None:
         response.status_code = 404
@@ -804,7 +821,12 @@ async def get_block_data(
     )
     prev_dag_cid = r[0].decode('utf-8')
 
-    payload = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=2)
+    payload = await retrieval_utils.retrieve_block_data(
+        block_dag_cid=prev_dag_cid,
+        ipfs_read_client=request.app.ipfs_read_client,
+        writer_redis_conn=writer_redis_conn,
+        data_flag=2
+    )
 
     """ Return the payload data """
     return {prev_dag_cid: payload}

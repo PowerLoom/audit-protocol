@@ -81,17 +81,15 @@ class AsyncIPFSClient:
             return json_data
 
 
+class AsyncIPFSClientSingleton:
+    def __init__(self):
+        self._ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs_url)
+        self._ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
+        self._initialized = False
 
-ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs_url)
-ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
-
-
-async def init_ipfs_client():
-    await ipfs_write_client.init_session()
-    await ipfs_read_client.init_session()
-    print(f"Initialized IPFS clients!!")
-
-
-
-tasks = asyncio.gather(init_ipfs_client())
-asyncio.get_event_loop().run_until_complete(tasks)
+    async def init_sessions(self):
+        if self._initialized:
+            return
+        await self._ipfs_write_client.init_session()
+        await self._ipfs_read_client.init_session()
+        self._initialized = True
