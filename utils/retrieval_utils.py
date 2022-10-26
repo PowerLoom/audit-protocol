@@ -375,7 +375,7 @@ async def retrieve_block_status(
             
             # check if tx is confirmed
             if pending_txn.lastTouchedBlock == -1:
-                block_status.tx_hash = tx.get("txHash")
+                block_status.tx_hash = pending_txn.txHash
                 block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
                 block_status.payload_cid = payload_cid
                 return
