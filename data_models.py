@@ -16,6 +16,10 @@ class ProjectStateMetadata(BaseModel):
     dagChains: List[ProjectDAGChainSegmentMetadata]
 
 
+class SourceChainDetails(BaseModel):
+    chainID: int
+    epochStartHeight: int
+    epochEndHeight: int
 
 class AuditRecordTxEventData(BaseModel):
     txHash: str
@@ -33,7 +37,6 @@ class PendingTransaction(BaseModel):
     lastTouchedBlock: int = 0
     event_data: Optional[AuditRecordTxEventData] = dict()
 
-
 class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
@@ -46,6 +49,7 @@ class PayloadCommit(BaseModel):
     resubmissionBlock: int = 0  # corresponds to lastTouchedBlock in PendingTransaction model
     web3Storage: bool = False
     skipAnchorProof: bool = True
+    sourceChainDetails: SourceChainDetails
 
 
 class FilecoinJobData(BaseModel):

@@ -42,8 +42,6 @@ var exitChan chan bool
 var WaitQueueForConsensus map[string]*PayloadCommit
 var QueueLock sync.Mutex
 
-//var ProjectLocks map[string]*sync.Mutex
-
 //Rate Limiter Objects
 var dagFinalizerClientRateLimiter *rate.Limiter
 var web3StorageClientRateLimiter *rate.Limiter
@@ -52,9 +50,6 @@ var txClientRateLimiter *rate.Limiter
 
 var REDIS_KEY_PROJECT_PAYLOAD_CIDS = "projectID:%s:payloadCids"
 var REDIS_KEY_PROJECT_PENDING_TXNS = "projectID:%s:pendingTransactions"
-var REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT = "projectID:%s:tentativeBlockHeight"
-
-//var WEB3_STORAGE_UPLOAD_URL_SUFFIX = "/upload"
 
 var SKIP_SNAPSHOT_VALIDATION_ERR_STR = "skip validation"
 
@@ -148,15 +143,6 @@ func ParseSettings() {
 	ParseConsts("../dev_consts.json")
 }
 
-/* func SetupProjects() {
-	projects := redisutils.FetchStoredProjects(context.Background(), redisClient, math.MaxInt64)
-	ProjectLocks = make(map[string]*sync.Mutex, len(projects))
-	for index := range projects {
-		var lock sync.Mutex
-		ProjectLocks[projects[index]] = &lock
-	}
-} */
-
 func main() {
 
 	logger.InitLogger()
@@ -166,7 +152,6 @@ func main() {
 	InitTxManagerClient()
 	InitDAGFinalizerCallbackClient()
 	InitW3sClient()
-	//SetupProjects()
 
 	var wg sync.WaitGroup
 	if settingsObj.UseConsensus {
@@ -224,37 +209,48 @@ func InitRabbitmqConsumer() {
 	<-exitChan
 }
 
-func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
-	/* 	projectLock, ok := ProjectLocks[payloadCommit.ProjectId]
-	   	if !ok {
-	   		var lock sync.Mutex
-	   		ProjectLocks[payloadCommit.ProjectId] = &lock
-	   		projectLock = ProjectLocks[payloadCommit.ProjectId]
-	   		log.Debugf("Lock object not present for project %s, creating it.", payloadCommit.ProjectId)
-	   	}
-	   	projectLock.Lock()
-	   	defer projectLock.Unlock()
+func AssignTentativeHeight(payloadCommit *PayloadCommit) int {
+	tentativeBlockHeight := 0
+	firstEpochEndHeight, epochSize := GetFirstEpochDetails(payloadCommit)
+	if epochSize == 0 || firstEpochEndHeight == 0 {
+		tentativeBlockHeight = 0
+	} else {
+		tentativeBlockHeight = (payloadCommit.SourceChainDetails.EpochEndHeight-firstEpochEndHeight)/epochSize + 1
+		log.Debugf("Assigning tentativeBlockHeight as %d for project %s and payloadCommitID %s",
+			tentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
+	}
+	return tentativeBlockHeight
+}
 
-	   	lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
-	   	if err != nil {
-	   		return false
-	   	}
-	   	//Note: Once we bring in consensus, tentativeBlockHeight should be updated only once consensus is achieved
-	   	payloadCommit.TentativeBlockHeight = lastTentativeBlockHeight + 1
-	   	if lastTentativeBlockHeight > 0 {
-	   		isValidSnapshot, err := validSnapshot(payloadCommit, lastTentativeBlockHeight)
-	   		if err != nil {
-	   			log.Errorf("Could not validate current snapshot for project %s with commitId %s",
-	   				payloadCommit.ProjectId, payloadCommit.CommitId)
-	   			return false
-	   		}
-	   		if !isValidSnapshot {
-	   			log.Warnf("Invalid snapshot received for project %s at tentativeBlockHeight %d and ignoring it",
-	   				payloadCommit.ProjectId, lastTentativeBlockHeight)
-	   			return true
-	   		}
-	   	} */
-	payloadCommit.TentativeBlockHeight = payloadCommit.SourceChainDetails.EpochEndHeight
+func GetFirstEpochDetails(payloadCommit *PayloadCommit) (int, int) {
+
+	//Record Project epoch size for the first epoch and also the endHeight.
+	epochSize := FetchProjectEpochSize(payloadCommit.ProjectId)
+	firstEpochEndHeight := 0
+	if epochSize == 0 {
+		epochSize := payloadCommit.SourceChainDetails.EpochEndHeight - payloadCommit.SourceChainDetails.EpochStartHeight + 1
+		status := SetProjectEpochSize(payloadCommit.ProjectId, epochSize)
+		if !status {
+			return 0, 0
+		}
+		firstEpochEndHeight := payloadCommit.SourceChainDetails.EpochEndHeight
+		status = SetFirstEpochEndHeight(payloadCommit.ProjectId, firstEpochEndHeight)
+		if !status {
+			return 0, 0
+		}
+	}
+	firstEpochEndHeight = FetchFirstEpochEndHeight(payloadCommit.ProjectId)
+	log.Debugf("Fetched firstEpochEndHeight as %d and epochSize as %d from redis for project %s",
+		firstEpochEndHeight, epochSize, payloadCommit.ProjectId)
+	return firstEpochEndHeight, epochSize
+}
+
+func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
+	tentativeBlockHeight := AssignTentativeHeight(payloadCommit)
+	if tentativeBlockHeight == 0 {
+		return false
+	}
+	payloadCommit.TentativeBlockHeight = tentativeBlockHeight
 	var ipfsStatus bool
 	if payloadCommit.Web3Storage {
 		var wg sync.WaitGroup
@@ -310,39 +306,67 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 			payloadCommit.ProjectId, payloadCommit.CommitId, err)
 		return false
 	}
-	//Record Project epoch size for the first epoch.
-	RecordEpochSize(payloadCommit)
-	/* 	//Update TentativeBlockHeight for the project
-	   	err = UpdateTentativeBlockHeight(payloadCommit)
-	   	if err != nil {
-	   		log.Errorf("Failed to update tentativeBlockHeight for the project %s with commitId %s due to error %+v",
-	   			payloadCommit.ProjectId, payloadCommit.CommitId, err)
-	   		return false
-	   	} */
 	return true
 }
 
-func RecordEpochSize(payloadCommit *PayloadCommit) {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_PENDING_TXNS, payloadCommit.ProjectId)
+func SetProjectEpochSize(projectId string, epochSize int) bool {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_EPOCH_SIZE, projectId)
+	log.Debugf("Setting  epoch size as %d for project %s", epochSize, projectId)
+	return SetIntFieldInRedis(key, epochSize)
+}
+
+func SetFirstEpochEndHeight(projectId string, epochEndHeight int) bool {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_FIRST_EPOCH_END_HEIGHT, projectId)
+	log.Debugf("Setting First epoch endHeight as %d for project %s", epochEndHeight, projectId)
+	return SetIntFieldInRedis(key, epochEndHeight)
+}
+
+func SetIntFieldInRedis(key string, value int) bool {
+	for j := 0; j < 3; j++ {
+		resSet := redisClient.Set(ctx, key, strconv.Itoa(value), 0)
+		if resSet.Err() != nil {
+			log.Errorf("Failed to set key %s due to error %+v", key, resSet.Err())
+			j++
+			continue
+		}
+		log.Debugf("Set key %s with value %d successfully in redis", key, value)
+		return true
+	}
+	return false
+}
+
+func FetchProjectEpochSize(projectID string) int {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_EPOCH_SIZE, projectID)
+	epochSize := FetchIntFieldFromRedis(key)
+	return epochSize
+}
+
+func FetchFirstEpochEndHeight(projectID string) int {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_FIRST_EPOCH_END_HEIGHT, projectID)
+	firstEpochEndHeight := FetchIntFieldFromRedis(key)
+	return firstEpochEndHeight
+}
+
+func FetchIntFieldFromRedis(key string) int {
 	for i := 0; i < 3; i++ {
 		res := redisClient.Get(ctx, key)
 		if res.Err() == redis.Nil {
-			epochSize := payloadCommit.SourceChainDetails.EpochEndHeight - payloadCommit.SourceChainDetails.EpochStartHeight
-			for j := 0; j < 3; j++ {
-				resSet := redisClient.Set(ctx, key, strconv.Itoa(epochSize), 0)
-				if resSet.Err() != nil {
-					log.Errorf("Failed to set project epoch size for project %s due to error %+v", payloadCommit.ProjectId, resSet.Err())
-					j++
-					continue
-				}
-			}
+			log.Debugf("Key %s not present in redis", key)
+			return 0
 		} else if res.Err() != nil {
-			log.Errorf("Failed to fetch project epoch size for project %s due to error %+v", payloadCommit.ProjectId, res.Err())
+			log.Errorf("Failed to fetch key %s due to error %+v", key, res.Err())
 			i++
 			continue
 		}
-		return
+		value, err := strconv.Atoi(res.Val())
+		if err != nil {
+			log.Fatalf("Failed to convert int value fetched from redis key %s due to error %+v", key, err)
+			return -1
+		}
+		log.Debugf("Fetched key %s from redis with value %d", key, value)
+		return value
 	}
+	return -1
 }
 
 func RabbitmqMsgHandler(d amqp.Delivery) bool {
@@ -762,53 +786,6 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
 	}
 
 	return txHash, NO_RETRY_SUCCESS
-}
-
-func UpdateTentativeBlockHeight(payload *PayloadCommit) error {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, payload.ProjectId)
-	for retryCount := 0; ; retryCount++ {
-		res := redisClient.Set(ctx, key, strconv.Itoa(payload.TentativeBlockHeight), 0)
-		if res.Err() != nil {
-			if retryCount > *settingsObj.RetryCount {
-				return res.Err()
-			}
-			log.Errorf("Failed to update tentativeBlockHeight for project %s with commitId %s due to error %+v, retrying",
-				payload.ProjectId, payload.CommitId, res.Err())
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
-		break
-	}
-	return nil
-}
-
-func GetTentativeBlockHeight(projectId string) (int, error) {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, projectId)
-	tentativeBlockHeight := 0
-	var err error
-	for retryCount := 0; ; retryCount++ {
-		res := redisClient.Get(ctx, key)
-		if res.Err() != nil {
-			if res.Err() == redis.Nil {
-				log.Infof("TentativeBlockHeight key is not present ")
-				return tentativeBlockHeight, nil
-			}
-			if retryCount > *settingsObj.RetryCount {
-				return tentativeBlockHeight, res.Err()
-			}
-			log.Errorf("Failed to fetch tentativeBlockHeight for project %s", projectId)
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
-		tentativeBlockHeight, err = strconv.Atoi(res.Val())
-		if err != nil {
-			log.Fatalf("TentativeBlockHeight Corrupted for project %s with err %+v", projectId, err)
-			return tentativeBlockHeight, err
-		}
-		break
-	}
-	log.Debugf("TenativeBlockHeight for project %s is %d", projectId, tentativeBlockHeight)
-	return tentativeBlockHeight, nil
 }
 
 //TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
