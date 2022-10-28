@@ -512,7 +512,7 @@ async def get_blocks_from_container(container_id, dag_cids: list):
 SHARED_DAG_BLOCKS_CACHE = {}
 
 def prune_dag_block_cache(cache_size_unit, shared_cache):
-
+    cache_size_unit = cache_size_unit if cache_size_unit and isinstance(cache_size_unit, int) else 180
     # only prune when size of cache greater than cache_size_unit * 5
     if len(shared_cache) <= cache_size_unit * 5:
         return
