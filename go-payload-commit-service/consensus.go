@@ -74,7 +74,7 @@ func PollConsensusForConfirmations() {
 				timeNow := time.Now().UnixMicro()
 				if timeNow > value.ConsensusSubmissionTs+settingsObj.ConsensusConfig.FinalizationWaiTime*1000000 {
 					log.Warnf("Finalization threshold crossed for %s project at epoch %d with snapshot %s at tentativeHeight %d.",
-						value.ProjectId, value.EpochEndBlockHeight, value.SnapshotCID, value.TentativeBlockHeight)
+						value.ProjectId, value.SourceChainDetails.EpochEndHeight, value.SnapshotCID, value.TentativeBlockHeight)
 					value.ConsensusSubmissionTs = timeNow
 				}
 				ProcessPendingSnapshot(snapshotCID, value)
@@ -118,7 +118,7 @@ func SubmitSnapshotForConsensus(payload *PayloadCommit) (string, error) {
 func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRetries int, urlSuffix string) (string, error) {
 	reqURL := settingsObj.ConsensusConfig.ServiceURL + urlSuffix
 	req := SubmitSnapshotRequest{
-		Epoch:       payload.EpochEndBlockHeight,
+		Epoch:       int64(payload.SourceChainDetails.EpochEndHeight),
 		ProjectID:   payload.ProjectId,
 		InstanceID:  settingsObj.InstanceId,
 		SnapshotCID: payload.SnapshotCID,
