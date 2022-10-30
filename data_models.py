@@ -49,7 +49,7 @@ class PayloadCommit(BaseModel):
     resubmissionBlock: int = 0  # corresponds to lastTouchedBlock in PendingTransaction model
     web3Storage: bool = False
     skipAnchorProof: bool = True
-    sourceChainDetails: SourceChainDetails
+    sourceChainDetails: Optional[SourceChainDetails]
 
 
 class FilecoinJobData(BaseModel):
