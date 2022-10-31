@@ -1,0 +1,107 @@
+from snapshot_consensus.data_models import SubmissionDataStoreEntry, SnapshotSubmission, SubmissionSchedule, SubmissionAcceptanceStatus
+from snapshot_consensus.conf import settings
+from .redis_keys import *
+from typing import Tuple, Union
+from redis import asyncio as aioredis
+import time
+import json
+
+
+async def get_submission_schedule(
+        project_id,
+        epoch_end,
+        redis_conn: aioredis.Redis
+):
+    schedule = await redis_conn.get(
+        get_epoch_submission_schedule_key(
+            project_id=project_id,
+            epoch_end=epoch_end
+        )
+    )
+    if not schedule:
+        return None
+    else:
+        return SubmissionSchedule.parse_raw(schedule)
+
+
+async def set_submission_schedule(
+        project_id,
+        epoch_end,
+        redis_conn: aioredis.Redis
+):
+    cur_ts = int(time.time())
+    await redis_conn.set(
+        get_epoch_submission_schedule_key(
+            project_id=project_id,
+            epoch_end=epoch_end
+        ),
+        json.dumps({'begin': cur_ts, 'end': cur_ts+settings.submission_window})
+    )
+
+
+async def submission_delayed(project_id, epoch_end, redis_conn: aioredis.Redis):
+    schedule = await get_submission_schedule(project_id, epoch_end, redis_conn)
+    if not schedule:
+        await set_submission_schedule(project_id, epoch_end, redis_conn)
+        return False
+    else:
+        return int(time.time()) > schedule.end
+
+
+async def check_submissions_consensus(
+        submission: SnapshotSubmission,
+        redis_conn: aioredis.Redis
+) -> Tuple[SubmissionAcceptanceStatus, Union[str, None]]:
+    # get all submissions
+    all_submissions = await redis_conn.hgetall(
+        name=get_epoch_submissions_htable_key(
+            project_id=submission.projectID,
+            epoch_end=submission.epoch.end,
+        )
+    )
+    # map snapshot CID to instance ID list
+    cid_submission_map = dict()
+    for instance_id_b, submission_b in all_submissions.values():
+        sub_entry: SubmissionDataStoreEntry = SubmissionDataStoreEntry.parse_raw(submission_b)
+        instance_id = instance_id_b.decode('utf-8')
+        if sub_entry.snapshotCID not in cid_submission_map:
+            cid_submission_map[sub_entry.snapshotCID] = [instance_id]
+        else:
+            cid_submission_map[sub_entry.snapshotCID].append(instance_id)
+
+    num_expected_peers = await redis_conn.scard(get_project_registered_peers_set_key(submission.projectID))
+    # best case scenario
+    if len(cid_submission_map.keys()) == 1:
+        if len(list(cid_submission_map.values())[0]) / num_expected_peers >= 2/3:
+            return SubmissionAcceptanceStatus.finalized, list(cid_submission_map.keys())[0]
+        else:
+            return SubmissionAcceptanceStatus.accepted, None
+    else:
+        sub_count_map = {k: len(cid_submission_map[k]) for k in cid_submission_map.keys()}
+        num_submissions = sum(sub_count_map.values())
+        for cid, sub_count in sub_count_map.items():
+            # found one CID on which consensus has been reached
+            if sub_count/num_submissions >= 2/3:
+                return SubmissionAcceptanceStatus.finalized, cid
+        else:
+            # find if all peers have submitted and yet no consensus reached
+            if num_submissions == num_expected_peers:
+                return SubmissionAcceptanceStatus.indeterminate, None
+            else:
+                return SubmissionAcceptanceStatus.accepted, None
+
+
+async def register_submission(
+        submission: SnapshotSubmission,
+        cur_ts: int,
+        redis_conn: aioredis.Redis
+):
+    await redis_conn.hset(
+        name=get_epoch_submissions_htable_key(
+            project_id=submission.projectID,
+            epoch_end=submission.epoch.end,
+        ),
+        key=submission.instanceID,
+        value=SubmissionDataStoreEntry(snapshotCID=submission.snapshotCID, submittedTS=cur_ts).json()
+    )
+    return await check_submissions_consensus(submission, redis_conn)

@@ -57,28 +57,6 @@ app.add_middleware(
 app.mount('/static', StaticFiles(directory='static'), name='static')
 
 
-#
-STORAGE_CONFIG = {
-    "hot": {
-        "enabled": True,
-        "allowUnfreeze": True,
-        "ipfs": {
-            "addTimeout": 30
-        }
-    },
-    "cold": {
-        "enabled": True,
-        "filecoin": {
-            "repFactor": 1,
-            "dealMinDuration": 518400,
-            "renew": {
-            },
-            "addr": "placeholderstring"
-        }
-    }
-}
-
-
 @app.on_event('startup')
 async def startup_boilerplate():
     app.rmq_connection_pool = Pool(get_rabbitmq_connection, max_size=5, loop=asyncio.get_running_loop())
@@ -90,21 +68,6 @@ async def startup_boilerplate():
 
     app.reader_redis_pool = app.aioredis_pool.reader_redis_pool
     app.writer_redis_pool = app.aioredis_pool.writer_redis_pool
-
-    # app.evc = EVCore(verbose=True)
-    # app.contract = app.evc.generate_contract_sdk(
-    #     contract_address=settings.audit_contract,
-    #     app_name='auditrecords'
-    # )
-
-
-async def get_max_block_height(project_id: str, reader_redis_conn: aioredis.Redis):
-    """
-        - Given the projectId and redis_conn, get the prev_dag_cid, block height and
-        tetative block height of that projectId from redis
-    """
-    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id=project_id, reader_redis_conn=reader_redis_conn)
-    return prev_dag_cid, last_payload_cid
 
 
 async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn: aioredis.Redis):
