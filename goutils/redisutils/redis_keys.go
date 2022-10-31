@@ -16,3 +16,6 @@ const REDIS_KEY_PRUNING_VERIFICATION_STATUS string = "projects:pruningVerificati
 
 const REDIS_KEY_PROJECT_EPOCH_SIZE string = "projectID:%s:epochSize"
 const REDIS_KEY_PROJECT_FIRST_EPOCH_END_HEIGHT string = "projectID:%s:firstEpochEndHeight"
+
+const REDIS_KEY_PROJECT_PENDING_TXNS = "projectID:%s:pendingTransactions"
+const REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT = "projectID:%s:tentativeBlockHeight"

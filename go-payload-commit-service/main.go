@@ -48,9 +48,6 @@ var web3StorageClientRateLimiter *rate.Limiter
 var ipfsClientRateLimiter *rate.Limiter
 var txClientRateLimiter *rate.Limiter
 
-var REDIS_KEY_PROJECT_PAYLOAD_CIDS = "projectID:%s:payloadCids"
-var REDIS_KEY_PROJECT_PENDING_TXNS = "projectID:%s:pendingTransactions"
-
 var SKIP_SNAPSHOT_VALIDATION_ERR_STR = "skip validation"
 
 var commonTxReqParams CommonTxRequestParams
@@ -246,9 +243,24 @@ func GetFirstEpochDetails(payloadCommit *PayloadCommit) (int, int) {
 }
 
 func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
-	tentativeBlockHeight := AssignTentativeHeight(payloadCommit)
-	if tentativeBlockHeight == 0 {
-		return false
+	tentativeBlockHeight := 0
+	updateTentativeBlockHeightState := false
+	//TODO: Need to think of a better way to do this in future,
+	//probably some kind of projectLevel Data which indicates ordering requirements for the project.
+	if payloadCommit.SourceChainDetails.EpochStartHeight == 0 || payloadCommit.SourceChainDetails.EpochEndHeight == 0 {
+		/*In case of projects which need not be ordered based on sourceChainHeight such as SummaryProjects
+		Arrive at tentativeHeight by storing it in redis and assigning the next one*/
+		lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
+		if err != nil {
+			return false
+		}
+		tentativeBlockHeight = lastTentativeBlockHeight + 1
+		updateTentativeBlockHeightState = true
+	} else {
+		tentativeBlockHeight = AssignTentativeHeight(payloadCommit)
+		if tentativeBlockHeight == 0 {
+			return false
+		}
 	}
 	payloadCommit.TentativeBlockHeight = tentativeBlockHeight
 	var ipfsStatus bool
@@ -305,6 +317,15 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 		log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",
 			payloadCommit.ProjectId, payloadCommit.CommitId, err)
 		return false
+	}
+	if updateTentativeBlockHeightState {
+		//Update TentativeBlockHeight for the project
+		err = UpdateTentativeBlockHeight(payloadCommit)
+		if err != nil {
+			log.Errorf("Failed to update tentativeBlockHeight for the project %s with commitId %s due to error %+v",
+				payloadCommit.ProjectId, payloadCommit.CommitId, err)
+			return false
+		}
 	}
 	return true
 }
@@ -501,25 +522,9 @@ func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 	return true
 }
 
-func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) (*PayloadData, error) {
-	payloadCid, err := GetPayloadCidAtProjectHeightFromRedis(projectId, strconv.Itoa(lastTentativeBlockHeight))
-	if err != nil {
-		log.Errorf("Failed to fetch payloadCid for project %s at height %d from redis due to error %+v",
-			projectId, lastTentativeBlockHeight, err)
-		return nil, err
-	}
-	payload, err := GetPayloadFromIPFS(payloadCid, 1)
-	if err != nil {
-		log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
-			payloadCid, projectId, lastTentativeBlockHeight, err)
-		return nil, err
-	}
-	return payload, nil
-}
-
 func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) (string, error) {
 	//key := projectId + ":payloadCids"
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
 	payloadCid := ""
 
 	log.Debug("Fetching PayloadCid from redis at key:", key, ",with startScore: ", startScore)
@@ -607,52 +612,9 @@ func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error)
 	return &payload, nil
 }
 
-/* func validSnapshot(payloadCommit *PayloadCommit, lastTentativeBlockHeight int) (bool, error) {
-	var currentSnapshotData PayloadData
-	err := json.Unmarshal(payloadCommit.Payload, &currentSnapshotData)
-	if err != nil {
-		log.Warnf("CRITICAL:Unable to decode current snapshot for project %s with commitId %s as payload due to error %+v",
-			payloadCommit.ProjectId, payloadCommit.CommitId, err)
-		return false, nil
-	}
-	if currentSnapshotData.ChainHeightRange == nil {
-		//If chainHeightRange is not present(like for summary projects), don't look for previousSnapshot.
-		log.Debugf("Skip validating with previousSnapshot as chainHeightrange is not present in the snapshot for projectID %s", payloadCommit.ProjectId)
-		return true, nil
-	}
-	payloadCommit.EpochEndBlockHeight = currentSnapshotData.ChainHeightRange.End
-	// Check if this is a duplicate snapshot of previously submitted one and ignore if so.
-	// We could've used snapshotCID to compare with previous one, but a snapshotter can submit incorrect snapshot at same chainHeightRange?
-	// Fetch previously submitted payLoad and compare chainHeight to confirm duplicate.
-	previousSnapshot, err := GetPreviousSnapshot(payloadCommit.ProjectId, lastTentativeBlockHeight)
-	if previousSnapshot == nil {
-		log.Warnf("Could not get previous snapshot for project %s with commitId %s, sending NACK to rabbitmq",
-			payloadCommit.ProjectId, payloadCommit.CommitId)
-		if err.Error() == SKIP_SNAPSHOT_VALIDATION_ERR_STR {
-			log.Debugf("Skip validating with previousSnapshot as unable to fetch it")
-			return true, nil
-		}
-		return false, errors.New("could not get previous snapshot for project")
-	}
-
-	if currentSnapshotData.ChainHeightRange != nil && previousSnapshot.ChainHeightRange != nil {
-		if (currentSnapshotData.ChainHeightRange.Begin == previousSnapshot.ChainHeightRange.Begin) &&
-			(currentSnapshotData.ChainHeightRange.End == previousSnapshot.ChainHeightRange.End) {
-			log.Warnf("Duplicate snapshot received for project %s with commitId %s as chainHeightRange is same for previous and current %+v",
-				payloadCommit.ProjectId, payloadCommit.CommitId, currentSnapshotData.ChainHeightRange)
-			return false, nil
-		}
-		if currentSnapshotData.ChainHeightRange.Begin != previousSnapshot.ChainHeightRange.End+1 {
-			log.Warnf("Snapshot received is out of sequence in comparison to previously submitted one for project %s and commitId %s.Either another go-routine is processing in parallel or there was a snapshot submission missed",
-				payloadCommit.ProjectId, payloadCommit.CommitId)
-		}
-	}
-	return true, nil
-} */
-
 func StorePayloadCidInRedis(payload *PayloadCommit) error {
 	for retryCount := 0; ; {
-		key := fmt.Sprintf(REDIS_KEY_PROJECT_PAYLOAD_CIDS, payload.ProjectId)
+		key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, payload.ProjectId)
 		res := redisClient.ZAdd(ctx, key,
 			&redis.Z{
 				Score:  float64(payload.TentativeBlockHeight),
@@ -675,7 +637,7 @@ func StorePayloadCidInRedis(payload *PayloadCommit) error {
 }
 
 func AddToPendingTxnsInRedis(payload *PayloadCommit, txHash string) error {
-	key := fmt.Sprintf(REDIS_KEY_PROJECT_PENDING_TXNS, payload.ProjectId)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PENDING_TXNS, payload.ProjectId)
 	var pendingtxn PendingTransaction
 	pendingtxn.EventData.ProjectId = payload.ProjectId
 	pendingtxn.EventData.SnapshotCid = payload.SnapshotCID
@@ -809,6 +771,53 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
 	}
 
 	return txHash, NO_RETRY_SUCCESS
+}
+
+func UpdateTentativeBlockHeight(payload *PayloadCommit) error {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, payload.ProjectId)
+	for retryCount := 0; ; retryCount++ {
+		res := redisClient.Set(ctx, key, strconv.Itoa(payload.TentativeBlockHeight), 0)
+		if res.Err() != nil {
+			if retryCount > *settingsObj.RetryCount {
+				return res.Err()
+			}
+			log.Errorf("Failed to update tentativeBlockHeight for project %s with commitId %s due to error %+v, retrying",
+				payload.ProjectId, payload.CommitId, res.Err())
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
+			continue
+		}
+		break
+	}
+	return nil
+}
+
+func GetTentativeBlockHeight(projectId string) (int, error) {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, projectId)
+	tentativeBlockHeight := 0
+	var err error
+	for retryCount := 0; ; retryCount++ {
+		res := redisClient.Get(ctx, key)
+		if res.Err() != nil {
+			if res.Err() == redis.Nil {
+				log.Infof("TentativeBlockHeight key is not present ")
+				return tentativeBlockHeight, nil
+			}
+			if retryCount > *settingsObj.RetryCount {
+				return tentativeBlockHeight, res.Err()
+			}
+			log.Errorf("Failed to fetch tentativeBlockHeight for project %s", projectId)
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
+			continue
+		}
+		tentativeBlockHeight, err = strconv.Atoi(res.Val())
+		if err != nil {
+			log.Fatalf("TentativeBlockHeight Corrupted for project %s with err %+v", projectId, err)
+			return tentativeBlockHeight, err
+		}
+		break
+	}
+	log.Debugf("TenativeBlockHeight for project %s is %d", projectId, tentativeBlockHeight)
+	return tentativeBlockHeight, nil
 }
 
 //TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
