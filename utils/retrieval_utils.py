@@ -375,7 +375,7 @@ async def retrieve_block_status(
             
             # check if tx is confirmed
             if pending_txn.lastTouchedBlock == -1:
-                block_status.tx_hash = tx.get("txHash")
+                block_status.tx_hash = pending_txn.txHash
                 block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
                 block_status.payload_cid = payload_cid
                 return
@@ -518,26 +518,25 @@ async def get_blocks_from_container(container_id, dag_cids: list):
 ### INCLUDES PAYLOAD DATA ########################
 SHARED_DAG_BLOCKS_CACHE = {}
 
-def prune_dag_block_cache(cache_size_unit, shared_cache):
+def prune_dag_block_cache(cache_size_unit):
     cache_size_unit = cache_size_unit if cache_size_unit and isinstance(cache_size_unit, int) else 180
-    
+        
+    # export shared cache as global variable | python-design: https://bugs.python.org/issue9049
+    global SHARED_DAG_BLOCKS_CACHE
+
     # only prune when size of cache greater than cache_size_unit * 5
-    if len(shared_cache) <= cache_size_unit * 5:
+    if len(SHARED_DAG_BLOCKS_CACHE) <= cache_size_unit * 5:
         return
 
     # prune to make size of dict cache_size * 4
     pruning_length = cache_size_unit * 4
     # sort dict
-    ordered_items = sorted(shared_cache.items(), key=lambda item: item[1]['block_height'])
+    ordered_items = sorted(SHARED_DAG_BLOCKS_CACHE.items(), key=lambda item: item[1]['block_height'])
     # prune result list and make it a dict again
-    shared_cache = dict(ordered_items[:pruning_length])
+    SHARED_DAG_BLOCKS_CACHE = dict(ordered_items[:pruning_length])
 
 async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis, cache_size_unit):
     dag_block = {}
-    # init global shared cache if doesn't exit
-    if 'SHARED_DAG_BLOCKS_CACHE' not in globals():
-        global SHARED_DAG_BLOCKS_CACHE
-        SHARED_DAG_BLOCKS_CACHE = {}
 
     dag_cid = await helper_functions.get_dag_cid(
         project_id=project_id,
@@ -558,6 +557,6 @@ async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: a
 
     # cache result
     SHARED_DAG_BLOCKS_CACHE[dag_cid] = {'data': dag_block, 'block_height': block_height}
-    prune_dag_block_cache(cache_size_unit, SHARED_DAG_BLOCKS_CACHE)
+    prune_dag_block_cache(cache_size_unit)
 
     return dag_block
