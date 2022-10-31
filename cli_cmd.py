@@ -1,9 +1,6 @@
 from itertools import cycle
 from textwrap import wrap
-from itertools import cycle
-from textwrap import wrap
 from typing import Optional
-from settings_model import Settings
 from settings_model import Settings
 from utils import redis_conn
 from utils import redis_keys
@@ -13,10 +10,6 @@ import json
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-from datetime import datetime
-from rich.pretty import pretty_repr
-
-
 from datetime import datetime
 from rich.pretty import pretty_repr
 
@@ -337,6 +330,7 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
 
 
 
+@app.command()
 def identify_projects_that_require_force_resubmission(namespace: str = typer.Option(None, "--namespace")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
@@ -369,7 +363,7 @@ def identify_projects_that_require_force_resubmission(namespace: str = typer.Opt
                 projectId = re.sub(r':pendingTransactions', '', pendingTxProject)
                 pendingTxScore = int(pendingTransactions[0][1])
                 pendingTxValue = json.loads((pendingTransactions[0][0]).decode('utf-8'))
-                if pendingTxValue["lastTouchedBlock"] == -1:
+                if pendingTxValue["lastTouchedBlock"] != 0:
                     count = count+1
                 else:
                     continue
@@ -426,7 +420,7 @@ def force_project_height_into_resubmission(namespace: str = typer.Option(None, "
                     projectId = re.sub(r':pendingTransactions', '', pendingTxProject)
                     pendingTxScore = int(pendingLastestTransactions[0][1])
                     pendingTxValue = json.loads((pendingLastestTransactions[0][0]).decode('utf-8'))
-                    if pendingTxValue["lastTouchedBlock"] == -1:
+                    if pendingTxValue["lastTouchedBlock"] != 0:
                         pendingTxValue["lastTouchedBlock"] = 0
                         count = count+1
                     else:
