@@ -30,6 +30,7 @@ class AuditRecordTxEventData(BaseModel):
 
 class PendingTransaction(BaseModel):
     txHash: str
+    requestID: str
     lastTouchedBlock: int = 0
     event_data: Optional[AuditRecordTxEventData] = dict()
 
@@ -38,6 +39,7 @@ class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
     payload: Optional[dict] = None
+    requestID: Optional[str] = None
     # following two can be used to substitute for not supplying the payload but the CID and hash itself
     snapshotCID: Optional[str] = None
     apiKeyHash: Optional[str] = None
