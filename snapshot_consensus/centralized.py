@@ -1,7 +1,8 @@
 from .data_models import (
-    SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus
+    SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus, SnapshotBase,
+    EpochConsensusStatus
 )
-from .helpers.state import submission_delayed, register_submission
+from .helpers.state import submission_delayed, register_submission, check_submissions_consensus
 from .helpers.redis_keys import *
 from typing import Optional
 from fastapi import FastAPI, Request, Response, Query
@@ -107,5 +108,49 @@ async def submit_snapshot(
     return response_obj.dict()
 
 
+@app.post('/checkForSnapshotConfirmation')
+async def check_submission_status(
+        request: Request,
+        response: Response
+):
+    req_json = await request.json()
+    try:
+        req_parsed = SnapshotSubmission.parse_obj(req_json)
+    except ValidationError:
+        response.status_code = 400
+        return {}
+    status, finalized_cid = await check_submissions_consensus(
+        submission=req_parsed, redis_conn=request.app.writer_redis_pool
+    )
+    if status == SubmissionAcceptanceStatus.notsubmitted:
+        response.status_code = 400
+        return SubmissionResponse(status=status, delayedSubmission=False, finalizedSnapshotCID=None).dict()
+    else:
+        return SubmissionResponse(
+            status=status,
+            delayedSubmission=await submission_delayed(
+                req_parsed.projectID, epoch_end=req_parsed.epoch.end, redis_conn=request.app.writer_redis_pool
+            ),
+            finalizedSnapshotCID=finalized_cid
+        ).dict()
 
 
+@app.get('/epochStatus')
+async def epoch_status(
+        request: Request,
+        response: Response
+):
+    req_json = await request.json()
+    try:
+        req_parsed = SnapshotBase.parse_obj(req_json)
+    except ValidationError:
+        response.status_code = 400
+        return {}
+    status, finalized_cid = await check_submissions_consensus(
+        submission=req_parsed, redis_conn=request.app.writer_redis_pool
+    )
+    if status != SubmissionAcceptanceStatus.finalized:
+        status = EpochConsensusStatus.no_consensus
+    else:
+        status = EpochConsensusStatus.consensus_achieved
+    return SubmissionResponse(status=status, delayedSubmission=False, finalizedSnapshotCID=finalized_cid).dict()

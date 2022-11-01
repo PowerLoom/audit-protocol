@@ -1,4 +1,6 @@
-from snapshot_consensus.data_models import SubmissionDataStoreEntry, SnapshotSubmission, SubmissionSchedule, SubmissionAcceptanceStatus
+from snapshot_consensus.data_models import (
+    SubmissionDataStoreEntry, SnapshotSubmission, SubmissionSchedule, SubmissionAcceptanceStatus, SnapshotBase
+)
 from snapshot_consensus.conf import settings
 from .redis_keys import *
 from typing import Tuple, Union
@@ -49,8 +51,9 @@ async def submission_delayed(project_id, epoch_end, redis_conn: aioredis.Redis):
 
 
 async def check_submissions_consensus(
-        submission: SnapshotSubmission,
-        redis_conn: aioredis.Redis
+        submission: Union[SnapshotSubmission, SnapshotBase],
+        redis_conn: aioredis.Redis,
+        epoch_consensus_check=False
 ) -> Tuple[SubmissionAcceptanceStatus, Union[str, None]]:
     # get all submissions
     all_submissions = await redis_conn.hgetall(
@@ -61,6 +64,9 @@ async def check_submissions_consensus(
     )
     # map snapshot CID to instance ID list
     cid_submission_map = dict()
+    if not epoch_consensus_check and \
+            submission.instanceID not in map(lambda x: x.decode('utf-8'), all_submissions.keys()):
+        return SubmissionAcceptanceStatus.notsubmitted, None
     for instance_id_b, submission_b in all_submissions.values():
         sub_entry: SubmissionDataStoreEntry = SubmissionDataStoreEntry.parse_raw(submission_b)
         instance_id = instance_id_b.decode('utf-8')
