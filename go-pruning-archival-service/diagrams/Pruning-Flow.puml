@@ -1,0 +1,68 @@
+@startuml "Pruning Processing Flow"
+autonumber
+
+participant "Pruning-Archival-Service" as pruning
+participant "IPFS" as ipfs
+database redis
+participant "web3.storage" as w3s
+
+
+group init
+    pruning <-> redis: Fetch all projects from key storedProjectIds
+    pruning <-> redis: Fetch lastPrunedHeight for all projects
+    alt if no lastPruningHeight
+        note over pruning: initialize lastPrunedHeight to 0
+    end
+end
+
+group Periodic Processing
+
+    pruning <-> redis: Fetch lastPrunedHeight for all projects
+
+    note over pruning: distribute all projects to go-routines for processing. \n go-routines=concurrency
+
+    loop over projects
+        pruning <-> redis: Fetch stateMetaData
+
+        loop over dag-chain segments sorted by DAGHeight
+
+            pruning <-> redis : Fetch Tail(7d) DAGheight for project
+
+            alt if 7d tail not present (Summary Project)
+                pruning <-> redis : Fetch finalizedBlockHeight for project
+                note over pruning: pruningHeight = finalizedBlockHeight-1000
+            end
+
+            note over pruning: pruningHeight = tail(7d)-100
+
+            alt if segment can be archived and is not archived
+                pruning <-> ipfs: Export DAG segment (dag export <lastDAGCID of segment>)
+                note over pruning: Store exported DAG as CAR file in /tmp
+
+                alt if fileSize > 50MB
+                    note over pruning: Chunk file into 100MB chunks
+                    pruning <-> w3s : Upload all chunks to web3.storage
+                else
+                    pruning <-> w3s : Upload CAR file to web3.storage
+                end
+                note over pruning:
+            end //Archival
+
+            group Pruning
+
+                pruning <-> redis : Fetch DAGCids from redis for lastPrunedHeight to pruningHeight
+                pruning <-> redis : Fetch payloadCids from redis for lastPrunedHeight to pruningHeight
+
+                pruning <-> ipfs: Unpin fetched DAGCids
+                pruning <-> ipfs: Unpin fetched payloadCids
+
+                note over pruning: backup DAGCids and payloadCids \n along with scores to json file in /tmp
+
+                pruning <-> redis: prune DAGCids Zset from start to pruningHeight
+                pruning <-> redis: prune payloadCids Zset from start to pruningHeight
+
+                pruning <-> redis : Update project's lastPrunedHeight to pruningHeight and project's pruning Report
+            end //Pruning
+        end
+    end
+end //Processing
