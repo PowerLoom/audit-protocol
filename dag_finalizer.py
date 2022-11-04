@@ -429,7 +429,7 @@ async def payload_to_dag_processor_task(event_data):
             ):
                 with attempt:
                     t = attempt.retry_state.attempt_number
-                    if t > 1:
+                    if t >= 1:
                         custom_logger.info(
                             'In-order DAG block creation | Project ID: %s | Tentative Height: %s | Retry attempt: %s',
                             project_id, tentative_block_height_event_data, t

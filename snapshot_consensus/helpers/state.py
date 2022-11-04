@@ -37,7 +37,7 @@ async def set_submission_schedule(
             project_id=project_id,
             epoch_end=epoch_end
         ),
-        json.dumps({'begin': cur_ts, 'end': cur_ts+settings.submission_window})
+        SubmissionSchedule(**{'begin': cur_ts, 'end': cur_ts+settings.submission_window}).json()
     )
 
 
