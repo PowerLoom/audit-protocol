@@ -42,7 +42,7 @@ var exitChan chan bool
 var WaitQueueForConsensus map[string]*PayloadCommit
 var QueueLock sync.Mutex
 
-//Rate Limiter Objects
+// Rate Limiter Objects
 var dagFinalizerClientRateLimiter *rate.Limiter
 var web3StorageClientRateLimiter *rate.Limiter
 var ipfsClientRateLimiter *rate.Limiter
@@ -450,7 +450,8 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			return true
 		}
 		//Wait for consensus
-		if settingsObj.UseConsensus {
+		if settingsObj.UseConsensus && !payloadCommit.Resubmitted {
+			//In case of resubmission, no need to go for consensus again.
 			//TODO: Move this queue to redis
 			status, err := SubmitSnapshotForConsensus(&payloadCommit)
 			if status == SNAPSHOT_CONSENSUS_STATUS_ACCEPTED {
@@ -820,8 +821,8 @@ func GetTentativeBlockHeight(projectId string) (int, error) {
 	return tentativeBlockHeight, nil
 }
 
-//TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
-//As of now it is copy pasted and looks ugly.
+// TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
+// As of now it is copy pasted and looks ugly.
 func InvokeDAGFinalizerCallback(payload *PayloadCommit) retryType {
 	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.WebhookListener.Host, settingsObj.WebhookListener.Port)
 	var req AuditContractSimWebhookCallbackRequest
