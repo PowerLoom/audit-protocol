@@ -90,7 +90,7 @@ func PollConsensusForConfirmations() {
 
 func ProcessPendingSnapshot(snapshotCID string, payload *PayloadCommit) {
 	//Fetch status of snapshot
-	status, err := SendRequestToConsensusService(payload, http.MethodGet, 3, "/checkForSnapshotConfirmation")
+	status, err := SendRequestToConsensusService(payload, http.MethodPost, 3, "/checkForSnapshotConfirmation")
 	if err != nil {
 		log.Errorf("Failed to fetch snapshot status for payload Snapshot %s at tentativeHeight %d for project %s",
 			payload.SnapshotCID, payload.TentativeBlockHeight, payload.ProjectId)
