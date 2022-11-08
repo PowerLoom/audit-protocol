@@ -23,7 +23,7 @@ type PendingTransaction struct {
 type PayloadCommit struct {
 	ProjectId string `json:"projectId"`
 	CommitId  string `json:"commitId"`
-	RequestID string `json:"requestID"`
+	RequestID string `json:"requestID,omitempty"`
 	Payload   json.RawMessage
 	// following two can be used to substitute for not supplying the payload but the CID and hash itself
 	SnapshotCID          string `json:"snapshotCID"`
