@@ -67,7 +67,7 @@ async def check_submissions_consensus(
     if not epoch_consensus_check and \
             submission.instanceID not in map(lambda x: x.decode('utf-8'), all_submissions.keys()):
         return SubmissionAcceptanceStatus.notsubmitted, None
-    for instance_id_b, submission_b in all_submissions.values():
+    for instance_id_b, submission_b in all_submissions.items():
         sub_entry: SubmissionDataStoreEntry = SubmissionDataStoreEntry.parse_raw(submission_b)
         instance_id = instance_id_b.decode('utf-8')
         if sub_entry.snapshotCID not in cid_submission_map:
