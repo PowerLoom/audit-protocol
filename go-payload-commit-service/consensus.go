@@ -16,8 +16,12 @@ import (
 var consensusClientRateLimiter *rate.Limiter
 var consensusHttpClient http.Client
 
+type Epoch_ struct {
+	Begin int `json:begin`
+	End   int `json:end`
+}
 type SubmitSnapshotRequest struct {
-	Epoch       int64  `json:"epoch"`
+	Epoch       Epoch_ `json:"epoch"`
 	ProjectID   string `json:"projectID"`
 	InstanceID  string `json:"instanceID"`
 	SnapshotCID string `json:"snapshotCID"`
@@ -118,7 +122,7 @@ func SubmitSnapshotForConsensus(payload *PayloadCommit) (string, error) {
 func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRetries int, urlSuffix string) (string, error) {
 	reqURL := settingsObj.ConsensusConfig.ServiceURL + urlSuffix
 	req := SubmitSnapshotRequest{
-		Epoch:       int64(payload.SourceChainDetails.EpochEndHeight),
+		Epoch:       Epoch_{Begin: payload.SourceChainDetails.EpochStartHeight, End: payload.SourceChainDetails.EpochEndHeight},
 		ProjectID:   payload.ProjectId,
 		InstanceID:  settingsObj.InstanceId,
 		SnapshotCID: payload.SnapshotCID,
