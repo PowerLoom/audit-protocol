@@ -1,6 +1,8 @@
 from config import settings
 from utils import redis_conn
-import redis
+from urllib.parse import urljoin
+from snapshot_consensus.data_models import PeerRegistrationRequest
+import httpx
 import os
 import json
 from redis import Redis
@@ -40,6 +42,22 @@ def main():
         project_ids.update({f'uniswap_pairContract_pair_total_reserves_{addr}_{NAMESPACE}': json.dumps({'series': ['0']})})
     
     r.hset(REDIS_INDEXES_KEY, mapping=project_ids)
+    client = httpx.Client(limits=httpx.Limits(
+        max_connections=20, max_keepalive_connections=20
+    ))
+    for each_project in project_ids.keys():
+        r = client.post(
+            url=urljoin(base=settings.consensus_config.service_url, url='/registerProjectPeer'),
+            json=PeerRegistrationRequest(projectID=each_project, instanceID=settings.instance_id).dict()
+        )
+        if r.status_code == 200:
+            print(
+                f'Registered project {each_project} for consensus service snapshot submission | '
+                f'Status code: {r.status_code} | Response: {r.text}')
+        else:
+            print(
+                f'NOT Registered project {each_project} for consensus service snapshot submission | '
+                f'Status code: {r.status_code} | Response: {r.text}')
 
 
 if __name__ == '__main__':

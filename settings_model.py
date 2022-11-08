@@ -66,6 +66,21 @@ class TableNames(BaseModel):
 class PruneSettings(BaseModel):
     segment_size: int = 700
 
+
+class ConsensusConfigRateLimit(BaseModel):
+    req_per_sec: int
+    burst: int
+
+
+# TODO: move to consensus service module
+class ConsensusConfig(BaseModel):
+    service_url: str
+    rate_limit: ConsensusConfigRateLimit
+    timeout_secs: int
+    max_idle_conns: int
+    idle_conn_timeout: int
+    finalization_wait_time_secs: int
+
 class Settings(BaseModel):
     instance_id: str
     host: str
@@ -102,6 +117,7 @@ class Settings(BaseModel):
     contract_addresses: Union[ContractAddresses, dict]
     calculate_diff: bool
     rpc_url: str
+    consensus_config: ConsensusConfig
 
     @validator("bloom_filter_settings", "webhook_listener", "redis", "redis_reader")
     def convert_to_models(cls, data, values, **kwargs):

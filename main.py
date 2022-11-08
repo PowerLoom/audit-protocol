@@ -94,10 +94,12 @@ async def commit_payload(
         request: Request,
         response: Response
 ):
+    req_json = await request.json()
     try:
-        req_parsed: PayloadCommitAPIRequest = PayloadCommitAPIRequest.parse_raw(await request.json())
+        req_parsed: PayloadCommitAPIRequest = PayloadCommitAPIRequest.parse_raw(req_json)
     except ValidationError:
         response.status_code = 400
+        rest_logger.error('Got bad request: %s', req_json)
         return {'error': 'Invalid request'}
 
     project_id = req_parsed.projectId
