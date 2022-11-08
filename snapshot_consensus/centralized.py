@@ -91,9 +91,10 @@ async def submit_snapshot(
     try:
         req_parsed = SnapshotSubmission.parse_obj(req_json)
     except ValidationError:
-        service_logger.error('Bad request in submit snasphot: %s', req_json)
+        service_logger.error('Bad request in submit snapshot: %s', req_json)
         response.status_code = 400
         return {}
+    service_logger.debug('Snapshot for submission: %s', req_json)
     # get last accepted epoch?
     if submission_delayed(
         project_id=req_parsed.projectID,
