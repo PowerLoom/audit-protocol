@@ -96,7 +96,7 @@ async def submit_snapshot(
         return {}
     service_logger.debug('Snapshot for submission: %s', req_json)
     # get last accepted epoch?
-    if submission_delayed(
+    if await submission_delayed(
         project_id=req_parsed.projectID,
         epoch_end=req_parsed.epoch.end,
         redis_conn=request.app.writer_redis_pool
