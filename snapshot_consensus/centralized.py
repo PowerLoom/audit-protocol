@@ -91,6 +91,7 @@ async def submit_snapshot(
     try:
         req_parsed = SnapshotSubmission.parse_obj(req_json)
     except ValidationError:
+        service_logger.error('Bad request in submit snasphot: %s', req_json)
         response.status_code = 400
         return {}
     # get last accepted epoch?
