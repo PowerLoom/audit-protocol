@@ -37,6 +37,16 @@ class PendingTransaction(BaseModel):
     lastTouchedBlock: int = 0
     event_data: Optional[AuditRecordTxEventData] = dict()
 
+
+class PayloadCommitAPIRequest(BaseModel):
+    projectId: str
+    payload: dict
+    web3Storage: bool = False
+    # skip anchor tx by default, unless passed
+    skipAnchorProof: bool = True
+    sourceChainDetails: SourceChainDetails
+
+
 class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
@@ -50,7 +60,6 @@ class PayloadCommit(BaseModel):
     web3Storage: bool = False
     skipAnchorProof: bool = True
     sourceChainDetails: Optional[SourceChainDetails]
-
 
 class FilecoinJobData(BaseModel):
     stagedCid: str = ""

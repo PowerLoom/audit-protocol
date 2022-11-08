@@ -3,9 +3,6 @@ from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
-
-import utils.diffmap_utils
-from config import settings
 from uuid import uuid4
 from utils.redis_conn import RedisPool
 from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_core_exchange, get_rabbitmq_routing_key
@@ -14,7 +11,7 @@ from utils import redis_keys
 from functools import partial
 from utils import retrieval_utils
 from utils.diffmap_utils import process_payloads_for_diff
-from data_models import ContainerData, PayloadCommit
+from data_models import ContainerData, PayloadCommit, PayloadCommitAPIRequest
 from pydantic import ValidationError
 from aio_pika import ExchangeType, DeliveryMode, Message
 from aio_pika.pool import Pool
@@ -97,55 +94,36 @@ async def commit_payload(
         request: Request,
         response: Response
 ):
-    """
-        This endpoint handles the following cases
-        - If there are no pending dag block creations, then commit the payload
-        and return the snapshot-cid, tentative block height and the payload changed flag
-
-        - If there are any pending dag block creations that are left, then Queue up
-        the payload and let a background service handle it.
-
-        - If there are more than `N` no.of payloads pending, then trigger a mechanism to block
-        further calls to this endpoint until all the pending payloads are committed. This
-        number is specified in the settings.json file as 'max_pending_payload_commits'
-
-    """
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
-    req_args = await request.json()
     try:
-        payload = req_args['payload']
-        project_id = req_args['projectId']
-        rest_logger.debug(f"Extracted payload and projectId from the request: {payload} , Payload data type: {type(payload)} ProjectId: {project_id}")
-    except Exception as e:
-        return {'error': "Either payload or projectId"}
+        req_parsed: PayloadCommitAPIRequest = PayloadCommitAPIRequest.parse_raw(await request.json())
+    except ValidationError:
+        response.status_code = 400
+        return {'error': 'Invalid request'}
 
+    project_id = req_parsed.projectId
     out = await helper_functions.check_project_exists(
         project_id=project_id, reader_redis_conn=request.app.reader_redis_pool
     )
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
 
-    skip_anchor_proof_tx = req_args.get('skipAnchorProof', True)  # skip anchor tx by default, unless passed
+    skip_anchor_proof_tx = req_parsed.skipAnchorProof
     """ Create a unique identifier for this payload """
     payload_data = {
-        'payload': payload,
+        'payload': req_parsed.payload,
         'projectId': project_id,
     }
     # salt with commit time
     payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
     rest_logger.debug(f"Created the unique payload commit id: {payload_commit_id}")
 
-    web3_storage_flag = req_args.get('web3Storage', False)
-    source_chain_details = req_args.get('sourceChainDetails', None)
     payload_for_commit = PayloadCommit(**{
         'projectId': project_id,
         'commitId': payload_commit_id,
-        'payload': payload,
-        #'tentativeBlockHeight': last_tentative_block_height,
-        'web3Storage': web3_storage_flag,
+        'payload': req_parsed.payload,
+        'web3Storage': req_parsed.web3Storage,
         'skipAnchorProof': skip_anchor_proof_tx,
-        'sourceChainDetails': source_chain_details
+        'sourceChainDetails': req_parsed.sourceChainDetails
     })
 
     # push payload for commit to rabbitmq queue
