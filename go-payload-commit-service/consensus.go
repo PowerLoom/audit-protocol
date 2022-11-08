@@ -17,8 +17,8 @@ var consensusClientRateLimiter *rate.Limiter
 var consensusHttpClient http.Client
 
 type Epoch_ struct {
-	Begin int `json:begin`
-	End   int `json:end`
+	Begin int `json:"begin"`
+	End   int `json:"end"`
 }
 type SubmitSnapshotRequest struct {
 	Epoch       Epoch_ `json:"epoch"`
@@ -149,7 +149,7 @@ func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRet
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		log.Debugf("Sending Req to consensus service URL %s for project %s with snapshotCID %s commitId %s ",
+		log.Debugf("Sending Req %+v to consensus service URL %s for project %s with snapshotCID %s commitId %s ", req,
 			reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
 		res, err := consensusHttpClient.Do(req)
 		if err != nil {
@@ -198,7 +198,7 @@ func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRet
 			return resp.Status, nil
 		} else {
 			retryCount++
-			log.Errorf("Received Error response %+v from consensus service for project %s at tentativeHeight with commitId %s with statusCode %d and status : %s ",
+			log.Errorf("Received Error response %+v from consensus service for project %s at tentativeHeight %d with commitId %s with statusCode %d and status : %s ",
 				respBody, payload.ProjectId, payload.TentativeBlockHeight, payload.CommitId, res.StatusCode, res.Status)
 			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			continue
