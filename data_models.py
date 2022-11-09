@@ -166,6 +166,7 @@ class DAGBlockPayloadLinkedPath(BaseModel):
 class DAGBlock(BaseModel):
     height: int
     prevCid: Optional[Dict[str, str]]
+    prevRoot: Optional[str] = None
     data: DAGBlockPayloadLinkedPath
     txHash: str
     timestamp: int
