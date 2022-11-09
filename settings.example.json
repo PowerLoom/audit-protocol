@@ -62,11 +62,11 @@
 	"retry_interval_secs":5,
 	"http_client_timeout_secs": 10,
 	"seed": "THISISRANDOMSEED",
-	"REDIS": {
-		"HOST": "127.0.0.1",
-		"PORT": 6379,
-		"DB": 0,
-		"PASSWORD": null
+	"redis": {
+		"host": "127.0.0.1",
+		"port": 6379,
+		"db": 0,
+		"password": null
 	},
  	"redis_reader": {
       "host": "127.0.0.1",

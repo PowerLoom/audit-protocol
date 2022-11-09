@@ -33,18 +33,32 @@ async def set_submission_schedule(
 ):
     cur_ts = int(time.time())
     await redis_conn.set(
-        get_epoch_submission_schedule_key(
+        name=get_epoch_submission_schedule_key(
             project_id=project_id,
             epoch_end=epoch_end
         ),
-        SubmissionSchedule(**{'begin': cur_ts, 'end': cur_ts+settings.submission_window}).json()
+        value=SubmissionSchedule(begin=cur_ts, end=cur_ts+settings.consensus_service.submission_window).json(),
+        ex=3600
     )
 
 
-async def submission_delayed(project_id, epoch_end, redis_conn: aioredis.Redis):
+async def set_submission_accepted_peers(
+        project_id,
+        epoch_end,
+        redis_conn: aioredis.Redis
+):
+    await redis_conn.copy(
+        get_project_registered_peers_set_key(project_id),
+        get_project_epoch_specific_accepted_peers_key(project_id, epoch_end)
+    )
+
+
+async def submission_delayed(project_id, epoch_end, auto_init_schedule, redis_conn: aioredis.Redis):
     schedule = await get_submission_schedule(project_id, epoch_end, redis_conn)
     if not schedule:
-        await set_submission_schedule(project_id, epoch_end, redis_conn)
+        if auto_init_schedule:
+            await set_submission_accepted_peers(project_id, epoch_end, redis_conn)
+            await set_submission_schedule(project_id, epoch_end, redis_conn)
         return False
     else:
         return int(time.time()) > schedule.end
@@ -75,7 +89,7 @@ async def check_submissions_consensus(
         else:
             cid_submission_map[sub_entry.snapshotCID].append(instance_id)
 
-    num_expected_peers = await redis_conn.scard(get_project_registered_peers_set_key(submission.projectID))
+    num_expected_peers = await redis_conn.scard(get_project_epoch_specific_accepted_peers_key(submission.projectID, submission.epoch.end))
     # best case scenario
     if len(cid_submission_map.keys()) == 1:
         if len(list(cid_submission_map.values())[0]) / num_expected_peers >= 2/3:
@@ -110,4 +124,15 @@ async def register_submission(
         key=submission.instanceID,
         value=SubmissionDataStoreEntry(snapshotCID=submission.snapshotCID, submittedTS=cur_ts).json()
     )
+    if not await redis_conn.ttl(name=get_epoch_submissions_htable_key(
+            project_id=submission.projectID,
+            epoch_end=submission.epoch.end,
+    )):
+        await redis_conn.expire(
+            name=get_epoch_submissions_htable_key(
+                project_id=submission.projectID,
+                epoch_end=submission.epoch.end,
+            ),
+            time=3600
+        )
     return await check_submissions_consensus(submission, redis_conn)

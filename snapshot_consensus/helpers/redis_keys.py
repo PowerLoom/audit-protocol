@@ -13,3 +13,7 @@ def get_epoch_submission_schedule_key(project_id, epoch_end):
 
 def get_project_registered_peers_set_key(project_id):
     return f'projectID:{project_id}:centralizedConsensus:peers'
+
+
+def get_project_epoch_specific_accepted_peers_key(project_id, epoch_end):
+    return f'projectID:{project_id}:{epoch_end}:centralizedConsensus:acceptedPeers'

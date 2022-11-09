@@ -2,17 +2,15 @@ from .data_models import (
     SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus, SnapshotBase,
     EpochConsensusStatus
 )
+from conf import settings
 from .helpers.state import submission_delayed, register_submission, check_submissions_consensus
 from .helpers.redis_keys import *
-from typing import Optional
 from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
-from uuid import uuid4
 from utils.redis_conn import RedisPool
 from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_core_exchange, get_rabbitmq_routing_key
 from functools import partial
 from pydantic import ValidationError
-from aio_pika import ExchangeType, DeliveryMode, Message
 from aio_pika.pool import Pool
 import logging
 import sys
@@ -57,7 +55,7 @@ async def startup_boilerplate():
     app.rmq_channel_pool = Pool(
         partial(get_rabbitmq_channel, app.rmq_connection_pool), max_size=20, loop=asyncio.get_running_loop()
     )
-    app.aioredis_pool = RedisPool()
+    app.aioredis_pool = RedisPool(writer_redis_conf=settings.redis)
     await app.aioredis_pool.populate()
 
     app.reader_redis_pool = app.aioredis_pool.reader_redis_pool
@@ -99,6 +97,7 @@ async def submit_snapshot(
     if await submission_delayed(
         project_id=req_parsed.projectID,
         epoch_end=req_parsed.epoch.end,
+        auto_init_schedule=True,
         redis_conn=request.app.writer_redis_pool
     ):
         response_obj = SubmissionResponse(status=SubmissionAcceptanceStatus.accepted, delayedSubmission=True)
@@ -131,7 +130,10 @@ async def check_submission_status(
         return SubmissionResponse(
             status=status,
             delayedSubmission=await submission_delayed(
-                req_parsed.projectID, epoch_end=req_parsed.epoch.end, redis_conn=request.app.writer_redis_pool
+                req_parsed.projectID,
+                epoch_end=req_parsed.epoch.end,
+                auto_init_schedule=False,
+                redis_conn=request.app.writer_redis_pool
             ),
             finalizedSnapshotCID=finalized_cid
         ).dict()
@@ -149,7 +151,7 @@ async def epoch_status(
         response.status_code = 400
         return {}
     status, finalized_cid = await check_submissions_consensus(
-        submission=req_parsed, redis_conn=request.app.writer_redis_pool
+        submission=req_parsed, redis_conn=request.app.writer_redis_pool, epoch_consensus_check=True
     )
     if status != SubmissionAcceptanceStatus.finalized:
         status = EpochConsensusStatus.no_consensus

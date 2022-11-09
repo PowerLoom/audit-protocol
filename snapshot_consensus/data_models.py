@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Union, List, Optional, Any, Dict
 from enum import Enum
+from settings_model import RedisConfig
 import json
 
 
@@ -55,5 +56,12 @@ class SubmissionResponse(BaseModel):
     finalizedSnapshotCID: Optional[str] = None
 
 
-class SettingsConf(BaseModel):
+class ConsensusService(BaseModel):
     submission_window: int
+    host: str
+    port: str
+
+
+class SettingsConf(BaseModel):
+    consensus_service: ConsensusService
+    redis: RedisConfig
