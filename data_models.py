@@ -44,7 +44,7 @@ class PayloadCommitAPIRequest(BaseModel):
     web3Storage: bool = False
     # skip anchor tx by default, unless passed
     skipAnchorProof: bool = True
-    sourceChainDetails: SourceChainDetails
+    sourceChainDetails: Optional[SourceChainDetails] = None
 
 
 class PayloadCommit(BaseModel):
@@ -59,7 +59,7 @@ class PayloadCommit(BaseModel):
     resubmissionBlock: int = 0  # corresponds to lastTouchedBlock in PendingTransaction model
     web3Storage: bool = False
     skipAnchorProof: bool = True
-    sourceChainDetails: Optional[SourceChainDetails]
+    sourceChainDetails: Optional[SourceChainDetails] = None
 
 class FilecoinJobData(BaseModel):
     stagedCid: str = ""
