@@ -135,14 +135,18 @@ class ContainerData(BaseModel):
         self.bloomFilterSettings = json.dumps(self.bloomFilterSettings.dict())
 
 
+class DAGBlockRange(BaseModel):
+    head_block_cid: str
+    tail_block_cid: str
+
 class liquidityProcessedData(BaseModel):
     contractAddress: str
     name: str
     liquidity: str
     volume_24h: str
     volume_7d: str
-    cid_volume_24h: str
-    cid_volume_7d: str
+    cid_volume_24h: DAGBlockRange
+    cid_volume_7d: DAGBlockRange
     fees_24h: str
     block_height: int
     block_timestamp: int
