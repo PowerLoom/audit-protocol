@@ -206,6 +206,7 @@ async def create_dag_block(
 
     if prev_cid_fetch == False:
         prev_root = last_dag_cid
+        last_dag_cid = None
     """ Fill up the dag """
     dag = DAGBlock(
         height=tentative_block_height,
