@@ -128,10 +128,10 @@ async def register_submission(
         key=submission.instanceID,
         value=SubmissionDataStoreEntry(snapshotCID=submission.snapshotCID, submittedTS=cur_ts).json()
     )
-    if not await redis_conn.ttl(name=get_epoch_submissions_htable_key(
+    if await redis_conn.ttl(name=get_epoch_submissions_htable_key(
             project_id=submission.projectID,
             epoch_end=submission.epoch.end,
-    )):
+    )) == -1:
         await redis_conn.expire(
             name=get_epoch_submissions_htable_key(
                 project_id=submission.projectID,
