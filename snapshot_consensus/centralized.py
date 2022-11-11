@@ -2,7 +2,7 @@ from .data_models import (
     SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus, SnapshotBase,
     EpochConsensusStatus
 )
-from conf import settings
+from .conf import settings
 from .helpers.state import submission_delayed, register_submission, check_submissions_consensus
 from .helpers.redis_keys import *
 from fastapi import FastAPI, Request, Response, Query

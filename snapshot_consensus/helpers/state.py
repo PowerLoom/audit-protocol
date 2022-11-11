@@ -51,6 +51,10 @@ async def set_submission_accepted_peers(
         get_project_registered_peers_set_key(project_id),
         get_project_epoch_specific_accepted_peers_key(project_id, epoch_end)
     )
+    await redis_conn.expire(
+        get_project_epoch_specific_accepted_peers_key(project_id, epoch_end),
+        3600
+    )
 
 
 async def submission_delayed(project_id, epoch_end, auto_init_schedule, redis_conn: aioredis.Redis):
