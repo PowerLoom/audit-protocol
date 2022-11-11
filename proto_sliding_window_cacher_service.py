@@ -1,15 +1,15 @@
-from utils import redis_keys
-from utils.redis_conn import RedisPool
-from utils import helper_functions, dag_utils, retrieval_utils
-from functools import wraps
-from pair_data_aggregation_service import v2_pairs_data
-from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
-from httpx import AsyncClient, Timeout, Limits
-from redis import asyncio as aioredis
 import asyncio
 import json
 import logging
 import sys
+from functools import wraps
+from httpx import AsyncClient, Timeout, Limits
+from redis import asyncio as aioredis
+from utils import redis_keys
+from utils.redis_conn import RedisPool
+from utils import retrieval_utils
+from pair_data_aggregation_service import v2_pairs_data
+from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
 
 sliding_cacher_logger = logging.getLogger(__name__)
 sliding_cacher_logger.setLevel(logging.DEBUG)
@@ -25,7 +25,6 @@ stderr_handler.setLevel(logging.ERROR)
 sliding_cacher_logger.addHandler(stderr_handler)
 sliding_cacher_logger.debug("Initialized logger")
 # coloredlogs.install(level="DEBUG", logger=sliding_cacher_logger, stream=sys.stdout)
-
 
 def acquire_bounded_semaphore(fn):
     @wraps(fn)
@@ -69,7 +68,6 @@ async def find_tail(head: int, tail: int, project_id: str, time_period_ts: int, 
 
     sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
     return None
-
 
 @acquire_bounded_semaphore
 async def build_primary_index(
