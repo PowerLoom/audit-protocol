@@ -168,10 +168,16 @@ async def payload_to_dag_processor_task(event_data):
         pending_tx_set_entry: Optional[bytes] = None
         for k in _:
             pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(k)
-            if pending_tx_obj.requestID == request_id:
-                is_pending = True
-                pending_tx_set_entry = k
-                break
+            if pending_tx_obj.requestID != "":
+                if pending_tx_obj.requestID == request_id:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
+            else:
+                if pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
 
         if not is_pending:
             custom_logger.error(
@@ -368,10 +374,16 @@ async def payload_to_dag_processor_task(event_data):
             # custom_logger.debug('Comparing event data tx hash %s with pending tx obj tx hash %s '
             #                   '| tx obj itself: %s',
             #                   event_data['txHash'], pending_tx_obj.txHash, pending_tx_obj)
-            if pending_tx_obj.requestID == request_id:
-                is_pending = True
-                pending_tx_set_entry = k
-                break
+            if pending_tx_obj.requestID != "":
+                if pending_tx_obj.requestID == request_id:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
+            else:
+                if pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
         if not is_pending:
             discarded_transactions_key = redis_keys.get_discarded_transactions_key(project_id)
 

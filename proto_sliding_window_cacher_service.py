@@ -1,17 +1,15 @@
-from typing import final
-from utils import redis_keys
-from utils.redis_conn import RedisPool
-from utils import helper_functions, dag_utils, retrieval_utils
-from functools import wraps
-from pair_data_aggregation_service import v2_pairs_data
-from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
-from httpx import AsyncClient, Timeout, Limits
-from redis import asyncio as aioredis
 import asyncio
 import json
 import logging
 import sys
-import os
+from functools import wraps
+from httpx import AsyncClient, Timeout, Limits
+from redis import asyncio as aioredis
+from utils import redis_keys
+from utils.redis_conn import RedisPool
+from utils import retrieval_utils
+from pair_data_aggregation_service import v2_pairs_data
+from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
 
 sliding_cacher_logger = logging.getLogger(__name__)
 sliding_cacher_logger.setLevel(logging.DEBUG)
@@ -27,7 +25,6 @@ stderr_handler.setLevel(logging.ERROR)
 sliding_cacher_logger.addHandler(stderr_handler)
 sliding_cacher_logger.debug("Initialized logger")
 # coloredlogs.install(level="DEBUG", logger=sliding_cacher_logger, stream=sys.stdout)
-
 
 def acquire_bounded_semaphore(fn):
     @wraps(fn)
@@ -50,50 +47,27 @@ def convert_time_period_str_to_timestamp(time_period_str: str):
     return ts_map.get(time_period_str, 60 * 60)  # 1 hour timestamp returned by default
 
 
-async def seek_ahead_tail(head: int, tail: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
+async def find_tail(head: int, tail: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
     sliding_cacher_logger.debug(f"Seeking tail starting for projectId: {project_id}:{time_period_ts}")
-    
+
     current_height = tail
-    head_cid = await helper_functions.get_dag_cid(
-        project_id=project_id, block_height=head, reader_redis_conn=redis_conn
-    )
-    head_block = await dag_utils.get_dag_block(head_cid)
-    present_ts = int(head_block['timestamp'])
-    while current_height < head:
-        dag_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id, block_height=current_height, 
+    head_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=head,
             reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
         )
-        if present_ts - dag_block['timestamp'] <= time_period_ts:
+    present_ts = head_block['data']['payload']['timestamp']
+    while current_height < head:
+        dag_block = await retrieval_utils.get_dag_block_by_height(
+            project_id=project_id, block_height=current_height,
+            reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
+        )
+        if dag_block and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
             sliding_cacher_logger.debug(f"Found tail after traversing {abs(current_height - tail)} blocks for projectId: {project_id}:{time_period_ts}")
             return current_height
         current_height += 1
-    
-    sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
-    return None
-
-
-async def find_tail(head: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
-    sliding_cacher_logger.debug(f"Seeking tail for the first time | projectId: {project_id}:{time_period_ts}")
-    current_height = 1
-    head_cid = await helper_functions.get_dag_cid(
-        project_id=project_id, block_height=head, reader_redis_conn=redis_conn
-    )
-    head_block = await dag_utils.get_dag_block(head_cid)
-    present_ts = int(head_block['timestamp'])
-    while current_height < head:
-        dag_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id, block_height=current_height, 
-            reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
-        )
-        if present_ts - dag_block['timestamp'] <= time_period_ts:
-            sliding_cacher_logger.debug(f"Found first time tail after traversing {abs(current_height)} blocks for projectId: {project_id}:{time_period_ts}")
-            return current_height
-        current_height += 1
 
     sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
     return None
-
 
 @acquire_bounded_semaphore
 async def build_primary_index(
@@ -120,13 +94,14 @@ async def build_primary_index(
         await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id, time_period), head_marker)
         sliding_cacher_logger.info('Set head at %s index for %s time_period data Project ID: %s', head_marker, time_period, project_id)
         return
-        
+
 
     time_period_ts = convert_time_period_str_to_timestamp(time_period)
     markers = [await writer_redis_conn.get(k) for k in [idx_head_key, idx_tail_key]]
     if not all(markers):
         sliding_cacher_logger.info('Finding %s tail marker for the first time for project %s', time_period, project_id)
-        tail_marker = await find_tail(head_marker, project_id, time_period_ts, registered_projects, writer_redis_conn)
+        #passing prev tail as 1 since we are looking for tail for the first time.
+        tail_marker = await find_tail(head_marker,1, project_id, time_period_ts, registered_projects, writer_redis_conn)
         if not tail_marker:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s for %s calculation', project_id, time_period
@@ -140,7 +115,7 @@ async def build_primary_index(
         )
     else:
         tail_marker = int(markers[1])
-        tail_ahead = await seek_ahead_tail(head_marker, tail_marker, project_id, time_period_ts, registered_projects, writer_redis_conn)
+        tail_ahead = await find_tail(head_marker, tail_marker, project_id, time_period_ts, registered_projects, writer_redis_conn)
         if not tail_ahead:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s to seek tail ahead for %s calculation | present head: %s',
@@ -173,7 +148,7 @@ async def get_max_height_pair_project(
     try:
         max_height = int(max_height.decode('utf-8'))
         dag_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id, block_height=max_height, 
+            project_id=project_id, block_height=max_height,
             reader_redis_conn=writer_redis_conn, cache_size_unit=len(registered_projects)/2
         )
         height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
@@ -191,7 +166,7 @@ async def adjust_projects_head_by_source_height(source_height_map, smallest_sour
             cycles += 1
             dag_block_height -= 1
             dag_block = await retrieval_utils.get_dag_block_by_height(
-                project_id=project_map_id, block_height=dag_block_height, 
+                project_id=project_map_id, block_height=dag_block_height,
                 reader_redis_conn=writer_redis_conn, cache_size_unit=len(registered_projects)/2
             )
             source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
@@ -204,7 +179,7 @@ async def build_primary_indexes():
     writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     # project ID -> {"series": ['24h', '7d']}
     registered_projects = await writer_redis_conn.hgetall('cache:indexesRequested')
-    sliding_cacher_logger.debug('Got registered projects for indexing: ', registered_projects)
+    sliding_cacher_logger.debug('Got %d registered projects for indexing', len(registered_projects))
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
     project_id_to_register_series = dict(zip(registered_project_ids, registered_projects_ts))
@@ -225,7 +200,7 @@ async def build_primary_indexes():
         tasks.append(fn)
     max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
     res_exceptions = list(map(lambda r: r, filter(lambda y: isinstance(y, Exception), max_height_array)))
-    
+
     if len(res_exceptions) == len(project_id_to_register_series):
         sliding_cacher_logger.debug('block-height for all projects has not been intialized yet, sleeping till next cycle')
         return

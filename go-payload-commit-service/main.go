@@ -311,7 +311,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			//TODO: Not retrying further..need to think of project recovery from this point.
 			log.Warnf("MAX Retries reached while trying to invoke tx-manager for project %s and commitId %s with tentativeBlockHeight %d.",
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further.")
-			requestID = uuid.New().String()
+			requestID = ""
 		} else if retryType == NO_RETRY_SUCCESS {
 			log.Trace("Submitted txn to chain for %+v", payloadCommit)
 		} else {
