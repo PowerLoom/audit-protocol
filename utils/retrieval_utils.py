@@ -325,6 +325,7 @@ async def fetch_blocks(
 # TX_CONFIRMATION_PENDING = 3,
 # TX_CONFIRMED=4,
 
+# TODO: since return type hint is ProjectBlockHeightStatus, review the cases where None is returned
 async def retrieve_block_status(
         project_id: str,
         project_block_height: int,  # supplying 0 indicates finalized height of project should be fetched separately
@@ -366,20 +367,20 @@ async def retrieve_block_status(
         if len(pending_txs) == 0:
             block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
             return block_status
-        
+
         all_empty_txhash = True
         for tx in pending_txs:
-            pending_txn = PendingTransaction.parse_raw(tx)
+            pending_txn: PendingTransaction = PendingTransaction.parse_raw(tx)
             # itrate until we find a entry with txHash
-            if pending_txn.txHash == None or pending_txn.txHash == "":
+            if pending_txn.event_data.txHash is None or pending_txn.event_data.txHash == "":
                 continue
-            
+
             # set this false, when atleast one txHash exist
             all_empty_txhash = False
-            
+
             # check if tx is confirmed
             if pending_txn.lastTouchedBlock == -1:
-                block_status.tx_hash = pending_txn.txHash
+                block_status.tx_hash = pending_txn.event_data.txHash
                 block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
                 block_status.payload_cid = payload_cid
                 return
@@ -388,11 +389,11 @@ async def retrieve_block_status(
         if all_empty_txhash:
             block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
             return block_status
-        
+
         # if txHash was there but none with lastTouchedBlock == -1 then take latest pending tx
         block_status.payload_cid = payload_cid
         pending_txn = PendingTransaction.parse_raw(pending_txs[0])
-        block_status.tx_hash = pending_txn.txHash
+        block_status.tx_hash = pending_txn.event_data.txHash
         block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMATION_PENDING']
 
     else:
@@ -542,7 +543,7 @@ SHARED_DAG_BLOCKS_CACHE = {}
 
 def prune_dag_block_cache(cache_size_unit):
     cache_size_unit = cache_size_unit if cache_size_unit and isinstance(cache_size_unit, int) else 180
-        
+
     # export shared cache as global variable | python-design: https://bugs.python.org/issue9049
     global SHARED_DAG_BLOCKS_CACHE
 
@@ -581,7 +582,7 @@ async def get_dag_block_by_height(
         block_dag_cid=dag_cid, data_flag=1, ipfs_read_client=ipfs_read_client
     )
     dag_block = dag_block if dag_block else {}
-    
+
     dag_block["dagCid"] = dag_cid
 
     # cache result

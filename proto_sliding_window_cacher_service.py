@@ -1,9 +1,13 @@
+import asyncio
+import json
+import logging
+import sys
+from functools import wraps
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils.redis_conn import RedisPool
-from utils import helper_functions, dag_utils, retrieval_utils
-from functools import wraps
+from utils import retrieval_utils
 from pair_data_aggregation_service import v2_pairs_data
 from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
 from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
@@ -29,7 +33,6 @@ sliding_cacher_logger.addHandler(stderr_handler)
 sliding_cacher_logger.debug("Initialized logger")
 # coloredlogs.install(level="DEBUG", logger=sliding_cacher_logger, stream=sys.stdout)
 
-
 def acquire_bounded_semaphore(fn):
     @wraps(fn)
     async def wrapped(*args, **kwargs):
@@ -51,7 +54,7 @@ def convert_time_period_str_to_timestamp(time_period_str: str):
     return ts_map.get(time_period_str, 60 * 60)  # 1 hour timestamp returned by default
 
 
-async def seek_ahead_tail(
+async def find_tail(
         head: int,
         tail: int,
         project_id: str,
@@ -61,39 +64,8 @@ async def seek_ahead_tail(
         ipfs_read_client: AsyncIPFSClient
 ):
     sliding_cacher_logger.debug(f"Seeking tail starting for projectId: {project_id}:{time_period_ts}")
-    
+
     current_height = tail
-    head_block = await retrieval_utils.get_dag_block_by_height(
-        project_id=project_id, block_height=head, 
-        reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2,
-        ipfs_read_client=ipfs_read_client
-    )
-    present_ts = int(head_block['timestamp'])
-    while current_height < head:
-        dag_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id, block_height=current_height, 
-            reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2,
-            ipfs_read_client=ipfs_read_client
-        )
-        if present_ts - dag_block['timestamp'] <= time_period_ts:
-            sliding_cacher_logger.debug(f"Found tail after traversing {abs(current_height - tail)} blocks for projectId: {project_id}:{time_period_ts}")
-            return current_height
-        current_height += 1
-    
-    sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
-    return None
-
-
-async def find_tail(
-        head: int,
-        project_id: str,
-        time_period_ts: int,
-        registered_projects,
-        redis_conn: aioredis.Redis,
-        ipfs_read_client: AsyncIPFSClient
-):
-    sliding_cacher_logger.debug(f"Seeking tail for the first time | projectId: {project_id}:{time_period_ts}")
-    current_height = 1
     head_block = await retrieval_utils.get_dag_block_by_height(
         project_id=project_id,
         block_height=head,
@@ -101,7 +73,7 @@ async def find_tail(
         cache_size_unit=len(registered_projects)/2,
         ipfs_read_client=ipfs_read_client
     )
-    present_ts = int(head_block['timestamp'])
+    present_ts = head_block['data']['payload']['timestamp']
     while current_height < head:
         dag_block = await retrieval_utils.get_dag_block_by_height(
             project_id=project_id,
@@ -110,14 +82,13 @@ async def find_tail(
             cache_size_unit=len(registered_projects)/2,
             ipfs_read_client=ipfs_read_client
         )
-        if present_ts - dag_block['timestamp'] <= time_period_ts:
-            sliding_cacher_logger.debug(f"Found first time tail after traversing {abs(current_height)} blocks for projectId: {project_id}:{time_period_ts}")
+        if dag_block and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
+            sliding_cacher_logger.debug(f"Found tail after traversing {abs(current_height - tail)} blocks for projectId: {project_id}:{time_period_ts}")
             return current_height
         current_height += 1
 
     sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
     return None
-
 
 @acquire_bounded_semaphore
 async def build_primary_index(
@@ -145,14 +116,15 @@ async def build_primary_index(
         await writer_redis_conn.set(redis_keys.get_sliding_window_cache_head_marker(project_id, time_period), head_marker)
         sliding_cacher_logger.info('Set head at %s index for %s time_period data Project ID: %s', head_marker, time_period, project_id)
         return
-        
+
 
     time_period_ts = convert_time_period_str_to_timestamp(time_period)
     markers = [await writer_redis_conn.get(k) for k in [idx_head_key, idx_tail_key]]
     if not all(markers):
         sliding_cacher_logger.info('Finding %s tail marker for the first time for project %s', time_period, project_id)
+        #passing prev tail as 1 since we are looking for tail for the first time.
         tail_marker = await find_tail(
-            head_marker, project_id, time_period_ts, registered_projects, writer_redis_conn, ipfs_read_client
+            head_marker,1, project_id, time_period_ts, registered_projects, writer_redis_conn, ipfs_read_client
         )
         if not tail_marker:
             sliding_cacher_logger.error(
@@ -167,7 +139,7 @@ async def build_primary_index(
         )
     else:
         tail_marker = int(markers[1])
-        tail_ahead = await seek_ahead_tail(
+        tail_ahead = await find_tail(
             head_marker, tail_marker, project_id, time_period_ts, registered_projects, writer_redis_conn, ipfs_read_client
         )
         if not tail_ahead:
@@ -186,6 +158,7 @@ async def build_primary_index(
                 'Set %s - %s index for %s data | Project ID: %s',
                 head_marker, tail_ahead, time_period, project_id
             )
+
 
 @acquire_bounded_semaphore
 async def get_max_height_pair_project(
@@ -246,12 +219,11 @@ async def build_primary_indexes(ipfs_read_client):
     writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     # project ID -> {"series": ['24h', '7d']}
     registered_projects = await writer_redis_conn.hgetall('cache:indexesRequested')
-    sliding_cacher_logger.debug('Got registered projects for indexing: ', registered_projects)
+    sliding_cacher_logger.debug('Got %d registered projects for indexing', len(registered_projects))
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
     project_id_to_register_series = dict(zip(registered_project_ids, registered_projects_ts))
     project_source_height_map = {}
-
 
     sliding_cacher_logger.debug("Fetching maximum height for all projectIds")
     tasks = list()
@@ -268,7 +240,7 @@ async def build_primary_indexes(ipfs_read_client):
         tasks.append(fn)
     max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
     res_exceptions = list(map(lambda r: r, filter(lambda y: isinstance(y, Exception), max_height_array)))
-    
+
     if len(res_exceptions) == len(project_id_to_register_series):
         sliding_cacher_logger.debug('block-height for all projects has not been intialized yet, sleeping till next cycle')
         return
@@ -329,7 +301,7 @@ async def periodic_retrieval():
         await build_primary_indexes(ipfs_read_client=ipfs_read_client)
         await asyncio.gather(
             v2_pairs_data(async_httpx_client, ipfs_write_client, ipfs_read_client),
-            v2_pairs_daily_stats_snapshotter(async_httpx_client),
+            v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client),
             asyncio.sleep(90)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')

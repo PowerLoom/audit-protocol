@@ -75,15 +75,7 @@ async def startup_boilerplate():
     app.rmq_channel_pool = Pool(
         partial(get_rabbitmq_channel, app.rmq_connection_pool), max_size=20, loop=asyncio.get_running_loop()
     )
-    try:
-        os.stat(os.getcwd() + '/bloom_filter_objects')
-    except:
-        os.mkdir(os.getcwd() + '/bloom_filter_objects')
 
-    try:
-        os.stat(os.getcwd() + '/containers')
-    except:
-        os.mkdir(os.getcwd() + '/containers')
     app.aioredis_pool = RedisPool()
     await app.aioredis_pool.populate()
     app.writer_redis_pool = app.aioredis_pool.writer_redis_pool
@@ -110,6 +102,7 @@ async def payload_to_dag_processor_task(event_data):
     """ Get data from the event """
     project_id = event_data['event_data']['projectId']
     tx_hash = event_data['txHash']
+    request_id = event_data['requestID']
     asyncio.current_task(asyncio.get_running_loop()).set_name('TxProcessor-'+tx_hash)
     custom_logger = CustomAdapter(rest_logger, {'txHash': tx_hash})
     tentative_block_height_event_data = int(event_data['event_data']['tentativeBlockHeight'])
@@ -148,15 +141,13 @@ async def payload_to_dag_processor_task(event_data):
         custom_logger.debug("Discarding event at height %s | %s", tentative_block_height_event_data, event_data)
         await dag_utils.discard_event(
             project_id=project_id,
-            payload_commit_id=event_data['event_data']['payloadCommitId'],
-            tx_hash=event_data['txHash'],
-            payload_cid=event_data['event_data']['snapshotCid'],
+            request_id=request_id,
             tentative_block_height=tentative_block_height_event_data,
             writer_redis_conn=writer_redis_conn
         )
         # custom_logger.debug("Redis operations output: ")
         # custom_logger.debug(redis_output)
-        response_body = {'status': 'Discarded', 'reason': 'Tentative height lower than finalized height'}
+        #response_body = {'status': 'Discarded', 'reason': 'Tentative height lower than finalized height'}
     elif tentative_block_height_event_data > finalized_block_height_project + 1:
         custom_logger.debug(
             "An out of order event arrived at tentative height %s | Project ID %s | "
@@ -166,7 +157,7 @@ async def payload_to_dag_processor_task(event_data):
 
         discarded_transactions_key = redis_keys.get_discarded_transactions_key(project_id)
 
-        custom_logger.debug("Checking if txHash %s is in the list of pending Transactions", event_data['txHash'])
+        custom_logger.debug("Checking if requestID %s is in the list of pending Transactions", request_id)
 
         _ = await reader_redis_conn.zrangebyscore(
             name=redis_keys.get_pending_transactions_key(project_id),
@@ -180,30 +171,33 @@ async def payload_to_dag_processor_task(event_data):
         pending_tx_set_entry: Optional[bytes] = None
         for k in _:
             pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(k)
-            if pending_tx_obj.txHash == event_data['txHash']:
-                is_pending = True
-                pending_tx_set_entry = k
-                break
+            if pending_tx_obj.requestID != "":
+                if pending_tx_obj.requestID == request_id:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
+            else:
+                if pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
 
         if not is_pending:
             custom_logger.error(
-                "Discarding event because tx Hash not in pending transactions | Project ID %s | %s",
-                project_id, event_data
+                "Discarding event because requestID %s not in pending transactions | Project ID %s | %s",
+                request_id, project_id, event_data
             )
             _ = await dag_utils.clear_payload_commit_data(
                 project_id=project_id,
-                tx_hash=event_data['txHash'],
                 tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
-                payload_commit_id=event_data['event_data']['payloadCommitId'],
                 writer_redis_conn=writer_redis_conn
             )
 
             _ = await writer_redis_conn.zadd(
                 name=discarded_transactions_key,
-                mapping={event_data['txHash']: tentative_block_height_event_data}
+                mapping={request_id: tentative_block_height_event_data}
             )
 
-            response_body = {'status': 'Discarded', 'reason': 'Not found in pending transaction set'}
         else:
             custom_logger.debug(
                 "Saving Event data for tentative height: %s | %s ",
@@ -214,11 +208,7 @@ async def payload_to_dag_processor_task(event_data):
                 writer_redis_conn=writer_redis_conn,
                 pending_tx_set_entry=pending_tx_set_entry
             )
-            response_body = {
-                'status': 'Enqueued',
-                'event_tentative_height': tentative_block_height_event_data,
-                'finalized_height': finalized_block_height_project
-            }
+
             # first, we get transactions in the 'pending' state
             pending_confirmation_callbacks_txs = await reader_redis_conn.zrangebyscore(
                 name=redis_keys.get_pending_transactions_key(project_id),
@@ -272,16 +262,16 @@ async def payload_to_dag_processor_task(event_data):
                         pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(
                             single_pending_tx_entry
                         )
-                        tx_hash = pending_tx_obj.txHash
+                        request_id = pending_tx_obj.requestID
                         # fetch transaction input data
                         tx_commit_details = pending_tx_obj.event_data
                         if not tx_commit_details:
                             custom_logger.critical(
                                 'Possible irrecoverable gap in DAG chain creation %s | '
-                                'Did not find cached input data against past tx: %s | '
+                                'Did not find cached input data against past requestID: %s | '
                                 'Last finalized height: %s | '
                                 'Qualified txs for resubmission',
-                                project_id, tx_hash,
+                                project_id, request_id,
                                 finalized_block_height_project,
                                 pending_confirmation_callbacks_txs_filtered_map
                             )
@@ -295,6 +285,7 @@ async def payload_to_dag_processor_task(event_data):
                                 'tentativeBlockHeight': tx_commit_details.tentativeBlockHeight,
                                 'apiKeyHash': tx_commit_details.apiKeyHash,
                                 'resubmitted': True,
+                                'requestID': request_id,
                                 'resubmissionBlock': tentative_block_height_event_data,
                                 'skipAnchorProof': tx_commit_details.skipAnchorProof
                             }
@@ -310,12 +301,12 @@ async def payload_to_dag_processor_task(event_data):
                         custom_logger.debug(
                             'Re-Published payload against commit ID %s , tentative block height %s for '
                             'reprocessing by payload commit service | '
-                            'Previous tx not found for DAG entry: %s',
+                            'Tx confirmation for requestID not received : %s',
                             tx_commit_details.payloadCommitId, tx_commit_details.tentativeBlockHeight,
-                            tx_hash
+                            request_id
                         )
                         republished_txs.append({
-                            'txHash': tx_hash,
+                            'requestID': request_id,
                             'payloadCommitID': payload_commit_obj.commitId,
                             'unconfirmedTentativeHeight': tx_commit_details.tentativeBlockHeight,
                             'resubmittedAtConfirmedBlockHeight': tentative_block_height_event_data
@@ -327,9 +318,9 @@ async def payload_to_dag_processor_task(event_data):
                         #       care of the resubmission, the pending entry is also updated with the
                         #       new tx hash)
                         custom_logger.info(
-                            'Replacing with dummy tx hash entry %s at height %s '
+                            'Updating the requestID entry %s at height %s '
                             'to avoid intermediate resubmission attempts',
-                            tx_hash, queued_tentative_height_
+                            request_id, queued_tentative_height_
                         )
                         update_res = await dag_utils.update_pending_tx_block_touch(
                             pending_tx_set_entry=single_pending_tx_entry,
@@ -341,11 +332,11 @@ async def payload_to_dag_processor_task(event_data):
                         )
                         if update_res['status']:
                             custom_logger.info(
-                                'Removed tx hash entry %s from pending transactions set',
+                                'Removed requestID entry %s from pending transactions set',
                                 single_pending_tx_entry
                             )
                             custom_logger.info(
-                                'Successfully replaced with dummy tx hash entry at height %s '
+                                'Successfully replaced the requestID entry at height %s '
                                 'to avoid intermediate resubmission attempts in pending txs set',
                                 queued_tentative_height_
                             )
@@ -355,20 +346,16 @@ async def payload_to_dag_processor_task(event_data):
                         else:
                             if not update_res['results']['zrem']:
                                 custom_logger.warning(
-                                    'Could not remove tx hash entry %s from pending transactions set',
+                                    'Could not remove requestID entry %s from pending transactions set',
                                     single_pending_tx_entry
                                 )
                             if not update_res['results']['zadd']:
                                 custom_logger.warning(
-                                    'Failed to replace with dummy tx hash entry at height %s '
+                                    'Failed to replace the requestID entry at height %s '
                                     'to avoid intermediate resubmission attempts in pending txs set',
                                     queued_tentative_height_
                                 )
 
-                response_body.update({
-                    'republishedTxs': republished_txs,
-                    'replacedDummyEntries': replaced_dummy_tx_entries_in_pending_set
-                })
     elif tentative_block_height_event_data == finalized_block_height_project + 1:
         """
             An event which is in-order has arrived. Create a dag block for this event
@@ -390,31 +377,33 @@ async def payload_to_dag_processor_task(event_data):
             # custom_logger.debug('Comparing event data tx hash %s with pending tx obj tx hash %s '
             #                   '| tx obj itself: %s',
             #                   event_data['txHash'], pending_tx_obj.txHash, pending_tx_obj)
-            if pending_tx_obj.txHash == event_data['txHash']:
-                is_pending = True
-                pending_tx_set_entry = k
-                break
+            if pending_tx_obj.requestID != "":
+                if pending_tx_obj.requestID == request_id:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
+            else:
+                if pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
+                    is_pending = True
+                    pending_tx_set_entry = k
+                    break
         if not is_pending:
             discarded_transactions_key = redis_keys.get_discarded_transactions_key(project_id)
 
             custom_logger.error(
-                "Discarding event because tx Hash not in pending transactions | Project ID %s | %s",
-                project_id, event_data
+                "Discarding event because requestID %s not in pending transactions | Project ID %s | %s",
+                request_id, project_id, event_data
             )
             _ = await dag_utils.clear_payload_commit_data(
                 project_id=project_id,
-                tx_hash=event_data['txHash'],
                 tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
-                payload_commit_id=event_data['event_data']['payloadCommitId'],
                 writer_redis_conn=writer_redis_conn
             )
 
             _ = await writer_redis_conn.zadd(
                 name=discarded_transactions_key,
-                mapping={event_data['txHash']: tentative_block_height_event_data}
+                mapping={request_id: tentative_block_height_event_data}
             )
-
-            response_body = {'status': 'Discarded', 'reason': 'Not found in pending transaction set'}
         else:
             fetch_prev_cid_for_dag_block_creation = True
             # check if the creation of a DAG block at this height will result in segment size overflow
@@ -463,7 +452,7 @@ async def payload_to_dag_processor_task(event_data):
                                     t, project_id, tentative_block_height_event_data
                                 )
                     _dag_cid, dag_block = await dag_utils.create_dag_block_timebound(
-                        tx_hash=event_data['txHash'],
+                        tx_hash=tx_hash,
                         project_id=project_id,
                         tentative_block_height=tentative_block_height_event_data,
                         payload_cid=event_data['event_data']['snapshotCid'],
@@ -475,12 +464,6 @@ async def payload_to_dag_processor_task(event_data):
                     )
                     custom_logger.info('Created DAG block with CID %s at height %s', _dag_cid,
                                        tentative_block_height_event_data)
-            # clear payload commit ID log on success
-            await dag_utils.clear_payload_commit_processing_logs(
-                project_id=project_id,
-                payload_commit_id=event_data['event_data']['payloadCommitId'],
-                writer_redis_conn=writer_redis_conn
-            )
             # clear from pending set
             _ = await writer_redis_conn.zremrangebyscore(
                 name=redis_keys.get_pending_transactions_key(project_id),
@@ -489,19 +472,15 @@ async def payload_to_dag_processor_task(event_data):
             )
             if _:
                 custom_logger.debug(
-                    'Cleared tx entry for tx %s from pending set at block height %s | project ID %s',
-                    event_data['txHash'], tentative_block_height_event_data, project_id
+                    'Cleared entry for requestID %s from pending set at block height %s | project ID %s',
+                    request_id, tentative_block_height_event_data, project_id
                 )
             else:
                 custom_logger.debug(
-                    'Not sure if tx entry cleared for tx %s from pending set at block height %s | '
+                    'Not sure if entry cleared for requestID %s from pending set at block height %s | '
                     'Redis return: %s | Project ID : %s',
-                    event_data['txHash'], tentative_block_height_event_data, _, project_id
+                    request_id, tentative_block_height_event_data, _, project_id
                 )
-
-            response_body = {
-                'status': 'Inserted', 'atHeight': tentative_block_height_event_data, 'dagCID': _dag_cid
-            }
 
             # process diff at this new block height
             # send out to processing queue of diff calculation service
@@ -511,7 +490,7 @@ async def payload_to_dag_processor_task(event_data):
                     dagCid=_dag_cid,
                     lastDagCid=dag_block.prevCid['/'],
                     payloadCid=event_data['event_data']['snapshotCid'],
-                    txHash=event_data['txHash'],
+                    txHash=tx_hash,
                     timestamp=event_data['event_data']['timestamp'],
                     tentative_block_height=tentative_block_height_event_data
                 )
@@ -590,7 +569,7 @@ async def payload_to_dag_processor_task(event_data):
                                 custom_logger.info(
                                     'Queued DAG block creation %s after successful in-order DAG block creation '
                                     '| Project ID: %s | Tentative Height: %s | Retry attempt: %s',
-                                    pending_tx_obj.txHash, project_id, _tt_block_height, t
+                                    pending_tx_obj.requestID, project_id, _tt_block_height, t
                                 )
                                 if not await lock.owned():
                                     # reacquire lock
@@ -664,11 +643,6 @@ async def payload_to_dag_processor_task(event_data):
                             'No diff calculation request to publish for first block | At height %s | Project %s',
                             _tt_block_height, project_id
                         )
-                    await dag_utils.clear_payload_commit_processing_logs(
-                        project_id=project_id,
-                        payload_commit_id=pending_tx_obj.event_data.payloadCommitId,
-                        writer_redis_conn=writer_redis_conn
-                    )
                     # clear from pending set
                     _ = await writer_redis_conn.zrem(
                         redis_keys.get_pending_transactions_key(project_id),
@@ -676,14 +650,14 @@ async def payload_to_dag_processor_task(event_data):
                     )
                     if _:
                         custom_logger.debug(
-                            'Cleared tx entry for tx %s from pending set at block height %s | project ID %s',
-                            pending_tx_obj.txHash, _tt_block_height, project_id
+                            'Cleared entry for requestID %s from pending set at block height %s | project ID %s',
+                            pending_tx_obj.requestID, _tt_block_height, project_id
                         )
                     else:
                         custom_logger.debug(
-                            'Not sure if tx entry cleared for tx %s from pending set at block height %s | '
+                            'Not sure if entry cleared for requestID %s from pending set at block height %s | '
                             'Redis return: %s | Project ID : %s',
-                            pending_tx_obj.txHash, _tt_block_height, _, project_id
+                            pending_tx_obj.requestID, _tt_block_height, _, project_id
                         )
                     # send commit ID confirmation callback
                     if cb_url:
