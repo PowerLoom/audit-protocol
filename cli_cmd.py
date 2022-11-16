@@ -217,7 +217,7 @@ def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2", "--namespace")
 
 @app.command()
 def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
-    
+
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
     cycles = 20 if cycles > 20 else cycles
@@ -229,7 +229,7 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
         max='+inf',
         withscores=True
     )
-    
+
     table = Table(show_header=True, header_style="bold magenta", show_lines=True )
     table.add_column("Timestamp", justify="center", vertical="middle")
     table.add_column("Cycle status", justify="center")
@@ -247,12 +247,12 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
         payload_text.append(f"projectsProcessSuccessCount: {payload.get('projectsProcessSuccessCount')}\n", style="bold green")
         payload_text.append(f"projectsProcessFailedCount: {payload.get('projectsProcessFailedCount')}\n", style="bold red")
         payload_text.append(f"projectsNotProcessedCount: {payload.get('projectsNotProcessedCount')}", style="bold yellow")
-        
+
         table.add_row(
-            Text(f"{datetime.fromtimestamp(timestamp)} ( {timestamp} )"), 
+            Text(f"{datetime.fromtimestamp(timestamp)} ( {timestamp} )"),
             payload_text
         )
-        
+
         cycles -= 1
         if cycles <= 0:
             break
@@ -262,7 +262,7 @@ def pruning_cycles_status(cycles: int = typer.Option(3, "--cycles")):
 
 @app.command()
 def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId")):
-    
+
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
     cycleDetails = {}
 
@@ -312,9 +312,9 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
                 payload_text.append(f"failureCause: {projectDetails.get('failureCause')}\n", style="bold red")
             if projectDetails.get('unPinFailed', False):
                 payload_text.append(f"unPinFailed: {projectDetails.get('unPinFailed')}\n", style="bold red")
-            
+
             table.add_row(
-                Text(projectId, style='bright_cyan'), 
+                Text(projectId, style='bright_cyan'),
                 payload_text
             )
 
@@ -328,8 +328,8 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
     console.print("[bold green]Success count:[/bold green]", f"[bold green]{cycleDetails.get('projectsProcessSuccessCount', None)}[/bold green]")
     console.print("[bold red]Failure counts:[/bold red]", f"[bold red]{cycleDetails.get('projectsProcessFailedCount', None)}[/bold red]")
     console.print("[bold yellow]Unprocessed Project count:[/bold yellow]", f"[bold yellow]{cycleDetails.get('projectsNotProcessedCount', None)}[/bold yellow]\n\n")
-    
-    
+
+
 
 def identify_projects_that_require_force_resubmission(namespace: str = typer.Option(None, "--namespace")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
@@ -445,6 +445,47 @@ def force_project_height_into_resubmission(namespace: str = typer.Option(None, "
             print(f"Error: {str(e)} | project: {project}")
     if count == 0:
        console.log("No projects required force resubmission")
+
+@app.command()
+def force_summary_project_height_ahead(namespace: str = typer.Option(None, "--namespace")):
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
+
+    print("\nThis command will force-push Summary project's redis state ahead.\n ")
+    count = 0
+
+    if not namespace:
+        console.log("No namespace provided, please provide a namespace")
+        return
+    projects = [
+        f"projectID:uniswap_V2TokensSummarySnapshot_{namespace}",
+        f"projectID:uniswap_V2PairsSummarySnapshot_{namespace}",
+        f"projectID:uniswap_V2DailyStatsSnapshot_{namespace}"
+        ]
+    for project in projects:
+        try:
+            block_height_key = f"{project}:blockHeight"
+            tentative_bh_key = f"{project}:tentativeBlockHeight"
+            console.log(f"\n[bold magenta]{project}[bold magenta]:")
+
+            project_height = r.get(block_height_key)
+            project_height = project_height.decode('utf-8')
+
+            tentative_project_height = r.get(tentative_bh_key)
+            tentative_project_height = tentative_project_height.decode('utf-8')
+
+            project_height = int(project_height)
+            tentative_height_project = int(tentative_project_height)
+            if project_height < tentative_height_project:
+                count+=1
+                result = r.set(block_height_key,tentative_project_height)
+                console.log(f"[bold blue]Force pushed {result} project blockHeight from {project_height} to height:[bold blue] [white]{tentative_project_height}[white]\n")
+            else:
+                console.log(f"No need to force-push height ahead for project: {project}")
+        except Exception as exc:
+            print(f"Error: {str(exc)} | project: {project}")
+    if count == 0:
+       console.log("No projects required force pushing heights")
+
 
 if __name__ == '__main__':
     app()

@@ -1,5 +1,5 @@
 from eth_utils import keccak
-from async_ipfshttpclient.main import ipfs_read_client
+from utils.ipfs_async import client as ipfs_client
 from utils import redis_keys
 from utils import helper_functions
 from utils import dag_utils
@@ -362,20 +362,20 @@ async def retrieve_block_status(
         if len(pending_txs) == 0:
             block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
             return block_status
-        
+
         all_empty_txhash = True
         for tx in pending_txs:
-            pending_txn = PendingTransaction.parse_raw(tx)
+            pending_txn: PendingTransaction = PendingTransaction.parse_raw(tx)
             # itrate until we find a entry with txHash
-            if pending_txn.txHash == None or pending_txn.txHash == "":
+            if pending_txn.event_data.txHash is None or pending_txn.event_data.txHash == "":
                 continue
-            
+
             # set this false, when atleast one txHash exist
             all_empty_txhash = False
-            
+
             # check if tx is confirmed
             if pending_txn.lastTouchedBlock == -1:
-                block_status.tx_hash = pending_txn.txHash
+                block_status.tx_hash = pending_txn.event_data.txHash
                 block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
                 block_status.payload_cid = payload_cid
                 return
@@ -384,11 +384,11 @@ async def retrieve_block_status(
         if all_empty_txhash:
             block_status.status = SNAPSHOT_STATUS_MAP['TX_ACK_PENDING']
             return block_status
-        
+
         # if txHash was there but none with lastTouchedBlock == -1 then take latest pending tx
         block_status.payload_cid = payload_cid
         pending_txn = PendingTransaction.parse_raw(pending_txs[0])
-        block_status.tx_hash = pending_txn.txHash
+        block_status.tx_hash = pending_txn.event_data.txHash
         block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMATION_PENDING']
 
     else:
@@ -444,7 +444,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     #     retrieval_utils_logger.debug(r)
 
     """ Retrieve the DAG block from ipfs """
-    _block = await ipfs_read_client.dag.get(block_dag_cid)
+    _block = await ipfs_client.dag.get(block_dag_cid)
     block = _block.as_json()
     # block = preprocess_dag(block)
     if data_flag == 0:
@@ -453,7 +453,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     payload = dict()
 
     """ Get the payload Data """
-    payload_data = await ipfs_read_client.cat(block['data']['cid']['/'])
+    payload_data = await ipfs_client.cat(block['data']['cid']['/'])
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
@@ -495,15 +495,8 @@ async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
         #retrieval_utils_logger.debug(payload_cid)
 
     """ Get the payload Data from ipfs """
-    _payload_data = await ipfs_read_client.cat(payload_cid)
-    if not _payload_data:
-        return None
-
-    if isinstance(_payload_data, str):
-        payload_data = _payload_data
-    else:
-        payload_data = payload_data.decode('utf-8')
-
+    _payload_data = await ipfs_client.cat(payload_cid)
+    payload_data = _payload_data.decode('utf-8')
     return payload_data
 
 
@@ -520,7 +513,7 @@ SHARED_DAG_BLOCKS_CACHE = {}
 
 def prune_dag_block_cache(cache_size_unit):
     cache_size_unit = cache_size_unit if cache_size_unit and isinstance(cache_size_unit, int) else 180
-        
+
     # export shared cache as global variable | python-design: https://bugs.python.org/issue9049
     global SHARED_DAG_BLOCKS_CACHE
 
@@ -552,7 +545,7 @@ async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: a
 
     dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
     dag_block = dag_block if dag_block else {}
-    
+
     dag_block["dagCid"] = dag_cid
 
     # cache result

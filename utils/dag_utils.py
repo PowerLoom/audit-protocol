@@ -188,35 +188,39 @@ async def create_dag_block(
     """ Get the last dag cid using the tentativeBlockHeight"""
     # a lock on a project does not exist more than settings.webhook_listener.redis_lock_lifetime seconds.
     last_dag_cid = None
-    if prev_cid_fetch:
-        try:
-            future_dag_cid = helper_functions.get_dag_cid(
-                project_id=project_id,
-                block_height=tentative_block_height - 1,
-                reader_redis_conn=reader_redis_conn
-            )
-            last_dag_cid = await asyncio.wait_for(
-                future_dag_cid,
-                # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
-                timeout=settings.webhook_listener.redis_lock_lifetime/2 * 0.8
-            )
-        except Exception as e:
-            logger.error("Failure while getting dag cid from Redis zset of project CIDs, Exception: %s", e, exc_info=True)
-            raise
+    prev_root = None
+    try:
+        future_dag_cid = helper_functions.get_dag_cid(
+            project_id=project_id,
+            block_height=tentative_block_height - 1,
+            reader_redis_conn=reader_redis_conn
+        )
+        last_dag_cid = await asyncio.wait_for(
+            future_dag_cid,
+            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
+            timeout=settings.webhook_listener.redis_lock_lifetime/2 * 0.8
+        )
+    except Exception as e:
+        logger.error("Failure while getting dag cid from Redis zset of project CIDs, Exception: %s", e, exc_info=True)
+        raise
 
+    if prev_cid_fetch == False:
+        prev_root = last_dag_cid
+        last_dag_cid = None
     """ Fill up the dag """
     dag = DAGBlock(
         height=tentative_block_height,
         prevCid={'/': last_dag_cid} if last_dag_cid else None,
         data={'cid': {'/': payload_cid}},
         txHash=tx_hash,
-        timestamp=timestamp
+        timestamp=timestamp,
+        prevRoot=prev_root
     )
 
     """ Convert dag structure to json and put it on ipfs dag """
     # IPFS operations should raise exceptions well ahead of time
     try:
-        future_dag = put_dag_block(dag.json())
+        future_dag = put_dag_block(dag.json(exclude_none=True))
         dag_cid = await asyncio.wait_for(
             future_dag,
             # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
@@ -244,17 +248,13 @@ async def create_dag_block(
 
 async def discard_event(
         project_id: str,
-        payload_commit_id: str,
-        payload_cid: str,
-        tx_hash: str,
+        request_id: str,
         tentative_block_height: int,
         writer_redis_conn: aioredis.Redis
 ):
     redis_output = []
     d_r = await clear_payload_commit_data(
         project_id=project_id,
-        payload_commit_id=payload_commit_id,
-        tx_hash=tx_hash,
         tentative_height_pending_tx_entry=tentative_block_height,
         writer_redis_conn=writer_redis_conn
     )
@@ -268,9 +268,10 @@ async def discard_event(
     # redis_output.append(out)
 
     # Add the transaction Hash to discarded Transactions
+    #TODO Do we need to record txHash or just requestID is sufficient??
     out = await writer_redis_conn.zadd(
         name=redis_keys.get_discarded_transactions_key(project_id),
-        mapping={tx_hash: tentative_block_height}
+        mapping={request_id: tentative_block_height}
     )
     redis_output.append(out)
 
@@ -279,8 +280,6 @@ async def discard_event(
 
 async def clear_payload_commit_data(
         project_id: str,
-        payload_commit_id: str,
-        tx_hash: str,
         tentative_height_pending_tx_entry: int,
         writer_redis_conn: aioredis.Redis
 ):
@@ -289,10 +288,8 @@ async def clear_payload_commit_data(
     clear up all the transient, temporary redis keys associated with that
     particular dag block, since these key will not be needed anymore
     once the dag block has been created successfully.
-        - Clear Event Data
         - Remove the tagged transaction hash entry from pendingTransactions set, by its tentative height score
         - Remove the payload_commit_id from pendingBlocks
-        - Delete the payload_commit_data
     """
     deletion_result = []
 
@@ -301,14 +298,6 @@ async def clear_payload_commit_data(
         name=redis_keys.get_pending_transactions_key(project_id=project_id),
         min=tentative_height_pending_tx_entry,
         max=tentative_height_pending_tx_entry
-    )
-    deletion_result.append(out)
-
-    deletion_result.append(out)
-
-    # delete the payload commit id data
-    out = await writer_redis_conn.delete(
-        redis_keys.get_payload_commit_key(payload_commit_id=payload_commit_id)
     )
     deletion_result.append(out)
 

@@ -147,12 +147,11 @@ async def commit_payload(
         number is specified in the settings.json file as 'max_pending_payload_commits'
 
     """
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     req_args = await request.json()
     try:
         payload = req_args['payload']
         project_id = req_args['projectId']
+        request_id = req_args.get('requestID',None)
         rest_logger.debug(f"Extracted payload and projectId from the request: {payload} , Payload data type: {type(payload)} ProjectId: {project_id}")
     except Exception as e:
         return {'error': "Either payload or projectId"}
@@ -164,20 +163,21 @@ async def commit_payload(
         return {'error': 'The projectId provided does not exist'}
 
     skip_anchor_proof_tx = req_args.get('skipAnchorProof', True)  # skip anchor tx by default, unless passed
-    """ Create a unique identifier for this payload """
+   # Create a unique identifier for this payload
     payload_data = {
         'payload': payload,
         'projectId': project_id,
     }
     # salt with commit time
     payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
-    rest_logger.debug(f"Created the unique payload commit id: {payload_commit_id}")
+    rest_logger.debug("Created the unique payload commit id:%s", payload_commit_id)
 
     web3_storage_flag = req_args.get('web3Storage', False)
     payload_for_commit = PayloadCommit(**{
         'projectId': project_id,
         'commitId': payload_commit_id,
         'payload': payload,
+        'requestID':request_id,
         #'tentativeBlockHeight': last_tentative_block_height,
         'web3Storage': web3_storage_flag,
         'skipAnchorProof': skip_anchor_proof_tx
@@ -734,7 +734,6 @@ async def get_block_status(
         project_id=projectId,
         reader_redis_conn=reader_redis_conn
     )
-
     rest_logger.debug(max_block_height)
 
     block_status = await retrieval_utils.retrieve_block_status(project_id=projectId,

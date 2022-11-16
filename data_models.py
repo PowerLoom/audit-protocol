@@ -30,6 +30,7 @@ class AuditRecordTxEventData(BaseModel):
 
 class PendingTransaction(BaseModel):
     txHash: str
+    requestID: str
     lastTouchedBlock: int = 0
     event_data: Optional[AuditRecordTxEventData] = dict()
 
@@ -38,6 +39,7 @@ class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
     payload: Optional[dict] = None
+    requestID: Optional[str] = None
     # following two can be used to substitute for not supplying the payload but the CID and hash itself
     snapshotCID: Optional[str] = None
     apiKeyHash: Optional[str] = None
@@ -133,14 +135,18 @@ class ContainerData(BaseModel):
         self.bloomFilterSettings = json.dumps(self.bloomFilterSettings.dict())
 
 
+class DAGBlockRange(BaseModel):
+    head_block_cid: str
+    tail_block_cid: str
+
 class liquidityProcessedData(BaseModel):
     contractAddress: str
     name: str
     liquidity: str
     volume_24h: str
     volume_7d: str
-    cid_volume_24h: str
-    cid_volume_7d: str
+    cid_volume_24h: DAGBlockRange
+    cid_volume_7d: DAGBlockRange
     fees_24h: str
     block_height: int
     block_timestamp: int
@@ -164,6 +170,7 @@ class DAGBlockPayloadLinkedPath(BaseModel):
 class DAGBlock(BaseModel):
     height: int
     prevCid: Optional[Dict[str, str]]
+    prevRoot: Optional[str] = None
     data: DAGBlockPayloadLinkedPath
     txHash: str
     timestamp: int
@@ -181,7 +188,7 @@ class DiffCalculationRequest(BaseModel):
 
 class uniswapPairsSnapshotZset(BaseModel):
     cid: str
-    txHash: str
+    txHash: str = None
     begin_block_height_24h: int
     begin_block_timestamp_24h: int
     begin_block_height_7d: int
@@ -193,24 +200,27 @@ class uniswapPairsSnapshotZset(BaseModel):
 
 class uniswapDailyStatsSnapshotZset(BaseModel):
     cid: str
-    txHash: str
+    txHash: str = None
     txStatus: int
     dagHeight: int
     prevTxHash: str = None
 
-class uniswapPairSummaryCid7dResultant(BaseModel):
-    trade_volume_7d_cids: Dict[str, str]
-    latestTimestamp_volume_7d: str
+class PairLiquidity(BaseModel):
+    total_liquidity: float = 0.0
+    token0_liquidity: float = 0.0
+    token1_liquidity: float = 0.0
+    token0_liquidity_usd: float = 0.0
+    token1_liquidity_usd: float = 0.0
+    block_height_total_reserve: int = 0
+    block_timestamp_total_reserve: int = 0
 
-class uniswapPairSummary7dCidRange(BaseModel):
-    resultant: uniswapPairSummaryCid7dResultant
-
-class uniswapPairSummaryCid24hResultant(BaseModel):
-    trade_volume_24h_cids: Dict[str, str]
-    latestTimestamp_volume_24h: str
-
-class uniswapPairSummary24hCidRange(BaseModel):
-    resultant: uniswapPairSummaryCid24hResultant
+class PairTradeVolume(BaseModel):
+    total_volume: int = 0
+    fees: int = 0
+    token0_volume: int = 0
+    token1_volume: int = 0
+    token0_volume_usd: int = 0
+    token1_volume_usd: int = 0
 
 class ProjectBlockHeightStatus(BaseModel):
     project_id: str

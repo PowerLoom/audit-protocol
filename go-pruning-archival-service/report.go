@@ -31,7 +31,7 @@ type PruningCycleDetails struct {
 	ProjectsProcessSuccessCount uint64 `json:"projectsProcessSuccessCount"`
 	ProjectsProcessFailedCount  uint64 `json:"projectsProcessFailedCount"`
 	ProjectsNotProcessedCount   uint64 `json:"projectsNotProcessedCount"`
-	HostName                    string `json:"-"`
+	HostName                    string `json:"hostName"`
 	ErrorInLastcycle            bool   `json:"-"`
 }
 
@@ -62,7 +62,7 @@ func UpdatePruningCycleDetailsInRedis() {
 		if cycleDetails.ProjectsProcessFailedCount > 0 {
 			cycleDetails.HostName, _ = os.Hostname()
 			report, _ := json.MarshalIndent(cycleDetails, "", "\t")
-			slackutils.NotifySlackWorkflow(string(report), "High", "PruningService")
+			slackutils.NotifySlackWorkflow(string(report), "Low", "PruningService")
 			cycleDetails.ErrorInLastcycle = true
 		} else {
 			if cycleDetails.ErrorInLastcycle {
