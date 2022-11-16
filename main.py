@@ -100,16 +100,6 @@ async def startup_boilerplate():
     await app.ipfs_singleton.init_sessions()
     app.ipfs_read_client = app.ipfs_singleton._ipfs_read_client
 
-
-async def get_max_block_height(project_id: str, reader_redis_conn: aioredis.Redis):
-    """
-        - Given the projectId and redis_conn, get the prev_dag_cid, block height and
-        tetative block height of that projectId from redis
-    """
-    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id=project_id, reader_redis_conn=reader_redis_conn)
-    return prev_dag_cid, last_payload_cid
-
-
 async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn: aioredis.Redis):
     request_id = str(uuid4())
 

@@ -1,9 +1,9 @@
 from typing import Union, Iterable
 from time import time
-import os
 from web3 import Web3
 from httpx import AsyncClient, Timeout, Limits
 from redis import asyncio as aioredis
+from async_ipfshttpclient.main import AsyncIPFSClient
 from gnosis.eth import EthereumClient
 from config import settings
 from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, DAGBlockRange, PairLiquidity, PairTradeVolume

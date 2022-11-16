@@ -13,6 +13,7 @@ from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional
 from data_models import PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata
+from multiprocessing import Manager
 from redis import asyncio as aioredis
 import asyncio
 import aiohttp
@@ -57,6 +58,8 @@ REDIS_READER_CONN_CONF = {
     "password": settings.redis_reader.password,
     "db": settings.redis_reader.db
 }
+multiprocess_manager = Manager()
+project_specific_locks_multiprocessing_map = multiprocess_manager.dict()
 
 
 class CustomAdapter(logging.LoggerAdapter):
@@ -734,8 +737,12 @@ async def create_dag(
         response: Response,
         x_hook_signature: str = Header(None),
 ):
+    # global project_specific_locks_multiprocessing_map
+    global project_specific_locks_multiprocessing_map
     event_data = await request.json()
     response_body = dict()
+    project_specific_locks_multiprocessing_map[os.getpid()] = event_data
+    rest_logger.debug('Updated global dict: %s', project_specific_locks_multiprocessing_map)
     response_status_code = 200
     # Verify the payload that has arrived.
     if x_hook_signature and settings.webhook_listener.validate_header_sig:
