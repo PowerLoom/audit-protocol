@@ -1,3 +1,4 @@
+from functools import wraps
 from data_models import DiffCalculationRequest
 from fastapi import FastAPI, Request, Response, Header
 from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
@@ -12,8 +13,8 @@ from tenacity import retry_if_exception, wait_random_exponential, stop_after_att
 from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional
-from data_models import PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata
-from multiprocessing import Manager
+from data_models import PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback
+from multiprocessing import Manager, Lock as MPLock
 from redis import asyncio as aioredis
 import asyncio
 import aiohttp
@@ -21,7 +22,7 @@ import logging
 import sys
 import json
 import os
-from utils.dag_utils import DAGCreationException
+from utils.dag_utils import IPFSDAGCreationException
 
 
 class RedisLockAcquisitionFailure(Exception):
@@ -72,6 +73,89 @@ class CustomAdapter(logging.LoggerAdapter):
         return '[%s] %s' % (self.extra['txHash'], msg), kwargs
 
 
+def project_lock_atomic_acquisition(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        cb_data: DAGFinalizerCallback = DAGFinalizerCallback.parse_obj(kwargs['event_data'])
+        project_id = cb_data.event_data.projectId
+        global project_specific_locks_multiprocessing_map
+        if project_id not in project_specific_locks_multiprocessing_map.keys():
+            project_specific_locks_multiprocessing_map.update({project_id: MPLock()})
+            rest_logger.debug(
+                '%s worker created new MP Lock object in shared map for project ID %s | %s',
+                os.getpid(), project_id, cb_data
+            )
+        rest_logger.debug(
+            '%s worker attempting blocking acquire on MP Lock object in shared map for project ID %s : %s ',
+            os.getpid(), project_id, cb_data
+        )
+        project_specific_locks_multiprocessing_map[project_id].acquire(blocking=True, timeout=-1)
+        rest_logger.debug(
+            '%s worker acquired MP Lock object in shared map for project ID %s : %s.',
+            os.getpid(), project_id, cb_data
+        )
+        kwargs['event_data'] = cb_data
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            rest_logger.debug(
+                '%s worker failed processing callback for DAG finalization | project ID %s : %s',
+                os.getpid(), project_id, cb_data
+            )
+        finally:
+            project_specific_locks_multiprocessing_map[project_id].release()
+            rest_logger.debug(
+                '%s worker released MP Lock object in shared map for project ID %s: %s',
+                os.getpid(), project_id, kwargs['event_data']
+            )
+    return wrapper
+
+
+async def in_order_block_creation_and_state_update(
+        project_id,
+        tx_hash,
+        snapshot_cid,
+        timestamp,
+        request_id,
+        tentative_block_height_event_data,
+        custom_logger_obj,
+        reader_redis_conn: aioredis.Redis,
+        writer_redis_conn: aioredis.Redis,
+        fetch_prev_cid_for_dag_block_creation: bool
+):
+    _dag_cid, dag_block = await dag_utils.create_dag_block(
+        tx_hash=tx_hash,
+        project_id=project_id,
+        tentative_block_height=tentative_block_height_event_data,
+        payload_cid=snapshot_cid,
+        timestamp=timestamp,
+        reader_redis_conn=reader_redis_conn,
+        writer_redis_conn=writer_redis_conn,
+        prev_cid_fetch=fetch_prev_cid_for_dag_block_creation,
+        ipfs_write_client=app.ipfs_write_client
+    )
+    custom_logger_obj.info('Created DAG block with CID %s at height %s', _dag_cid,
+                       tentative_block_height_event_data)
+    # clear from pending set
+    _ = await writer_redis_conn.zremrangebyscore(
+        name=redis_keys.get_pending_transactions_key(project_id),
+        min=tentative_block_height_event_data,
+        max=tentative_block_height_event_data
+    )
+    if _:
+        custom_logger_obj.debug(
+            'Cleared entry for requestID %s from pending set at block height %s | project ID %s',
+            request_id, tentative_block_height_event_data, project_id
+        )
+    else:
+        custom_logger_obj.debug(
+            'Not sure if entry cleared for requestID %s from pending set at block height %s | '
+            'Redis return: %s | Project ID : %s',
+            request_id, tentative_block_height_event_data, _, project_id
+        )
+    return _dag_cid, dag_block
+
+
 @app.on_event('startup')
 async def startup_boilerplate():
     app.rmq_connection_pool = Pool(get_rabbitmq_connection, max_size=5, loop=asyncio.get_running_loop())
@@ -96,31 +180,17 @@ async def startup_boilerplate():
     app.ipfs_reader_client = app.ipfs_singleton._ipfs_read_client
 
 
-@retry(
-    reraise=True,
-    wait=wait_random_exponential(multiplier=1, min=15, max=30),
-    retry=retry_if_exception(RedisLockAcquisitionFailure)
-)
-async def payload_to_dag_processor_task(event_data):
+@project_lock_atomic_acquisition
+async def payload_to_dag_processor_task(event_data: DAGFinalizerCallback):
     """ Get data from the event """
-    project_id = event_data['event_data']['projectId']
-    tx_hash = event_data['txHash']
-    request_id = event_data['requestID']
+    project_id = event_data.event_data.projectId
+    tx_hash = event_data.txHash
+    request_id = event_data.requestID
     asyncio.current_task(asyncio.get_running_loop()).set_name('TxProcessor-'+tx_hash)
     custom_logger = CustomAdapter(rest_logger, {'txHash': tx_hash})
-    tentative_block_height_event_data = int(event_data['event_data']['tentativeBlockHeight'])
+    tentative_block_height_event_data = int(event_data.event_data.tentativeBlockHeight)
     writer_redis_conn: aioredis.Redis = app.writer_redis_pool
     reader_redis_conn: aioredis.Redis = app.reader_redis_pool
-    # acquire project ID processing lock
-    lock = aioredis.lock.Lock(
-        redis=writer_redis_conn,
-        name=project_id,
-        blocking_timeout=5,  # should not need more than 5 seconds of waiting on acquiring a lock
-        timeout=settings.webhook_listener.redis_lock_lifetime
-    )
-    ret = await lock.acquire()
-    if not ret:
-        raise RedisLockAcquisitionFailure
 
     # Get the max block height(finalized after all error corrections and reorgs) for the project_id
     finalized_block_height_project = await helper_functions.get_block_height(
@@ -133,11 +203,6 @@ async def payload_to_dag_processor_task(event_data):
         tentative_block_height_event_data, project_id, finalized_block_height_project
     )
 
-    # tentative_block_height_cached = await helper_functions.get_tentative_block_height(
-    #     project_id=project_id,
-    #     reader_redis_conn=reader_redis_conn
-    # )
-
     # retrieve callback URL for project ID
     cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
     if tentative_block_height_event_data <= finalized_block_height_project:
@@ -148,9 +213,6 @@ async def payload_to_dag_processor_task(event_data):
             tentative_block_height=tentative_block_height_event_data,
             writer_redis_conn=writer_redis_conn
         )
-        # custom_logger.debug("Redis operations output: ")
-        # custom_logger.debug(redis_output)
-        #response_body = {'status': 'Discarded', 'reason': 'Tentative height lower than finalized height'}
     elif tentative_block_height_event_data > finalized_block_height_project + 1:
         custom_logger.debug(
             "An out of order event arrived at tentative height %s | Project ID %s | "
@@ -174,16 +236,14 @@ async def payload_to_dag_processor_task(event_data):
         pending_tx_set_entry: Optional[bytes] = None
         for k in _:
             pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(k)
-            if pending_tx_obj.requestID != "":
-                if pending_tx_obj.requestID == request_id:
-                    is_pending = True
-                    pending_tx_set_entry = k
-                    break
-            else:
-                if pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
-                    is_pending = True
-                    pending_tx_set_entry = k
-                    break
+            if pending_tx_obj.requestID == request_id:
+                is_pending = True
+                pending_tx_set_entry = k
+                break
+            elif pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
+                is_pending = True
+                pending_tx_set_entry = k
+                break
 
         if not is_pending:
             custom_logger.error(
@@ -315,11 +375,11 @@ async def payload_to_dag_processor_task(event_data):
                             'resubmittedAtConfirmedBlockHeight': tentative_block_height_event_data
                         })
                         # NOTE: dont remove hash from pending transactions key, instead overwrite with
-                        #       resubmission attempt block number so the next time an event with
-                        #       higher tentative block height comes through it does not include this
-                        #       entry for a resubmission attempt (once payload commit service takes
-                        #       care of the resubmission, the pending entry is also updated with the
-                        #       new tx hash)
+                        # resubmission attempt block number so the next time an event with
+                        # higher tentative block height comes through it does not include this
+                        # entry for a resubmission attempt (once payload commit service takes
+                        # care of the resubmission, the pending entry is also updated with the
+                        # new tx hash)
                         custom_logger.info(
                             'Updating the requestID entry %s at height %s '
                             'to avoid intermediate resubmission attempts',
@@ -359,6 +419,31 @@ async def payload_to_dag_processor_task(event_data):
                                     queued_tentative_height_
                                 )
 
+            # check if any self-healing is required/possible
+            # we are looking for pending entry at height (finalized_height+1) which has status = -1 yet looks like
+            # it did not move the DAG chain ahead to (finalized_height+1). *let that sink in*
+            # this can happen because of inconsistencies in updating the keys in the data store (Redis, atm)
+            # where even if the DAG block did get created in IPFS, the set() on finalized height of the project failed
+            # ref: dag_utils.
+            threshold_before_self_healing_check = 5
+            if tentative_block_height_event_data > (finalized_block_height_project + threshold_before_self_healing_check)-1:
+                immediate_tx_next_to_finalized_filter = list(filter(
+                    lambda x:
+                    PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1 and
+                    int(x[1]) == finalized_block_height_project+1,
+                    pending_confirmation_callbacks_txs
+                ))
+                if len(immediate_tx_next_to_finalized_filter) == 1:
+                    immediate_tx_pending_obj: PendingTransaction = PendingTransaction.parse_raw(
+                        immediate_tx_next_to_finalized_filter[0][0]
+                    )
+                    custom_logger.info(
+                        'Found a pending tx entry with last touched block=-1 at height %s | Finalized project '
+                        '%s height: %s | Skipping further resubmission to create DAG chain entry and updating '
+                        'project state...',
+                        immediate_tx_next_to_finalized_filter[0][1], project_id, finalized_block_height_project
+                    )
+
     elif tentative_block_height_event_data == finalized_block_height_project + 1:
         """
             An event which is in-order has arrived. Create a dag block for this event
@@ -383,12 +468,10 @@ async def payload_to_dag_processor_task(event_data):
             if pending_tx_obj.requestID != "":
                 if pending_tx_obj.requestID == request_id:
                     is_pending = True
-                    pending_tx_set_entry = k
                     break
             else:
                 if pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
                     is_pending = True
-                    pending_tx_set_entry = k
                     break
         if not is_pending:
             discarded_transactions_key = redis_keys.get_discarded_transactions_key(project_id)
@@ -397,11 +480,12 @@ async def payload_to_dag_processor_task(event_data):
                 "Discarding event because requestID %s not in pending transactions | Project ID %s | %s",
                 request_id, project_id, event_data
             )
-            _ = await dag_utils.clear_payload_commit_data(
-                project_id=project_id,
-                tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
-                writer_redis_conn=writer_redis_conn
-            )
+            # FIXME: why was the block below allowed to execute if it achieves nothing?
+            # _ = await dag_utils.clear_payload_commit_data(
+            #     project_id=project_id,
+            #     tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
+            #     writer_redis_conn=writer_redis_conn
+            # )
 
             _ = await writer_redis_conn.zadd(
                 name=discarded_transactions_key,
@@ -417,73 +501,18 @@ async def payload_to_dag_processor_task(event_data):
             if tentative_block_height_event_data > settings.pruning.segment_size and tentative_block_height_event_data % settings.pruning.segment_size == 1:
                 await identify_prune_target(project_id, tentative_block_height_event_data)
                 fetch_prev_cid_for_dag_block_creation = False
-            async for attempt in AsyncRetrying(
-                    # we want to retry as soon since there are enough timed waits in the asyncio awaited operations
-                    reraise=True, wait=wait_random(min=1, max=2),
-                    retry=retry_if_exception(DAGCreationException)
-            ):
-                with attempt:
-                    t = attempt.retry_state.attempt_number
-                    if t > 1:
-                        custom_logger.info(
-                            'In-order DAG block creation | Project ID: %s | Tentative Height: %s | Retry attempt: %s',
-                            project_id, tentative_block_height_event_data, t
-                        )
-                        if not await lock.owned():
-                            # reacquire lock
-                            if not await lock.locked() or not await lock.owned():
-                                custom_logger.warning(
-                                    'Project specific lock expired while retrying DAG Creation '
-                                    '| Project %s | Tentative Height %s | Retry attempt number: %s',
-                                    project_id, tentative_block_height_event_data, t
-                                )
-                                r_a = await lock.acquire()
-                                if not r_a:
-                                    custom_logger.warning(
-                                        'Project specific lock expired while retrying DAG Creation | Failed to reacquire'
-                                        '| Project %s | Tentative Height %s | Retry attempt number: %s',
-                                        project_id, tentative_block_height_event_data, t
-                                    )
-                                    raise RedisLockAcquisitionFailure
-                            # locked by (*ANY*) process and that happens to be me: # if lock.locked() and lock.owned() #
-                            else:
-                                # extend lock for safety
-                                await lock.extend(additional_time=settings.webhook_listener.redis_lock_lifetime)
-                                custom_logger.info(
-                                    'In-order DAG block creation | Retry attempt: %s | Project specific lock lifetime '
-                                    'extended successfully %s | Tentative height: %s',
-                                    t, project_id, tentative_block_height_event_data
-                                )
-                    _dag_cid, dag_block = await dag_utils.create_dag_block_timebound(
-                        tx_hash=tx_hash,
-                        project_id=project_id,
-                        tentative_block_height=tentative_block_height_event_data,
-                        payload_cid=event_data['event_data']['snapshotCid'],
-                        timestamp=event_data['event_data']['timestamp'],
-                        reader_redis_conn=reader_redis_conn,
-                        writer_redis_conn=writer_redis_conn,
-                        prev_cid_fetch=fetch_prev_cid_for_dag_block_creation,
-                        ipfs_write_client=app.ipfs_write_client
-                    )
-                    custom_logger.info('Created DAG block with CID %s at height %s', _dag_cid,
-                                       tentative_block_height_event_data)
-            # clear from pending set
-            _ = await writer_redis_conn.zremrangebyscore(
-                name=redis_keys.get_pending_transactions_key(project_id),
-                min=tentative_block_height_event_data,
-                max=tentative_block_height_event_data
+            _dag_cid, dag_block = await in_order_block_creation_and_state_update(
+                request_id=request_id,
+                project_id=project_id,
+                tx_hash=event_data.txHash,
+                snapshot_cid=event_data.event_data.snapshotCid,
+                timestamp=event_data.event_data.timestamp,
+                tentative_block_height_event_data=tentative_block_height_event_data,
+                custom_logger_obj=custom_logger,
+                reader_redis_conn=reader_redis_conn,
+                writer_redis_conn=writer_redis_conn,
+                fetch_prev_cid_for_dag_block_creation=fetch_prev_cid_for_dag_block_creation
             )
-            if _:
-                custom_logger.debug(
-                    'Cleared entry for requestID %s from pending set at block height %s | project ID %s',
-                    request_id, tentative_block_height_event_data, project_id
-                )
-            else:
-                custom_logger.debug(
-                    'Not sure if entry cleared for requestID %s from pending set at block height %s | '
-                    'Redis return: %s | Project ID : %s',
-                    request_id, tentative_block_height_event_data, _, project_id
-                )
 
             # process diff at this new block height
             # send out to processing queue of diff calculation service
@@ -492,9 +521,9 @@ async def payload_to_dag_processor_task(event_data):
                     project_id=project_id,
                     dagCid=_dag_cid,
                     lastDagCid=dag_block.prevCid['/'],
-                    payloadCid=event_data['event_data']['snapshotCid'],
+                    payloadCid=event_data.event_data.snapshotCid,
                     txHash=tx_hash,
-                    timestamp=event_data['event_data']['timestamp'],
+                    timestamp=event_data.event_data.timestamp,
                     tentative_block_height=tentative_block_height_event_data
                 )
                 async with app.rmq_channel_pool.acquire() as channel:
@@ -525,7 +554,7 @@ async def payload_to_dag_processor_task(event_data):
                     aiohttp_session=app.aiohttp_client_session,
                     url=cb_url,
                     payload={
-                        'commitID': event_data['event_data']['payloadCommitId'],
+                        'commitID': event_data.event_data.payloadCommitId,
                         'projectID': project_id,
                         'status': True
                     }
@@ -533,7 +562,7 @@ async def payload_to_dag_processor_task(event_data):
 
             # --- pending DAG block creations once current tx confirmation has inserted its corresponding DAG block ---
             # get txs from higher heights which have received a confirmation callback
-            # and form a continous sequence
+            # and form a continuous sequence
             # hence, are ready to be added to chain
             all_pending_txs = await reader_redis_conn.zrangebyscore(
                 name=redis_keys.get_pending_transactions_key(project_id),
@@ -559,52 +588,22 @@ async def payload_to_dag_processor_task(event_data):
                         'Processing queued confirmed tx %s at tentative_block_height: %s',
                         pending_tx_obj, _tt_block_height
                     )
-                    async for attempt in AsyncRetrying(
-                            reraise=True,
-                            # we want to retry as soon since there are enough timed waits in the asyncio awaited operations
-                            # also helps with lock not expiring midway while waiting
-                            wait=wait_random(min=1, max=2),
-                            retry=retry_if_exception(DAGCreationException)
-                    ):
-                        with attempt:
-                            t = attempt.retry_state.attempt_number
-                            if t > 1:
-                                custom_logger.info(
-                                    'Queued DAG block creation %s after successful in-order DAG block creation '
-                                    '| Project ID: %s | Tentative Height: %s | Retry attempt: %s',
-                                    pending_tx_obj.requestID, project_id, _tt_block_height, t
-                                )
-                                if not await lock.owned():
-                                    # reacquire lock
-                                    custom_logger.warning(
-                                        'Project specific lock expired while retrying DAG Creation '
-                                        '| Project %s | Tentative Height %s | Retry attempt number: %s',
-                                        project_id, tentative_block_height_event_data, t
-                                    )
-                                    r_a = await lock.acquire()
-                                    if not r_a:
-                                        custom_logger.warning(
-                                            'Project specific lock expired while retrying DAG Creation | Failed to reacquire'
-                                            '| Project %s | Tentative Height %s | Retry attempt number: %s',
-                                            project_id, _tt_block_height, t
-                                        )
-                                        raise RedisLockAcquisitionFailure
+                    """ Create the dag block for this event """
+                    _dag_cid, dag_block = await in_order_block_creation_and_state_update(
+                        project_id=project_id,
+                        tx_hash=pending_tx_obj.event_data.txHash,
+                        snapshot_cid=pending_tx_obj.event_data.snapshotCid,
+                        timestamp=int(pending_tx_obj.event_data.timestamp),
+                        request_id=pending_tx_obj.requestID,
+                        tentative_block_height_event_data=_tt_block_height,
+                        custom_logger_obj=custom_logger,
+                        reader_redis_conn=reader_redis_conn,
+                        writer_redis_conn=writer_redis_conn,
+                        fetch_prev_cid_for_dag_block_creation=pending_q_fetch_prev_cid_for_dag_block_creation
+                    )
 
-                            """ Create the dag block for this event """
-                            _dag_cid, dag_block = await dag_utils.create_dag_block_timebound(
-                                tx_hash=pending_tx_obj.event_data.txHash,
-                                project_id=project_id,
-                                tentative_block_height=_tt_block_height,
-                                payload_cid=pending_tx_obj.event_data.snapshotCid,
-                                timestamp=int(pending_tx_obj.event_data.timestamp),
-                                reader_redis_conn=reader_redis_conn,
-                                writer_redis_conn=writer_redis_conn,
-                                prev_cid_fetch=pending_q_fetch_prev_cid_for_dag_block_creation,
-                                ipfs_write_client=app.ipfs_write_client
-                            )
-                            custom_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
-                                               _tt_block_height)
-                            pending_q_fetch_prev_cid_for_dag_block_creation = True
+                    custom_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
+                                       _tt_block_height)
 
                     pending_blocks_finalized.append({
                         'status': 'Inserted', 'atHeight': _tt_block_height, 'dagCID': _dag_cid
@@ -646,22 +645,6 @@ async def payload_to_dag_processor_task(event_data):
                             'No diff calculation request to publish for first block | At height %s | Project %s',
                             _tt_block_height, project_id
                         )
-                    # clear from pending set
-                    _ = await writer_redis_conn.zrem(
-                        redis_keys.get_pending_transactions_key(project_id),
-                        pending_tx_entry
-                    )
-                    if _:
-                        custom_logger.debug(
-                            'Cleared entry for requestID %s from pending set at block height %s | project ID %s',
-                            pending_tx_obj.requestID, _tt_block_height, project_id
-                        )
-                    else:
-                        custom_logger.debug(
-                            'Not sure if entry cleared for requestID %s from pending set at block height %s | '
-                            'Redis return: %s | Project ID : %s',
-                            pending_tx_obj.requestID, _tt_block_height, _, project_id
-                        )
                     # send commit ID confirmation callback
                     if cb_url:
                         await send_commit_callback(
@@ -673,15 +656,6 @@ async def payload_to_dag_processor_task(event_data):
                                 'status': True
                             }
                         )
-
-    # release aioredis lock
-    try:
-        await lock.release()
-    except aioredis.exceptions.LockNotOwnedError:
-        custom_logger.error(
-            'Error releasing lock for project ID %s since lock not owned by current task',
-            project_id
-        )
 
 
 async def identify_prune_target(project_id, tentative_max_height):
@@ -738,11 +712,8 @@ async def create_dag(
         x_hook_signature: str = Header(None),
 ):
     # global project_specific_locks_multiprocessing_map
-    global project_specific_locks_multiprocessing_map
     event_data = await request.json()
     response_body = dict()
-    project_specific_locks_multiprocessing_map[os.getpid()] = event_data
-    rest_logger.debug('Updated global dict: %s', project_specific_locks_multiprocessing_map)
     response_status_code = 200
     # Verify the payload that has arrived.
     if x_hook_signature and settings.webhook_listener.validate_header_sig:
@@ -759,8 +730,8 @@ async def create_dag(
         if event_data['event_name'] == 'RecordAppended':
             rest_logger.debug(event_data)
             try:
-                asyncio.ensure_future(payload_to_dag_processor_task(event_data))
-            except DAGCreationException:
+                asyncio.ensure_future(payload_to_dag_processor_task(event_data=event_data))
+            except IPFSDAGCreationException:
                 response_status_code = 500
 
     response.status_code = response_status_code

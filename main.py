@@ -14,7 +14,7 @@ from utils import redis_keys
 from functools import partial
 from utils import retrieval_utils
 from utils.diffmap_utils import process_payloads_for_diff
-from data_models import ContainerData, PayloadCommit
+from data_models import PayloadCommit
 from pydantic import ValidationError
 from aio_pika import ExchangeType, DeliveryMode, Message
 from aio_pika.pool import Pool
@@ -817,87 +817,3 @@ async def get_block_data(
 
     """ Return the payload data """
     return {prev_dag_cid: payload}
-
-
-# Get the containerData using container_id
-@app.get("/query/containerData/{container_id:str}")
-async def get_container_data(
-        request: Request,
-        response: Response,
-        container_id: str
-):
-    """
-        - retrieve the containerData from containerData key
-        - return containerData
-    """
-
-    rest_logger.debug("Retrieving containerData for container_id: %s",container_id)
-    container_data_key = f"containerData:{container_id}"
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await reader_redis_conn.hgetall(container_data_key)
-    out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-    if not out:
-        return {"error": f"The container_id:{container_id} is invalid"}
-    try:
-        container_data = ContainerData(**out)
-    except ValidationError as verr:
-        rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
-        return {}
-
-    return container_data.dict()
-
-
-@app.get("/query/executingContainers")
-async def get_executing_containers(
-        request: Request,
-        response: Response,
-        maxCount: int = Query(default=10),
-        data: str = Query(default="false")
-):
-    """
-        - Get all the container_id's from the executingContainers redis SET
-        - if the data field is true, then get the containerData for each of the container as well
-    """
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    if isinstance(data, str):
-        if data.lower() == "true":
-            data = True
-        else:
-            data = False
-    else:
-        data = False
-
-    executing_containers_key = f"executingContainers"
-    all_container_ids = await reader_redis_conn.smembers(executing_containers_key)
-
-    containers = list()
-    for container_id in all_container_ids:
-        container_id = container_id.decode('utf-8')
-        if data is True:
-            container_data_key = f"containerData:{container_id}"
-            out = await reader_redis_conn.hgetall(container_data_key)
-            out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-            if not out:
-                _container = {
-                    'containerId': container_id,
-                    'containerData': dict()
-                }
-            else:
-                try:
-                    container_data = ContainerData(**out)
-                except ValidationError as verr:
-                    rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
-                    _container = {
-                        'containerId': container_id,
-                        'containerData': dict()
-                    }
-                else:
-                    _container = {
-                        'containerId': container_id,
-                        'containerData': container_data.dict()
-                    }
-            containers.append(_container)
-        else:
-            containers.append(container_id)
-
-    return dict(count=len(containers), containers=containers)
