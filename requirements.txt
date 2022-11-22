@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-git+https://github.com/blockvigil/maticvigil-python-sdk.git@0e364f5ec557d3f7cbd708aed65ca30f9e0fb08c
 eth_utils
 async_timeout
 hiredis
@@ -8,7 +7,6 @@ aiofiles
 aiohttp
 redis>=4.2.0rc1
 coloredlogs
-#git+https://github.com/ipfs/py-ipfs-http-client.git
 git+https://github.com/powerloom/IPFS-Toolkit-Python.git@3096b468ab0297b8ebdb5a7227a22fba8a1a8f8e
 dynaconf
 backports.pbkdf2

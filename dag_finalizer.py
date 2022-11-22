@@ -9,12 +9,12 @@ from async_ipfshttpclient.main import AsyncIPFSClientSingleton
 from utils import dag_utils
 from utils.redis_conn import RedisPool
 from aio_pika import ExchangeType, DeliveryMode, Message
-from tenacity import retry_if_exception, wait_random_exponential, stop_after_attempt, retry, AsyncRetrying, wait_random
 from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional
-from data_models import PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback
-from multiprocessing import Manager, Lock as MPLock
+from data_models import PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, \
+    DAGFinalizerCBEventData
+from multiprocessing import Manager
 from redis import asyncio as aioredis
 import asyncio
 import aiohttp
@@ -75,12 +75,12 @@ class CustomAdapter(logging.LoggerAdapter):
 
 def project_lock_atomic_acquisition(fn):
     @wraps(fn)
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         cb_data: DAGFinalizerCallback = DAGFinalizerCallback.parse_obj(kwargs['event_data'])
         project_id = cb_data.event_data.projectId
         global project_specific_locks_multiprocessing_map
         if project_id not in project_specific_locks_multiprocessing_map.keys():
-            project_specific_locks_multiprocessing_map.update({project_id: MPLock()})
+            project_specific_locks_multiprocessing_map.update({project_id: multiprocess_manager.Lock()})
             rest_logger.debug(
                 '%s worker created new MP Lock object in shared map for project ID %s | %s',
                 os.getpid(), project_id, cb_data
@@ -96,11 +96,11 @@ def project_lock_atomic_acquisition(fn):
         )
         kwargs['event_data'] = cb_data
         try:
-            return fn(*args, **kwargs)
+            return await fn(*args, **kwargs)
         except Exception as e:
-            rest_logger.debug(
-                '%s worker failed processing callback for DAG finalization | project ID %s : %s',
-                os.getpid(), project_id, cb_data
+            rest_logger.error(
+                '%s worker failed processing callback for DAG finalization | project ID %s : %s | %s',
+                os.getpid(), project_id, cb_data, e, exc_info=True
             )
         finally:
             project_specific_locks_multiprocessing_map[project_id].release()
@@ -108,52 +108,80 @@ def project_lock_atomic_acquisition(fn):
                 '%s worker released MP Lock object in shared map for project ID %s: %s',
                 os.getpid(), project_id, kwargs['event_data']
             )
+
     return wrapper
 
 
 async def in_order_block_creation_and_state_update(
-        project_id,
-        tx_hash,
-        snapshot_cid,
-        timestamp,
-        request_id,
-        tentative_block_height_event_data,
+        dag_finalizer_callback_obj: DAGFinalizerCallback,
+        post_finalization_pending_txs,  # pending tx entries from (current callback height+1)
         custom_logger_obj,
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
-        fetch_prev_cid_for_dag_block_creation: bool
+        aiohttp_client_session: aiohttp.ClientSession
 ):
-    _dag_cid, dag_block = await dag_utils.create_dag_block(
-        tx_hash=tx_hash,
-        project_id=project_id,
-        tentative_block_height=tentative_block_height_event_data,
-        payload_cid=snapshot_cid,
-        timestamp=timestamp,
+    blocks_finalized = list()
+    project_id = dag_finalizer_callback_obj.event_data.projectId
+    top_level_tentative_height_cb = dag_finalizer_callback_obj.event_data.tentativeBlockHeight
+    fetch_prev_cid_for_dag_block_creation = True
+    if top_level_tentative_height_cb > settings.pruning.segment_size and \
+            top_level_tentative_height_cb % settings.pruning.segment_size == 1:
+        await identify_prune_target(project_id, top_level_tentative_height_cb)
+        fetch_prev_cid_for_dag_block_creation = False
+    dag_cid, dag_block = await dag_utils.create_dag_block_update_project_state(
+        tx_hash=dag_finalizer_callback_obj.txHash,
+        request_id=dag_finalizer_callback_obj.requestID,
+        project_id=dag_finalizer_callback_obj.event_data.projectId,
+        tentative_block_height_event_data=top_level_tentative_height_cb,
+        snapshot_cid=dag_finalizer_callback_obj.event_data.snapshotCid,
+        timestamp=dag_finalizer_callback_obj.event_data.timestamp,
         reader_redis_conn=reader_redis_conn,
         writer_redis_conn=writer_redis_conn,
-        prev_cid_fetch=fetch_prev_cid_for_dag_block_creation,
-        ipfs_write_client=app.ipfs_write_client
+        fetch_prev_cid_for_dag_block_creation=fetch_prev_cid_for_dag_block_creation,
+        ipfs_write_client=app.ipfs_writer_client,
+        custom_logger_obj=custom_logger_obj,
+        payload_commit_id=dag_finalizer_callback_obj.event_data.payloadCommitId,
+        aiohttp_client_session=aiohttp_client_session
     )
-    custom_logger_obj.info('Created DAG block with CID %s at height %s', _dag_cid,
-                       tentative_block_height_event_data)
-    # clear from pending set
-    _ = await writer_redis_conn.zremrangebyscore(
-        name=redis_keys.get_pending_transactions_key(project_id),
-        min=tentative_block_height_event_data,
-        max=tentative_block_height_event_data
+    blocks_finalized.append(dag_block)
+    all_qualified_dag_addition_txs = filter(
+        lambda x: PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1,
+        post_finalization_pending_txs
     )
-    if _:
-        custom_logger_obj.debug(
-            'Cleared entry for requestID %s from pending set at block height %s | project ID %s',
-            request_id, tentative_block_height_event_data, project_id
-        )
-    else:
-        custom_logger_obj.debug(
-            'Not sure if entry cleared for requestID %s from pending set at block height %s | '
-            'Redis return: %s | Project ID : %s',
-            request_id, tentative_block_height_event_data, _, project_id
-        )
-    return _dag_cid, dag_block
+    cur_max_height_project = top_level_tentative_height_cb
+    for pending_tx_entry, _tt_block_height in all_qualified_dag_addition_txs:
+        pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(pending_tx_entry)
+        _tt_block_height = int(_tt_block_height)
+        pending_q_fetch_prev_cid_for_dag_block_creation = True
+        if _tt_block_height == cur_max_height_project + 1:
+            if _tt_block_height > settings.pruning.segment_size and \
+                    _tt_block_height % settings.pruning.segment_size == 1:
+                await identify_prune_target(project_id, _tt_block_height)
+                pending_q_fetch_prev_cid_for_dag_block_creation = False
+            custom_logger_obj.info(
+                'Processing queued confirmed tx %s at tentative_block_height: %s',
+                pending_tx_obj, _tt_block_height
+            )
+            """ Create the dag block for this event """
+            dag_cid, dag_block = await dag_utils.create_dag_block_update_project_state(
+                project_id=project_id,
+                tx_hash=pending_tx_obj.event_data.txHash,
+                snapshot_cid=pending_tx_obj.event_data.snapshotCid,
+                timestamp=int(pending_tx_obj.event_data.timestamp),
+                request_id=pending_tx_obj.requestID,
+                tentative_block_height_event_data=_tt_block_height,
+                custom_logger_obj=custom_logger_obj,
+                reader_redis_conn=reader_redis_conn,
+                writer_redis_conn=writer_redis_conn,
+                ipfs_write_client=app.ipfs_writer_client,
+                fetch_prev_cid_for_dag_block_creation=pending_q_fetch_prev_cid_for_dag_block_creation,
+                payload_commit_id=pending_tx_obj.event_data.payloadCommitId,
+                aiohttp_client_session=aiohttp_client_session
+            )
+            cur_max_height_project = _tt_block_height
+            blocks_finalized.append(dag_block)
+    return blocks_finalized
+    # return _dag_cid, dag_block
 
 
 @app.on_event('startup')
@@ -186,7 +214,7 @@ async def payload_to_dag_processor_task(event_data: DAGFinalizerCallback):
     project_id = event_data.event_data.projectId
     tx_hash = event_data.txHash
     request_id = event_data.requestID
-    asyncio.current_task(asyncio.get_running_loop()).set_name('TxProcessor-'+tx_hash)
+    asyncio.current_task(asyncio.get_running_loop()).set_name('TxProcessor-' + tx_hash)
     custom_logger = CustomAdapter(rest_logger, {'txHash': tx_hash})
     tentative_block_height_event_data = int(event_data.event_data.tentativeBlockHeight)
     writer_redis_conn: aioredis.Redis = app.writer_redis_pool
@@ -202,9 +230,6 @@ async def payload_to_dag_processor_task(event_data: DAGFinalizerCallback):
         "Event Data Tentative Block Height: %s | Finalized Project %s Block Height: %s",
         tentative_block_height_event_data, project_id, finalized_block_height_project
     )
-
-    # retrieve callback URL for project ID
-    cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
     if tentative_block_height_event_data <= finalized_block_height_project:
         custom_logger.debug("Discarding event at height %s | %s", tentative_block_height_event_data, event_data)
         await dag_utils.discard_event(
@@ -288,8 +313,8 @@ async def payload_to_dag_processor_task(event_data: DAGFinalizerCallback):
             num_block_to_wait_for_resubmission = 10
             pending_confirmation_callbacks_txs_filtered = list(filter(
                 lambda x:
-                    PendingTransaction.parse_raw(x[0]).lastTouchedBlock == 0 and
-                    int(x[1]) + num_block_to_wait_for_resubmission <= tentative_block_height_event_data,
+                PendingTransaction.parse_raw(x[0]).lastTouchedBlock == 0 and
+                int(x[1]) + num_block_to_wait_for_resubmission <= tentative_block_height_event_data,
                 pending_confirmation_callbacks_txs
             ))
             custom_logger.info(
@@ -424,13 +449,13 @@ async def payload_to_dag_processor_task(event_data: DAGFinalizerCallback):
             # it did not move the DAG chain ahead to (finalized_height+1). *let that sink in*
             # this can happen because of inconsistencies in updating the keys in the data store (Redis, atm)
             # where even if the DAG block did get created in IPFS, the set() on finalized height of the project failed
-            # ref: dag_utils.
             threshold_before_self_healing_check = 5
-            if tentative_block_height_event_data > (finalized_block_height_project + threshold_before_self_healing_check)-1:
+            if tentative_block_height_event_data > (
+                    finalized_block_height_project + threshold_before_self_healing_check) - 1:
                 immediate_tx_next_to_finalized_filter = list(filter(
                     lambda x:
                     PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1 and
-                    int(x[1]) == finalized_block_height_project+1,
+                    int(x[1]) == finalized_block_height_project + 1,
                     pending_confirmation_callbacks_txs
                 ))
                 if len(immediate_tx_next_to_finalized_filter) == 1:
@@ -443,219 +468,85 @@ async def payload_to_dag_processor_task(event_data: DAGFinalizerCallback):
                         'project state...',
                         immediate_tx_next_to_finalized_filter[0][1], project_id, finalized_block_height_project
                     )
+                    # simulate DAG finalization callback at this height and pass in to DAG block creation routine
+                    dag_finalization_cb = DAGFinalizerCallback(
+                        txHash=immediate_tx_pending_obj.txHash,
+                        requestID=immediate_tx_pending_obj.requestID,
+                        event_data=DAGFinalizerCBEventData.parse_obj(immediate_tx_pending_obj.event_data)
+                    )
+                    blocks_created = await in_order_block_creation_and_state_update(
+                        dag_finalizer_callback_obj=dag_finalization_cb,
+                        post_finalization_pending_txs=list(),
+                        custom_logger_obj=custom_logger,
+                        reader_redis_conn=reader_redis_conn,
+                        writer_redis_conn=writer_redis_conn,
+                        aiohttp_client_session=app.aiohttp_client_session
+                    )
+                    custom_logger.info(
+                        'Finished processing self healing DAG block insertion at height %s | '
+                        'DAG blocks finalized in total: %s',
+                        finalized_block_height_project + 1, blocks_created
+                    )
 
     elif tentative_block_height_event_data == finalized_block_height_project + 1:
         """
             An event which is in-order has arrived. Create a dag block for this event
             and process all other pending events for this project
         """
-        pending_tx_set_entry = None  # will be used to reset lastTouchBlocked tag in pending set
         all_pending_tx_entries = await reader_redis_conn.zrangebyscore(
             name=redis_keys.get_pending_transactions_key(project_id),
             min=float('-inf'),
             max=float('+inf'),
-            withscores=False
+            withscores=True
         )
         # custom_logger.debug('All pending transactions for project %s in key %s : %s',
         #                   project_id, redis_keys.get_pending_transactions_key(project_id),
         #                   all_pending_tx_entries)
         is_pending = False
-        for k in all_pending_tx_entries:
-            pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(k)
-            # custom_logger.debug('Comparing event data tx hash %s with pending tx obj tx hash %s '
-            #                   '| tx obj itself: %s',
-            #                   event_data['txHash'], pending_tx_obj.txHash, pending_tx_obj)
-            if pending_tx_obj.requestID != "":
-                if pending_tx_obj.requestID == request_id:
-                    is_pending = True
-                    break
+        cur_pending_tx_entry_filter = filter(
+            lambda x: PendingTransaction.parse_raw(x[0]).requestID == request_id or
+                      int(x[1]) == tentative_block_height_event_data,
+            all_pending_tx_entries
+        )
+        if next(cur_pending_tx_entry_filter):
+            try:
+                next(cur_pending_tx_entry_filter)
+            # this ensures there is only one element in the iterable produced by filter()
+            except StopIteration:
+                is_pending = True
             else:
-                if pending_tx_obj.event_data.tentativeBlockHeight == tentative_block_height_event_data:
-                    is_pending = True
-                    break
-        if not is_pending:
-            discarded_transactions_key = redis_keys.get_discarded_transactions_key(project_id)
-
+                custom_logger.critical(
+                    "Discarding event because requestID %s found more than 1 pending transactions | Project ID %s | %s",
+                    request_id, project_id, event_data
+                )
+        else:
             custom_logger.error(
                 "Discarding event because requestID %s not in pending transactions | Project ID %s | %s",
                 request_id, project_id, event_data
             )
-            # FIXME: why was the block below allowed to execute if it achieves nothing?
-            # _ = await dag_utils.clear_payload_commit_data(
-            #     project_id=project_id,
-            #     tentative_height_pending_tx_entry=0,  # this has no effect, and it is fine
-            #     writer_redis_conn=writer_redis_conn
-            # )
-
+        if not is_pending:
+            discarded_transactions_key = redis_keys.get_discarded_transactions_key(project_id)
             _ = await writer_redis_conn.zadd(
                 name=discarded_transactions_key,
                 mapping={request_id: tentative_block_height_event_data}
             )
         else:
-            fetch_prev_cid_for_dag_block_creation = True
-            # check if the creation of a DAG block at this height will result in segment size overflow
-            # NOTE: there might be queued pending blocks that might get processed after the first
-            #       in-order insertion, where the segment size overflow condition might be satisfied
-            #       Not handling it will not break anything except for the fact that we might have unevenly sized
-            #       pruned and backed up segments.
-            if tentative_block_height_event_data > settings.pruning.segment_size and tentative_block_height_event_data % settings.pruning.segment_size == 1:
-                await identify_prune_target(project_id, tentative_block_height_event_data)
-                fetch_prev_cid_for_dag_block_creation = False
-            _dag_cid, dag_block = await in_order_block_creation_and_state_update(
-                request_id=request_id,
-                project_id=project_id,
-                tx_hash=event_data.txHash,
-                snapshot_cid=event_data.event_data.snapshotCid,
-                timestamp=event_data.event_data.timestamp,
-                tentative_block_height_event_data=tentative_block_height_event_data,
+            blocks_created = await in_order_block_creation_and_state_update(
+                dag_finalizer_callback_obj=event_data,
+                post_finalization_pending_txs=filter(
+                    lambda x: int(x[1]) > tentative_block_height_event_data,
+                    all_pending_tx_entries
+                ),
                 custom_logger_obj=custom_logger,
                 reader_redis_conn=reader_redis_conn,
                 writer_redis_conn=writer_redis_conn,
-                fetch_prev_cid_for_dag_block_creation=fetch_prev_cid_for_dag_block_creation
+                aiohttp_client_session=app.aiohttp_client_session
             )
-
-            # process diff at this new block height
-            # send out to processing queue of diff calculation service
-            if dag_block.prevCid:
-                diff_calculation_request = DiffCalculationRequest(
-                    project_id=project_id,
-                    dagCid=_dag_cid,
-                    lastDagCid=dag_block.prevCid['/'],
-                    payloadCid=event_data.event_data.snapshotCid,
-                    txHash=tx_hash,
-                    timestamp=event_data.event_data.timestamp,
-                    tentative_block_height=tentative_block_height_event_data
-                )
-                async with app.rmq_channel_pool.acquire() as channel:
-                    # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
-                    exchange = await channel.get_exchange(
-                        settings.rabbitmq.setup['core']['exchange']
-                    )
-                    message = Message(
-                        diff_calculation_request.json().encode('utf-8'),
-                        delivery_mode=DeliveryMode.PERSISTENT,
-                    )
-                    await exchange.publish(
-                        message=message,
-                        routing_key='diff-calculation'
-                    )
-                    custom_logger.debug(
-                        'Published diff calculation request | At height %s | Project %s',
-                        tentative_block_height_event_data, project_id
-                    )
-            else:
-                custom_logger.debug(
-                    'No diff calculation request to publish for first block | At height %s | Project %s',
-                    tentative_block_height_event_data, project_id
-                )
-            # send commit ID confirmation callback
-            if cb_url:
-                await send_commit_callback(
-                    aiohttp_session=app.aiohttp_client_session,
-                    url=cb_url,
-                    payload={
-                        'commitID': event_data.event_data.payloadCommitId,
-                        'projectID': project_id,
-                        'status': True
-                    }
-                )
-
-            # --- pending DAG block creations once current tx confirmation has inserted its corresponding DAG block ---
-            # get txs from higher heights which have received a confirmation callback
-            # and form a continuous sequence
-            # hence, are ready to be added to chain
-            all_pending_txs = await reader_redis_conn.zrangebyscore(
-                name=redis_keys.get_pending_transactions_key(project_id),
-                min=tentative_block_height_event_data + 1,
-                max='+inf',
-                withscores=True
+            custom_logger.info(
+                'Finished processing in order DAG block insertion at height %s | '
+                'DAG blocks finalized in total: %s',
+                tentative_block_height_event_data, blocks_created
             )
-            all_qualified_dag_addition_txs = filter(
-                lambda x: PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1,
-                all_pending_txs
-            )
-            pending_blocks_finalized = list()
-            cur_max_height_project = tentative_block_height_event_data
-            for pending_tx_entry, _tt_block_height in all_qualified_dag_addition_txs:
-                pending_tx_obj: PendingTransaction = PendingTransaction.parse_raw(pending_tx_entry)
-                _tt_block_height = int(_tt_block_height)
-                pending_q_fetch_prev_cid_for_dag_block_creation = True
-                if _tt_block_height == cur_max_height_project + 1:
-                    if _tt_block_height > settings.pruning.segment_size and _tt_block_height % settings.pruning.segment_size == 1:
-                        await identify_prune_target(project_id, _tt_block_height)
-                        pending_q_fetch_prev_cid_for_dag_block_creation = False
-                    custom_logger.info(
-                        'Processing queued confirmed tx %s at tentative_block_height: %s',
-                        pending_tx_obj, _tt_block_height
-                    )
-                    """ Create the dag block for this event """
-                    _dag_cid, dag_block = await in_order_block_creation_and_state_update(
-                        project_id=project_id,
-                        tx_hash=pending_tx_obj.event_data.txHash,
-                        snapshot_cid=pending_tx_obj.event_data.snapshotCid,
-                        timestamp=int(pending_tx_obj.event_data.timestamp),
-                        request_id=pending_tx_obj.requestID,
-                        tentative_block_height_event_data=_tt_block_height,
-                        custom_logger_obj=custom_logger,
-                        reader_redis_conn=reader_redis_conn,
-                        writer_redis_conn=writer_redis_conn,
-                        fetch_prev_cid_for_dag_block_creation=pending_q_fetch_prev_cid_for_dag_block_creation
-                    )
-
-                    custom_logger.info('Created enqueued DAG block with CID %s at height %s', _dag_cid,
-                                       _tt_block_height)
-
-                    pending_blocks_finalized.append({
-                        'status': 'Inserted', 'atHeight': _tt_block_height, 'dagCID': _dag_cid
-                    })
-                    cur_max_height_project = _tt_block_height
-                    # send out diff calculation request
-                    if dag_block.prevCid:
-                        diff_calculation_request = DiffCalculationRequest(
-                            project_id=project_id,
-                            dagCid=_dag_cid,
-                            lastDagCid=dag_block.prevCid['/'],
-                            payloadCid=pending_tx_obj.event_data.snapshotCid,
-                            txHash=pending_tx_obj.event_data.txHash,
-                            timestamp=pending_tx_obj.event_data.timestamp,
-                            tentative_block_height=_tt_block_height
-                        )
-                        async with app.rmq_channel_pool.acquire() as channel:
-                            # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
-                            # always ensure exchanges and queues are initialized as part of launch sequence,
-                            # not to be checked here
-                            exchange = await channel.get_exchange(
-                                name=settings.rabbitmq.setup['core']['exchange'],
-                                ensure=False
-                            )
-                            message = Message(
-                                diff_calculation_request.json().encode('utf-8'),
-                                delivery_mode=DeliveryMode.PERSISTENT,
-                            )
-                            await exchange.publish(
-                                message=message,
-                                routing_key='diff-calculation'
-                            )
-                            custom_logger.debug(
-                                'Published diff calculation request | At height %s | Project %s',
-                                _tt_block_height, project_id
-                            )
-                    else:
-                        custom_logger.debug(
-                            'No diff calculation request to publish for first block | At height %s | Project %s',
-                            _tt_block_height, project_id
-                        )
-                    # send commit ID confirmation callback
-                    if cb_url:
-                        await send_commit_callback(
-                            aiohttp_session=app.aiohttp_client_session,
-                            url=cb_url,
-                            payload={
-                                'commitID': pending_tx_obj.event_data.payloadCommitId,
-                                'projectID': project_id,
-                                'status': True
-                            }
-                        )
 
 
 async def identify_prune_target(project_id, tentative_max_height):
@@ -692,17 +583,18 @@ async def identify_prune_target(project_id, tentative_max_height):
     else:
         begin_height = 1
         if len(p_) > 0:
-            sorted_keys = sorted(list(p_.keys()), key = lambda x: (len(x),x))
-            sorted_dict = {k:p_[k] for k in sorted_keys}
+            sorted_keys = sorted(list(p_.keys()), key=lambda x: (len(x), x))
+            sorted_dict = {k: p_[k] for k in sorted_keys}
             last_dag_segment = ProjectDAGChainSegmentMetadata.parse_raw(sorted_dict[sorted_keys[-1]])
-            begin_height = last_dag_segment.endHeight+1
+            begin_height = last_dag_segment.endHeight + 1
         new_project_dag_segment = ProjectDAGChainSegmentMetadata(
             beginHeight=begin_height,
             endHeight=tentative_max_height - 1,
             endDAGCID=last_dag_cid,
             storageType='pending'
         )
-        await writer_redis_conn.hset(redis_keys.get_project_dag_segments_key(project_id),new_project_dag_segment.endHeight,new_project_dag_segment.json())
+        await writer_redis_conn.hset(redis_keys.get_project_dag_segments_key(project_id),
+                                     new_project_dag_segment.endHeight, new_project_dag_segment.json())
 
 
 @app.post('/')
@@ -736,15 +628,3 @@ async def create_dag(
 
     response.status_code = response_status_code
     return response_body
-
-
-async def send_commit_callback(aiohttp_session: aiohttp.ClientSession, url, payload):
-    if type(url) is bytes:
-        url = url.decode('utf-8')
-    try:
-        async with aiohttp_session.post(url=url, json=payload) as resp:
-            json_response = await resp.json()
-    except Exception as e:
-        rest_logger.error('Failed to push callback for commit ID')
-        rest_logger.error({'url': url, 'payload': payload})
-        rest_logger.error(e, exc_info=True)
