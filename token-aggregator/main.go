@@ -33,7 +33,7 @@ var auditProtocolBaseURL string
 var tokenPairTokenMapping map[string]TokenDataRefs
 var snapshotCallbackProjectLocks map[string]*sync.Mutex
 
-const NAMESPACE = "UNISWAPV2"
+const NAMESPACE string = "UNISWAPV2"
 
 type TokenDataRefs struct {
 	token0Ref *TokenData
@@ -55,7 +55,7 @@ func main() {
 	logger.InitLogger()
 
 	ReadSettings()
-	auditProtocolBaseURL = fmt.Sprintf("http://%s:%d/", settingsObj.Host, settingsObj.Port)
+	auditProtocolBaseURL = fmt.Sprintf("http://%s:%d", settingsObj.Host, settingsObj.Port)
 	var pairContractAddressesFile string
 	snapshotCallbackProjectLocks = make(map[string]*sync.Mutex)
 
@@ -457,6 +457,11 @@ func FetchTokenSummaryLatestBlockHeight() int64 {
 	for retryCount := 0; retryCount < 3; retryCount++ {
 		res := redisClient.Get(ctx, key)
 		if res.Err() != nil {
+			if res.Err() == redis.Nil {
+				log.Debugf("Waiting for tentativeblock height key to be created for Token Summary project")
+				time.Sleep(time.Duration(retryInterval) * time.Second)
+				continue
+			}
 			log.Errorf("Could not fetch tentativeblock height Error %+v", res.Err())
 			time.Sleep(time.Duration(retryInterval) * time.Second)
 			continue

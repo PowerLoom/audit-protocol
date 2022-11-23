@@ -57,7 +57,7 @@ module.exports = {
     {
       name   : "ap-token-aggregator",
       script : "./uniswapTokenData",
-      cwd : CWD+"token-aggregator"
+      cwd : CWD+"token-aggregator",
       max_restarts: MAX_RESTART,
       env: {
         NODE_ENV: NODE_ENV,
