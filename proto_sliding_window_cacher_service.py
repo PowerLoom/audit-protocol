@@ -90,6 +90,7 @@ async def find_tail(
     sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
     return None
 
+
 @acquire_bounded_semaphore
 async def build_primary_index(
         project_id: str,
@@ -101,7 +102,7 @@ async def build_primary_index(
         ipfs_read_client: AsyncIPFSClient
 ):
     """
-        :param time_period: supported time_period strings as of now:  ['24h', '7d', '0']
+        : param time_period: supported time_period strings as of now:  ['24h', '7d', '0']
     """
     # find markers
     # NOTE: every periodic run, the head although is always chosen to be the max height
@@ -297,11 +298,14 @@ async def periodic_retrieval():
     ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
     await ipfs_write_client.init_session()
     await ipfs_read_client.init_session()
+    aioredis_pool = RedisPool()
+    await aioredis_pool.populate()
+    redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     while True:
         await build_primary_indexes(ipfs_read_client=ipfs_read_client)
         await asyncio.gather(
             v2_pairs_data(async_httpx_client, ipfs_write_client, ipfs_read_client),
-            v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client),
+            v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
             asyncio.sleep(90)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')

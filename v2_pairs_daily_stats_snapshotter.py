@@ -68,17 +68,11 @@ def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pai
 
 async def v2_pairs_daily_stats_snapshotter(
         async_httpx_client: AsyncClient,
-        ipfs_write_client,
         ipfs_read_client,
-        redis_conn=None
+        redis_conn: aioredis.Redis
 ):
     try:
-        if not redis_conn:
-            aioredis_pool = RedisPool()
-            await aioredis_pool.populate()
-            redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
-
-        # latest snaphot of v2 pair summary
+        # latest snapshot of v2 pair summary
         latest_pair_summary_snapshot = await redis_conn.zrevrange(
             name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
             start=0,
@@ -154,11 +148,14 @@ async def v2_pairs_daily_stats_snapshotter(
             # fetch current and 24h old snapshot payload
             dag_block_latest, dag_block_24h = await asyncio.gather(
                 retrieve_payload_data(latest_pair_summary_timestamp_payload_cid, ipfs_read_client),
-                retrieve_payload_data(pair_snapshot_payload_cid_24h, ipfs_read_client)
+                retrieve_payload_data(pair_snapshot_payload_cid_24h, ipfs_read_client),
+                return_exceptions=True
             )
-            # TODO: why a json.loads() on a default dict.get() that may return a NoneType
-            dag_block_latest = json.loads(dag_block_latest).get("data", None) if dag_block_latest else None
-            dag_block_24h = json.loads(dag_block_24h).get("data", None) if dag_block_24h else None
+            # FIXME: should be a much cleaner way to load json from returned result
+            dag_block_latest = json.loads(dag_block_latest).get("data", None) if \
+                not isinstance(dag_block_latest, BaseException) else None
+            dag_block_24h = json.loads(dag_block_24h).get("data", None) if \
+                not isinstance(dag_block_24h, BaseException) else None
 
             # link each contract obj for current and old snapshot
             linked_contracts_snapshot = link_contract_objs_of_v2_pairs_snapshot(dag_block_latest, dag_block_24h)

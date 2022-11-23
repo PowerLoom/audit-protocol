@@ -91,6 +91,7 @@ def read_json_file(file_path: str):
 pair_contract_abi = read_json_file("abis/UniswapV2Pair.json")
 erc20_abi = read_json_file('abis/IERC20.json')
 
+
 def get_maker_pair_data(prop):
     prop = prop.lower()
     if prop.lower() == "name":
@@ -147,6 +148,7 @@ async def get_oldest_block_and_timestamp(
         "begin_block_height_7d": int(volume_data_7d['data']['payload']['chainHeightRange']['begin']),
         "begin_block_timestamp_7d": int(volume_data_7d['data']['payload']['timestamp']),
     }
+
 
 async def get_pair_tokens_metadata(
         pair_address, redis_conn: aioredis.Redis
@@ -265,15 +267,17 @@ async def get_pair_tokens_metadata(
         }
     except Exception as err:
         # this will be retried in next cycle
-        logger.error("RPC error while fetcing metadata for pair %s, error_msg:%s",
-        pair_address,
-        err,
-        exc_info=True
+        logger.error(
+            "RPC error while fetching metadata for pair %s, error_msg:%s",
+            pair_address,
+            err,
+            exc_info=True
         )
         raise err
 
+
 def calculate_pair_trade_volume(dag_chain):
-    pair_trade_volume:PairTradeVolume = PairTradeVolume()
+    pair_trade_volume: PairTradeVolume = PairTradeVolume()
     # calculate / sum trade volume
     pair_trade_volume.total_volume = sum(map(lambda x: x['data']['payload']['totalTrade'], dag_chain))
 
@@ -289,6 +293,7 @@ def calculate_pair_trade_volume(dag_chain):
 
     return pair_trade_volume
 
+
 async def calculate_pair_liquidity(
         writer_redis_conn: aioredis.Redis,
         pair_contract_address,
@@ -296,7 +301,7 @@ async def calculate_pair_liquidity(
 ):
     project_id_token_reserve = f'uniswap_pairContract_pair_total_reserves_{pair_contract_address}_{NAMESPACE}'
 
-    # liquidty data
+    # liquidity data
     liquidity_head_marker = await writer_redis_conn.get(
         redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '0'))
     liquidity_head_marker = int(liquidity_head_marker.decode('utf-8')) if liquidity_head_marker else 0
@@ -319,28 +324,10 @@ async def calculate_pair_liquidity(
     pair_liquidity.block_height_total_reserve = int(liquidity_data['data']['payload']['chainHeightRange']['end'])
     pair_liquidity.block_timestamp_total_reserve = int(liquidity_data['data']['payload']['timestamp'])
     if not pair_liquidity.block_timestamp_total_reserve:
-       pair_liquidity.block_timestamp_total_reserve = int(liquidity_data['timestamp'])
+        pair_liquidity.block_timestamp_total_reserve = int(liquidity_data['timestamp'])
 
     return pair_liquidity
 
-def patch_cids_obj(dag_chain, patch_type, patch):
-    cid_list = []
-    if patch_type == "parse_cids":
-        # parse dagCid and payloadCid from dag chain
-        cid_list = [{'dagCid': obj['dagCid'], 'payloadCid': obj['data']['cid']} for obj in dag_chain]
-    elif patch_type == "add_front_patch":
-        # add sliding window front cids to existing cid obj list
-        cid_list = patch + dag_chain
-    elif patch_type == "remove_back_patch":
-        # remove sliding window back cids from existing cid obj list
-        cid_list = dag_chain[:]
-        for dag_obj in cid_list:
-            for patch_obj in patch:
-                if dag_obj["dagCid"] == patch_obj["dagCid"]:
-                    dag_chain.remove(dag_obj)
-        cid_list = dag_chain[:]
-
-    return cid_list
 
 async def store_recent_transactions_logs(writer_redis_conn: aioredis.Redis, dag_chain, pair_contract_address):
     recent_logs = []
@@ -387,7 +374,6 @@ async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contrac
 async def process_pairs_trade_volume_and_reserves(
         writer_redis_conn: aioredis.Redis,
         pair_contract_address,
-        ipfs_write_client: AsyncIPFSClient,
         ipfs_read_client: AsyncIPFSClient
 ):
     try:
@@ -420,6 +406,11 @@ async def process_pairs_trade_volume_and_reserves(
             not tail_marker_7d,
             not head_marker_7d
         ]):
+            logger.info(
+                'Values of 24h head, tail and 7h head, tail marker - some of them might be null and hence returning |'
+                '[tail_marker_24h, head_marker_24h,  tail_marker_7d, head_marker_7d] : %s',
+                [tail_marker_24h, head_marker_24h, tail_marker_7d, head_marker_7d]
+            )
             return
 
         # if head of 24h and 7d index at 1 or less then return
@@ -448,20 +439,24 @@ async def process_pairs_trade_volume_and_reserves(
             return
 
         if not cached_trade_volume_data:
-            logger.debug("Starting to fetch 24h dag-chain for the first time, range: %s - %s | projectId: %s",
-            tail_marker_24h,
-            head_marker_24h,
-            project_id_trade_volume)
+            logger.debug(
+                "Starting to fetch 24h dag-chain for the first time, range: %s - %s | projectId: %s",
+                tail_marker_24h,
+                head_marker_24h,
+                project_id_trade_volume
+            )
             dag_chain_24h = await get_dag_blocks_in_range(
                 project_id_trade_volume, tail_marker_24h, head_marker_24h, writer_redis_conn, ipfs_read_client
             )
             if not dag_chain_24h:
                 return
 
-            logger.debug("Starting to fetch 7d dag-chain for the first time, range: %s - %s | projectId: %s",
-            tail_marker_7d,
-            head_marker_7d,
-            project_id_trade_volume)
+            logger.debug(
+                "Starting to fetch 7d dag-chain for the first time, range: %s - %s | projectId: %s",
+                tail_marker_7d,
+                head_marker_7d,
+                project_id_trade_volume
+            )
             dag_chain_7d = await get_dag_blocks_in_range(
                 project_id_trade_volume, tail_marker_7d, head_marker_7d, writer_redis_conn, ipfs_read_client
             )
@@ -478,11 +473,11 @@ async def process_pairs_trade_volume_and_reserves(
             # using only 24h dag chain as we just need 75 log at max
             await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h, pair_contract_address)
 
-            cids_volume_24h : DAGBlockRange= DAGBlockRange(
+            cids_volume_24h: DAGBlockRange = DAGBlockRange(
                 head_block_cid= dag_chain_24h[0]['dagCid'],
                 tail_block_cid=dag_chain_24h[-1]['dagCid']
             )
-            cids_volume_7d : DAGBlockRange= DAGBlockRange(
+            cids_volume_7d: DAGBlockRange = DAGBlockRange(
                 head_block_cid= dag_chain_7d[0]['dagCid'],
                 tail_block_cid=dag_chain_7d[-1]['dagCid']
                 )
@@ -728,7 +723,6 @@ async def v2_pairs_data(
             trade_volume_reserves = process_pairs_trade_volume_and_reserves(
                 aioredis_pool.writer_redis_pool,
                 pair_contract_address,
-                ipfs_write_client,
                 ipfs_read_client
             )
             process_data_list.append(trade_volume_reserves)
