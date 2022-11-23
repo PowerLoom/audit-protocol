@@ -474,9 +474,18 @@ async def payload_to_dag_processor_task(event_data: DAGFinalizerCallback):
                         requestID=immediate_tx_pending_obj.requestID,
                         event_data=DAGFinalizerCBEventData.parse_obj(immediate_tx_pending_obj.event_data)
                     )
+                    all_pending_tx_entries = await reader_redis_conn.zrangebyscore(
+                        name=redis_keys.get_pending_transactions_key(project_id),
+                        min=finalized_block_height_project+1,
+                        max=float('+inf'),
+                        withscores=True
+                    )
                     blocks_created = await in_order_block_creation_and_state_update(
                         dag_finalizer_callback_obj=dag_finalization_cb,
-                        post_finalization_pending_txs=list(),
+                        post_finalization_pending_txs=filter(
+                            lambda x: PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1,
+                            all_pending_tx_entries
+                        ),
                         custom_logger_obj=custom_logger,
                         reader_redis_conn=reader_redis_conn,
                         writer_redis_conn=writer_redis_conn,

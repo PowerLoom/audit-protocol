@@ -33,8 +33,12 @@ coloredlogs.install(level="DEBUG", logger=logger, stream=sys.stdout)
 
 @provide_redis_conn
 def main(redis_conn: redis.Redis):
+    snapshot_cid = 'bafkreig3c2m4geyf3sf5nsfvbbgyy6p7c7ufatpfg4s3zpc7koqi5phsvq'  # to be used so we have a valid CID
+    project_id = 'simulationRun'
     # initial clear
-    redis_conn.delete(redis_keys.get_pending_transactions_key('simulationRun'))
+    for k in redis_conn.scan_iter(match='*simulationRun*', count=10):
+        redis_conn.delete(k)
+        logger.debug('Cleaned last run project state key %s', k)
     beginning_height = 1
     # put in pending tx entries to simulate payload commit to tx manager from 1 to num_blocks
     # last_sent_block = midway through num blocks
@@ -53,7 +57,7 @@ def main(redis_conn: redis.Redis):
             event_data=None
         )
         _ = redis_conn.zadd(
-            name=redis_keys.get_pending_transactions_key('simulationRun'),
+            name=redis_keys.get_pending_transactions_key(project_id),
             mapping={pending_tx_entry.json(): i}
         )
         if _:
@@ -70,8 +74,8 @@ def main(redis_conn: redis.Redis):
             event_data=DAGFinalizerCBEventData(
                 apiKeyHash='0x'+keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
                 tentativeBlockHeight=i,
-                projectId='simulationRun',
-                snapshotCid=''.join(random.choices(string.ascii_lowercase, k=20)),
+                projectId=project_id,
+                snapshotCid=snapshot_cid,
                 payloadCommitId='0x'+keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
                 timestamp=int(time.time())
             )
@@ -97,7 +101,7 @@ def main(redis_conn: redis.Redis):
     # adapted from dag_utils.update_pending_tx_block_touch since it is an async function
     # first, remove
     redis_conn.zremrangebyscore(
-        redis_keys.get_pending_transactions_key('simulationRun'),
+        redis_keys.get_pending_transactions_key(project_id),
         min=last_sent_block,
         max=last_sent_block
     )
@@ -106,15 +110,15 @@ def main(redis_conn: redis.Redis):
     new_pending_tx_set_entry_obj.lastTouchedBlock = -1
     new_pending_tx_set_entry_obj.event_data = AuditRecordTxEventData(
         txHash=new_pending_tx_set_entry_obj.txHash,
-        projectId='simulationRun',
+        projectId=project_id,
         apiKeyHash='0x' + keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
         timestamp=int(time.time()),
         payloadCommitId='0x' + keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
-        snapshotCid=''.join(random.choices(string.ascii_lowercase, k=20)),
+        snapshotCid=snapshot_cid,
         tentativeBlockHeight=last_sent_block
     )
     _ = redis_conn.zadd(
-        name=redis_keys.get_pending_transactions_key('simulationRun'),
+        name=redis_keys.get_pending_transactions_key(project_id),
         mapping={new_pending_tx_set_entry_obj.json(): last_sent_block}
     )
     if _:
@@ -135,15 +139,17 @@ def main(redis_conn: redis.Redis):
             event_data=DAGFinalizerCBEventData(
                 apiKeyHash='0x' + keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
                 tentativeBlockHeight=i,
-                projectId='simulationRun',
-                snapshotCid=''.join(random.choices(string.ascii_lowercase, k=20)),
+                projectId=project_id,
+                snapshotCid=snapshot_cid,
                 payloadCommitId='0x' + keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
                 timestamp=int(time.time())
             )
         )
+        req_json = finalization_cb.dict()
+        req_json.update({'event_name': 'RecordAppended'})
         r = httpx.post(
             url=f'http://{settings.webhook_listener.host}:{settings.webhook_listener.port}/',
-            json=finalization_cb.dict()
+            json=req_json
         )
         details[i].event_data = DAGFinalizerCBEventData.parse_obj(finalization_cb.event_data)
         if r.status_code == 200:
