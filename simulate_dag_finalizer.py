@@ -54,7 +54,16 @@ def main(redis_conn: redis.Redis):
             txHash=tx_hash,
             requestID=str(uuid4()),
             lastTouchedBlock=0,
-            event_data=None
+            event_data=AuditRecordTxEventData(
+                apiKeyHash='0x'+keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
+                tentativeBlockHeight=i,
+                projectId=project_id,
+                snapshotCid=snapshot_cid,
+                payloadCommitId='0x'+keccak(text=''.join(random.choices(string.ascii_lowercase, k=5))).hex(),
+                timestamp=int(time.time()),
+                skipAnchorProof=True,
+                txHash=tx_hash
+            )
         )
         _ = redis_conn.zadd(
             name=redis_keys.get_pending_transactions_key(project_id),

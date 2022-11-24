@@ -27,7 +27,7 @@ tenacity==8.0.1
 greenletio
 siaskynet
 web3==5.23.1
-aio_pika==6.8.0
+aio_pika==8.2.5
 pika==1.2.0
 psutil
 rich==12.1.0
