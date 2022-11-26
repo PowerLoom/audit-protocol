@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -275,6 +276,12 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			if !ipfsStatus {
 				return false
 			}
+			err = CachePayload(&payloadCommit)
+			if err != nil {
+				log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
+					payloadCommit.ProjectId, payloadCommit.CommitId, err)
+				return false
+			}
 		}
 
 		err = StorePayloadCidInRedis(&payloadCommit)
@@ -283,6 +290,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.ProjectId, payloadCommit.CommitId, err)
 			return false
 		}
+
 		//Update TentativeBlockHeight for the project
 		err = UpdateTentativeBlockHeight(&payloadCommit)
 		if err != nil {
@@ -352,6 +360,67 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	return true
 }
 
+func CachePayload(payloadCommit *PayloadCommit) error {
+	path := settingsObj.PayloadCachePath + "/" + payloadCommit.ProjectId + "/"
+	fileName := fmt.Sprintf("%s%s.json", path, payloadCommit.SnapshotCID)
+	for i := 0; i < *settingsObj.RetryCount; i++ {
+		file, err := os.Create(fileName)
+		if err != nil {
+			if strings.Contains(err.Error(), "no such file or directory") {
+				if _, err := os.Stat(path); os.IsNotExist(err) {
+					os.MkdirAll(path, 0700) // Create the directory if not exists
+				}
+				file, err = os.Create(fileName)
+				if err != nil {
+					log.Errorf("Unable to create file %s in specified path due to error %+v", fileName, err)
+					return err
+				}
+			} else {
+				log.Errorf("Unable to create file %s in specified path due to error %+v", fileName, err)
+				return err
+			}
+		}
+		defer file.Close()
+		fileWriter := bufio.NewWriter(file)
+		bytesWritten, err := fileWriter.Write(payloadCommit.Payload)
+		if err != nil {
+			log.Errorf("Failed to write payload to file %s due to error %+v", fileName, err)
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
+			continue
+		}
+		err = fileWriter.Flush()
+		if err != nil {
+			log.Errorf("Failed to flush buffer to file %s due to error %+v", fileName, err)
+			return err
+		}
+		log.Debugf("Successfully wrote payload of size %d to file %s", bytesWritten, fileName)
+		return nil
+	}
+	return errors.New("failed to write payload to local file even after max retries")
+}
+
+func ReadPayloadFromCache(projectID string, payloadCid string) (*PayloadData, error) {
+	var payload PayloadData
+	path := settingsObj.PayloadCachePath + "/" + projectID + "/"
+	fileName := fmt.Sprintf("%s%s.json", path, payloadCid)
+
+	log.Debugf("Fetching payloadCid %s from local Cache", payloadCid)
+	bytes, err := os.ReadFile(fileName)
+	if err != nil {
+		log.Errorf("Failed to read Json Payload from local cache, CID %s, bytes: %+v due to error %+v ",
+			payloadCid, bytes, err)
+		return nil, err
+	}
+	err = json.Unmarshal(bytes, &payload)
+	if err != nil {
+		log.Errorf("Failed to Unmarshal Json Payload from local Cache, CID %s, bytes: %+v due to error %+v ",
+			payloadCid, bytes, err)
+		return nil, err
+	}
+	log.Debugf("Fetched Payload with CID %s from local cache: %+v", payloadCid, payload)
+	return &payload, nil
+}
+
 func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 	for retryCount := 0; ; {
 
@@ -388,11 +457,17 @@ func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) (*Paylo
 			projectId, lastTentativeBlockHeight, err)
 		return nil, err
 	}
-	payload, err := GetPayloadFromIPFS(payloadCid, 1)
+
+	payload, err := ReadPayloadFromCache(projectId, payloadCid)
 	if err != nil {
-		log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
+		log.Infof("Failed to fetch payload from local Cache for CID %s for project %s at height %d due to error %+v. Fetching from IPFS",
 			payloadCid, projectId, lastTentativeBlockHeight, err)
-		return nil, err
+		payload, err = GetPayloadFromIPFS(payloadCid, 1)
+		if err != nil {
+			log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
+				payloadCid, projectId, lastTentativeBlockHeight, err)
+			return nil, err
+		}
 	}
 	return payload, nil
 }

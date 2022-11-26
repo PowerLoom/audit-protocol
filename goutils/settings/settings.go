@@ -44,7 +44,7 @@ type _DagVerifierSettings_ struct {
 	PruningVerification          bool          `json:"pruning_verification"`
 }
 
-//TODO: Move settings into a common package to be used by all go services under audit-protocol.
+// TODO: Move settings into a common package to be used by all go services under audit-protocol.
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
@@ -151,6 +151,7 @@ type SettingsObj struct {
 	} `json:"web3_storage"`
 	DagVerifierSettings    _DagVerifierSettings_    `json:"dag_verifier"`
 	PruningServiceSettings *PruningServiceSettings_ `json:"pruning"`
+	PayloadCachePath       string                   `json:"payload_cache_path"`
 }
 
 func ParseSettings(settingsFile string) *SettingsObj {

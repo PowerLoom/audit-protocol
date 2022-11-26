@@ -91,6 +91,7 @@
 	},
 	"payload_commit_interval": 2,
 	"payload_commit_concurrency": 20,
+	"payload_cache_path":"/home/ubuntu/payload_cache/",
 	"pruning_service_interval": 10,
 	"retrieval_service_interval": 3,
 	"deal_watcher_service_interval": 3,
