@@ -70,6 +70,7 @@ class Settings(BaseModel):
     max_pending_payload_commits: int
     container_height: int
     payload_commit_interval: int
+    local_cache_path: str
     pruning_service_interval: int  # TODO: this field will be deprecated and references should be removed
     pruning: PruneSettings
     retrieval_service_interval: int

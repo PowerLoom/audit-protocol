@@ -276,14 +276,12 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			if !ipfsStatus {
 				return false
 			}
-			err = CachePayload(&payloadCommit)
-			if err != nil {
-				log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
-					payloadCommit.ProjectId, payloadCommit.CommitId, err)
-				return false
-			}
 		}
-
+		err = CachePayload(&payloadCommit)
+		if err != nil {
+			log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
+				payloadCommit.ProjectId, payloadCommit.CommitId, err)
+		}
 		err = StorePayloadCidInRedis(&payloadCommit)
 		if err != nil {
 			log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",

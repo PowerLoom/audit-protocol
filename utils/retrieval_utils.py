@@ -11,6 +11,8 @@ from config import settings
 from bloom_filter import BloomFilter
 from tenacity import wait_random_exponential, stop_after_attempt, retry
 from data_models import ProjectBlockHeightStatus, PendingTransaction
+from utils.file_utils import read_json_file
+from utils.dag_utils import get_dag_block
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
@@ -32,15 +34,6 @@ SNAPSHOT_STATUS_MAP = {
     "TX_CONFIRMATION_PENDING": 3,
     "TX_CONFIRMED": 4
 }
-
-
-async def check_ipfs_pinned(from_height: int, to_height: int):
-    """
-        - Given the span, check if these blocks exist of IPFS yet
-        or if they have to be retrieved through the container
-    """
-    pass
-
 
 def check_intersection(span_a, span_b):
     """
@@ -297,9 +290,9 @@ async def fetch_blocks(
             # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
             dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height,
                                                          reader_redis_conn=reader_redis_conn)
-            dag_block = await dag_utils.get_dag_block(dag_cid)
+            dag_block = await dag_utils.get_dag_block(dag_cid, project_id)
             if data_flag:
-                dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+                dag_block = await retrieve_block_data(block_dag_cid=dag_cid, project_id=project_id, data_flag=1)
         else:
             dag_block: list = await fetch_from_span(
                 from_height=current_height,
@@ -406,7 +399,7 @@ async def retrieve_block_status(
             return None
         dag_cid = r[0].decode('utf-8')
 
-        block = await retrieve_block_data(dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+        block = await retrieve_block_data(dag_cid, project_id=project_id, writer_redis_conn=writer_redis_conn, data_flag=0)
         block_status.payload_cid = block['data']['cid']['/']
         block_status.tx_hash = block['txHash']
         block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
@@ -420,7 +413,7 @@ async def retrieve_block_status(
     wait=wait_random_exponential(multiplier=1, max=30),
     stop=stop_after_attempt(3),
 )
-async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0):
+async def retrieve_block_data(block_dag_cid, project_id, writer_redis_conn=None, data_flag=0):
     """
         A function which will get dag block from ipfs and also increment its hits
         Args:
@@ -443,17 +436,14 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     #     retrieval_utils_logger.debug(block_dag_cid)
     #     retrieval_utils_logger.debug(r)
 
-    """ Retrieve the DAG block from ipfs """
-    _block = await ipfs_client.dag.get(block_dag_cid)
-    block = _block.as_json()
-    # block = preprocess_dag(block)
+    """ Retrieve the DAG block """
+    block = await get_dag_block(block_dag_cid, project_id)
     if data_flag == 0:
         return block
-
     payload = dict()
 
     """ Get the payload Data """
-    payload_data = await ipfs_client.cat(block['data']['cid']['/'])
+    payload_data = await retrieve_payload_data(block['data']['cid']['/'], project_id)
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
@@ -484,7 +474,7 @@ async def retrieve_payload_cid(project_id: str, block_height: int,reader_redis_c
     return payload_cid
 
 
-async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
+async def retrieve_payload_data(payload_cid:str, project_id:str=None, writer_redis_conn=None):
     """
         - Given a payload_cid, get its data from ipfs, at the same time increase its hit
     """
@@ -493,40 +483,15 @@ async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
         #r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
         #retrieval_utils_logger.debug("Payload Data hit for: ")
         #retrieval_utils_logger.debug(payload_cid)
+    payload_data = None
+    if project_id is not None:
+        payload_data = read_json_file(settings.local_cache_path + "/" + project_id + "/"+ payload_cid + ".json", None )
+    if payload_data is None:
+        # Get the payload Data from ipfs
+        _payload_data = await ipfs_client.cat(payload_cid)
+        payload_data = _payload_data.decode('utf-8')
 
-    """ Get the payload Data from ipfs """
-    _payload_data = await ipfs_client.cat(payload_cid)
-    payload_data = _payload_data.decode('utf-8')
     return payload_data
-
-
-async def get_blocks_from_container(container_id, dag_cids: list):
-    """
-        Given the dag_cids, get those dag block from the given container
-    """
-    pass
-
-
-### SHARED IN-MEMORY CACHE FOR DAG BLOCK DATA ####
-### INCLUDES PAYLOAD DATA ########################
-SHARED_DAG_BLOCKS_CACHE = {}
-
-def prune_dag_block_cache(cache_size_unit):
-    cache_size_unit = cache_size_unit if cache_size_unit and isinstance(cache_size_unit, int) else 180
-
-    # export shared cache as global variable | python-design: https://bugs.python.org/issue9049
-    global SHARED_DAG_BLOCKS_CACHE
-
-    # only prune when size of cache greater than cache_size_unit * 5
-    if len(SHARED_DAG_BLOCKS_CACHE) <= cache_size_unit * 5:
-        return
-
-    # prune to make size of dict cache_size * 4
-    pruning_length = cache_size_unit * 4
-    # sort dict
-    ordered_items = sorted(SHARED_DAG_BLOCKS_CACHE.items(), key=lambda item: item[1]['block_height'])
-    # prune result list and make it a dict again
-    SHARED_DAG_BLOCKS_CACHE = dict(ordered_items[:pruning_length])
 
 async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis, cache_size_unit):
     dag_block = {}
@@ -539,17 +504,8 @@ async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: a
     if not dag_cid:
         return {}
 
-    # use cache if available
-    if dag_cid and SHARED_DAG_BLOCKS_CACHE.get(dag_cid, False):
-        return SHARED_DAG_BLOCKS_CACHE.get(dag_cid)['data']
-
-    dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+    dag_block = await retrieve_block_data(block_dag_cid=dag_cid, project_id=project_id,data_flag=1)
     dag_block = dag_block if dag_block else {}
-
     dag_block["dagCid"] = dag_cid
-
-    # cache result
-    SHARED_DAG_BLOCKS_CACHE[dag_cid] = {'data': dag_block, 'block_height': block_height}
-    prune_dag_block_cache(cache_size_unit)
 
     return dag_block

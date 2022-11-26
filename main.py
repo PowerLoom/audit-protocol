@@ -596,7 +596,8 @@ async def get_payloads(
         # NOTE: not yet clear why the earlier call to retrieval_utils.fetch_blocks() would not populate `dag_blocks` map
         if dag_blocks.get(cur_dag_cid) is None:
             # rest_logger.debug("Fetching block from IPFS")
-            block = await retrieval_utils.retrieve_block_data(cur_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
+            block = await retrieval_utils.retrieve_block_data(cur_dag_cid, project_id=projectId,
+            writer_redis_conn=writer_redis_conn, data_flag=data_flag)
         else:
             # rest_logger.debug("Block already fetched")
             block = dag_blocks.get(cur_dag_cid)
@@ -708,7 +709,8 @@ async def get_block(
 
     prev_dag_cid = r[0].decode('utf-8')
 
-    block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+    block = await retrieval_utils.retrieve_block_data(prev_dag_cid, project_id=projectId,
+    writer_redis_conn=writer_redis_conn, data_flag=0)
 
     return {prev_dag_cid: block}
 
@@ -801,7 +803,8 @@ async def get_block_data(
     )
     prev_dag_cid = r[0].decode('utf-8')
 
-    payload = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=2)
+    payload = await retrieval_utils.retrieve_block_data(prev_dag_cid, project_id=projectId,
+    writer_redis_conn=writer_redis_conn, data_flag=2)
 
     """ Return the payload data """
     return {prev_dag_cid: payload}

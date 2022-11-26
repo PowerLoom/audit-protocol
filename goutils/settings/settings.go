@@ -151,7 +151,7 @@ type SettingsObj struct {
 	} `json:"web3_storage"`
 	DagVerifierSettings    _DagVerifierSettings_    `json:"dag_verifier"`
 	PruningServiceSettings *PruningServiceSettings_ `json:"pruning"`
-	PayloadCachePath       string                   `json:"payload_cache_path"`
+	PayloadCachePath       string                   `json:"local_cache_path"`
 }
 
 func ParseSettings(settingsFile string) *SettingsObj {
