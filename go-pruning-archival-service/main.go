@@ -424,7 +424,6 @@ func ProcessProject(projectId string) int {
 				log.WithField("CycleID", cycleDetails.CycleID).Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
 				errCount = UnPinFromIPFS(projectId, payloadCids)
 				projectReport.UnPinFailed += errCount
-
 				UpdateDagSegmentStatusToRedis(projectId, dagSegmentEndHeight, &dagSegment)
 
 				projectPruneState.LastPrunedHeight = dagSegmentEndHeight
@@ -436,7 +435,8 @@ func ProcessProject(projectId string) int {
 					PruneProjectInRedis(projectId, startScore, dagSegmentEndHeight)
 				}
 				UpdatePrunedStatusToRedis(projectPruneState)
-
+				errCount = DeleteContentFromLocalCache(projectId, dagCids, payloadCids)
+				projectReport.LocalCacheDeletionsFailed += errCount
 				projectReport.DAGSegmentsArchived++
 				projectReport.CIDsUnPinned += len(*payloadCids) + len(*dagCids)
 				projectProcessed = true
@@ -448,6 +448,30 @@ func ProcessProject(projectId string) int {
 		return 0
 	}
 	return 1
+}
+
+func DeleteContentFromLocalCache(projectId string, dagCids *map[int]string, payloadCids *map[int]string) int {
+	path := settingsObj.PayloadCachePath
+	errCount := 0
+	for _, cid := range *dagCids {
+		fileName := fmt.Sprintf("%s/%s.json", path, cid)
+		err := os.Remove(fileName)
+		if err != nil && !strings.Contains(err.Error(), "no such file or directory") {
+			log.Errorf("Failed to remove file %s from local cache due to error %+v", fileName, err)
+			//TODO: Need to have some sort of pruning files older than 8 days logic to handle failures.
+			errCount++
+		}
+	}
+
+	for _, cid := range *payloadCids {
+		fileName := fmt.Sprintf("%s/%s.json", path, cid)
+		err := os.Remove(fileName)
+		if err != nil && !strings.Contains(err.Error(), "no such file or directory") {
+			log.Errorf("Failed to remove file %s from local cache due to error %+v", fileName, err)
+			errCount++
+		}
+	}
+	return errCount
 }
 
 func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCids *map[int]string, dagCids *map[int]string) {
