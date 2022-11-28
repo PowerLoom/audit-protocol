@@ -156,5 +156,9 @@
 			},
 			"upload_chunk_size_mb": 50
 		}
+	},
+	"token_aggregator":{
+		"port": 8000,
+		"run_interval_secs": 60
 	}
 }

@@ -8,7 +8,7 @@ const CWD = "/home/ubuntu/audit-protocol-private/"
 module.exports = {
   apps : [
     {
-      name   : "audit-protocol-dag-finalizer",
+      name   : "ap-dag-finalizer",
       script : "python3 ./gunicorn_dag_finalizer_launcher.py",
       cwd : CWD,
       max_restarts: MAX_RESTART,
@@ -20,7 +20,7 @@ module.exports = {
       }
     },
     {
-      name   : "audit-protocol-diff-service",
+      name   : "ap-diff-service",
       script : "python3 ./diff_calculation_service.py",
       cwd : CWD,
       max_restarts: MAX_RESTART,
@@ -31,7 +31,7 @@ module.exports = {
       }
     },
     {
-      name   : "audit-protocol-backend",
+      name   : "ap-backend",
       script : "python3 ./gunicorn_main_launcher.py",
       cwd : CWD,
       max_restarts: MAX_RESTART,
@@ -43,7 +43,7 @@ module.exports = {
       },
     },
     {
-      name   : "audit-protocol-payload-commit",
+      name   : "ap-payload-commit",
       script : "./payloadCommitService",
       cwd : CWD+"go-payload-commit-service",
       max_restarts: MAX_RESTART,
@@ -55,7 +55,17 @@ module.exports = {
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
     {
-      name   : "audit-protocol-proto-indexer",
+      name   : "ap-token-aggregator",
+      script : "./uniswapTokenData",
+      cwd : CWD+"token-aggregator",
+      max_restarts: MAX_RESTART,
+      env: {
+        NODE_ENV: NODE_ENV,
+      },
+      args: "5"
+    },
+    {
+      name   : "ap-proto-indexer",
       script : "python proto_sliding_window_cacher_service.py",
       cwd : CWD,
       max_restarts: MAX_RESTART,
@@ -66,7 +76,7 @@ module.exports = {
       }
     },
     {
-      name   : "audit-protocol-dag-verifier",
+      name   : "ap-dag-verifier",
       script : "./dagChainVerifier",
       cwd : CWD+"dag_verifier",
       max_restarts: MAX_RESTART,
@@ -78,7 +88,7 @@ module.exports = {
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
     {
-      name   : "audit-protocol-pruning-archival-service",
+      name   : "ap-pruning-archival-service",
       script : "./pruningArchivalService",
       cwd : CWD+"go-pruning-archival-service",
       max_restarts: MAX_RESTART,
