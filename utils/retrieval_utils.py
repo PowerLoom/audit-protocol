@@ -11,7 +11,7 @@ from config import settings
 from bloom_filter import BloomFilter
 from tenacity import wait_random_exponential, stop_after_attempt, retry
 from data_models import ProjectBlockHeightStatus, PendingTransaction
-from utils.file_utils import read_json_file
+from utils.file_utils import read_text_file
 from utils.dag_utils import get_dag_block
 
 retrieval_utils_logger = logging.getLogger(__name__)
@@ -485,7 +485,7 @@ async def retrieve_payload_data(payload_cid:str, project_id:str=None, writer_red
         #retrieval_utils_logger.debug(payload_cid)
     payload_data = None
     if project_id is not None:
-        payload_data = read_json_file(settings.local_cache_path + "/" + project_id + "/"+ payload_cid + ".json", None )
+        payload_data = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ payload_cid + ".json", None )
     if payload_data is None:
         # Get the payload Data from ipfs
         _payload_data = await ipfs_client.cat(payload_cid)

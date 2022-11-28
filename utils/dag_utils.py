@@ -13,7 +13,7 @@ import logging
 from redis import asyncio as aioredis
 import hmac
 import sys
-from utils.file_utils import write_bytes_to_file, read_json_file
+from utils.file_utils import write_bytes_to_file, read_text_file
 
 class DAGCreationException(Exception):
     pass
@@ -116,7 +116,7 @@ async def save_event_data(event_data: dict, pending_tx_set_entry: bytes, writer_
 
 async def get_dag_block(dag_cid: str, project_id:str):
     e_obj = None
-    dag = read_json_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
+    dag = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
     if dag is None:
         logger.info("Failed to read dag-block with CID %s for project %s from local cache ",
         dag_cid,project_id)
