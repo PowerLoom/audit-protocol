@@ -280,39 +280,19 @@ async def fetch_blocks(
         - Given the from_height and to_height fetch the blocks based on whether there are any spans
         that exists or not
     """
-
-    max_overlap, max_span_id, each_height_spans = await check_overlap(
-        project_id=project_id,
-        from_height=from_height,
-        to_height=to_height,
-        reader_redis_conn=reader_redis_conn
-    )
-
+    #TODO: Add support to fetch from archived data using dagSegments and traversal logic.
     current_height = to_height
-    dag_blocks = {}
+    dag_blocks = list()
     while current_height >= from_height:
         dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height,
                                                      reader_redis_conn=reader_redis_conn)
-        if each_height_spans.get(current_height) is None:
-            # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
-            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height,
-                                                         reader_redis_conn=reader_redis_conn)
-            dag_block = await dag_utils.get_dag_block(dag_cid)
-            if data_flag:
-                dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        else:
-            dag_block: list = await fetch_from_span(
-                from_height=current_height,
-                to_height=current_height,
-                span_id=each_height_spans[current_height],
-                project_id=project_id,
-                reader_redis_conn=reader_redis_conn
-            )
-
-        dag_blocks[dag_cid] = dag_block
+        fetch_data_flag = 0 # Get only the DAG Block
+        if data_flag:
+            fetch_data_flag = 1 # Get DAG Block with data
+        dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=fetch_data_flag)
+        dag_block['dagCid'] = dag_cid
+        dag_blocks.append(dag_block)
         current_height = current_height - 1
-
-        # retrieval_utils_logger.debug(dag_blocks)
 
     return dag_blocks
 

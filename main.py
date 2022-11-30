@@ -452,34 +452,11 @@ async def get_payloads(
         response: Response,
         projectId: str,
         from_height: int = Query(default=1),
-        diffs: Optional[str] = Query(default='true'),  # FIXME: default flag behavior unexpected
         to_height: int = Query(default=-1),
         data: Optional[str] = Query(None)
 ):
-    """
-        - Given the from and to_height do the following steps:
-            - Check if there is any intersection between any of the previously
-            cached spans.
 
-            - If there is no overlap, then generate the requestID and return it
-
-            - If there is an overlap, then do:
-                - If there is any data point that needs to be fetched from a container that
-                is not cached on local system
-                    -  generate a requestID and return it
-
-                - Split the data into two separate spans: container_fetch_data and ipfs_fetch_data
-
-                    - Now fetch the data present in IPFS and cached containers and put them together
-                    to hold data for entire span
-
-                    - return the data
-
-                    - save the span and add a timeout to it.
-
-    """
     reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
 
     if out == 0:
@@ -496,15 +473,6 @@ async def get_payloads(
         else:
             data = False
 
-    if diffs:
-        # rest_logger.debug('Diffs flag value: %s', diffs)
-        if diffs.lower() == 'true':
-            diffs = True
-            # rest_logger.debug('Converting diff map flag to: %s', diffs)
-        else:
-            diffs = False
-            # rest_logger.debug('Converting diff map flag to: %s', diffs)
-
     if to_height == -1:
         to_height = max_block_height
 
@@ -515,56 +483,12 @@ async def get_payloads(
     last_pruned_height = await helper_functions.get_last_pruned_height(
         project_id=projectId, reader_redis_conn=reader_redis_conn
     )
-    rest_logger.debug('Last pruned height: %s. Checking max overlap...', last_pruned_height)
+    rest_logger.debug('Last pruned height: %s.', last_pruned_height)
 
-    # TODO: review logic around span, overlap, cached blocks etc. It's a complete shitpile at the moment.
-    # for eg: check_overlap() is called once more from fetch_blocks(). Why?
-    # ( a span is supposed to be a LRU cache of sorts adjusted within a moving window as DAG blocks keep piling up)
-    max_overlap, max_span_id, each_height_spans = await retrieval_utils.check_overlap(
-        from_height=from_height,
-        to_height=to_height,
-        project_id=projectId,
-        reader_redis_conn=reader_redis_conn
-    )
-    # rest_logger.debug("Max overlap, Max Span ID, Each height spans:")
-    # rest_logger.debug(max_overlap)
-    # rest_logger.debug(max_span_id)
-    # rest_logger.debug(each_height_spans)
-
-    if (max_overlap == 0.0) and (from_height <= last_pruned_height):
-        rest_logger.debug("Creating a retrieval request")
-        _data = 1 if data else 0
-        request_id = await create_retrieval_request(
-            project_id=projectId,
-            from_height=from_height,
-            to_height=to_height,
-            data=_data,
-            writer_redis_conn=writer_redis_conn)
-
-        return {'requestId': request_id}
-
-    # Get the containers required and the cached values
-    containers, cached = await retrieval_utils.check_containers(
-        from_height=from_height,
-        to_height=to_height,
-        each_height_spans=each_height_spans,
-        project_id=projectId,
-        reader_redis_conn=reader_redis_conn
-    )
-
-    rest_logger.debug(f"Containers Required: {containers}")
-
-    if len(containers) > 0:
-        rest_logger.debug("Creating a retrieval request")
-        _data = 1 if data else 0
-        request_id = await create_retrieval_request(
-            project_id=projectId,
-            from_height=from_height,
-            to_height=to_height,
-            data=_data,
-            writer_redis_conn=writer_redis_conn)
-
-        return {'requestId': request_id}
+    #TODO: Add support to fetch from archived data using dagSegments and traversal logic.
+    if (from_height <= last_pruned_height):
+        rest_logger.debug("Querying for archived data not yet supported.")
+        return {'error': 'The data being queried has been archived. Querying for archived data is not supported.'}
 
     dag_blocks = await retrieval_utils.fetch_blocks(
         from_height=from_height,
@@ -573,63 +497,7 @@ async def get_payloads(
         data_flag=data,
         reader_redis_conn=reader_redis_conn
     )
-
-    current_height = to_height
-    cur_dag_cid = None
-    idx = 0
-    blocks = list()
-    while current_height >= from_height:
-        # rest_logger.debug("Fetching block at height: %s", current_height)
-        if not cur_dag_cid:
-            project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
-            r = await reader_redis_conn.zrangebyscore(
-                name=project_cids_key_zset,
-                min=current_height,
-                max=current_height,
-                withscores=False
-            )
-            if r:
-                cur_dag_cid = r[0].decode('utf-8')
-            else:
-                return {'error': 'NoRecordsFound'}
-        data_flag = 1 if data else 0
-        # NOTE: not yet clear why the earlier call to retrieval_utils.fetch_blocks() would not populate `dag_blocks` map
-        if dag_blocks.get(cur_dag_cid) is None:
-            # rest_logger.debug("Fetching block from IPFS")
-            block = await retrieval_utils.retrieve_block_data(cur_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
-        else:
-            # rest_logger.debug("Block already fetched")
-            block = dag_blocks.get(cur_dag_cid)
-        # rest_logger.debug("Block Retrieved: ")
-        # rest_logger.debug(block)
-        formatted_block = dict()
-        formatted_block['dagCid'] = cur_dag_cid
-        formatted_block.update({k: v for k, v in block.items()})
-        formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
-
-        # NOTE: removed a duplicate diff generation logic.
-        # Get the diff_map between the current and previous snapshot
-        # rest_logger.debug('Diff flag set as: %s', diffs)
-        if diffs:
-            # FIXME: find a better way to get the entire chunk of diffs within the height range. insert each accordingly
-            diff_at_height_r = await reader_redis_conn.zrangebyscore(
-                name=redis_keys.get_diff_snapshots_key(projectId),
-                min=current_height,
-                max=current_height,
-                withscores=False
-            )
-            if diff_at_height_r:
-                diff_map = json.loads(diff_at_height_r[0])['diff']
-            else:
-                diff_map = {}
-            formatted_block['diff'] = diff_map
-        blocks.append(formatted_block)
-        if formatted_block['prevDagCid']:
-            cur_dag_cid = formatted_block['prevDagCid']['/']
-            # the decrement in current_height will ensure the loop ends here so we dont need to set cur_dag_cid
-        current_height = current_height - 1
-        idx += 1
-    return blocks
+    return dag_blocks
 
 
 @app.get('/{projectId}/payloads/height')
