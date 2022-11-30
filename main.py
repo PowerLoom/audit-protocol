@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
-
+from async_ipfshttpclient.main import AsyncIPFSClientSingleton
 import utils.diffmap_utils
 from config import settings
 from uuid import uuid4
@@ -14,7 +14,7 @@ from utils import redis_keys
 from functools import partial
 from utils import retrieval_utils
 from utils.diffmap_utils import process_payloads_for_diff
-from data_models import ContainerData, PayloadCommit
+from data_models import PayloadCommit
 from pydantic import ValidationError
 from aio_pika import ExchangeType, DeliveryMode, Message
 from aio_pika.pool import Pool
@@ -96,16 +96,9 @@ async def startup_boilerplate():
     #     contract_address=settings.audit_contract,
     #     app_name='auditrecords'
     # )
-
-
-async def get_max_block_height(project_id: str, reader_redis_conn: aioredis.Redis):
-    """
-        - Given the projectId and redis_conn, get the prev_dag_cid, block height and
-        tetative block height of that projectId from redis
-    """
-    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id=project_id, reader_redis_conn=reader_redis_conn)
-    return prev_dag_cid, last_payload_cid
-
+    app.ipfs_singleton = AsyncIPFSClientSingleton()
+    await app.ipfs_singleton.init_sessions()
+    app.ipfs_read_client = app.ipfs_singleton._ipfs_read_client
 
 async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn: aioredis.Redis):
     request_id = str(uuid4())
@@ -495,7 +488,8 @@ async def get_payloads(
         to_height=to_height,
         project_id=projectId,
         data_flag=data,
-        reader_redis_conn=reader_redis_conn
+        reader_redis_conn=reader_redis_conn,
+        ipfs_read_client=request.app.ipfs_read_client
     )
     return dag_blocks
 
@@ -576,7 +570,12 @@ async def get_block(
 
     prev_dag_cid = r[0].decode('utf-8')
 
-    block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+    block = await retrieval_utils.retrieve_block_data(
+        block_dag_cid=prev_dag_cid,
+        ipfs_read_client=request.app.ipfs_read_client,
+        writer_redis_conn=writer_redis_conn,
+        data_flag=0
+    )
 
     return {prev_dag_cid: block}
 
@@ -604,11 +603,14 @@ async def get_block_status(
     )
     rest_logger.debug(max_block_height)
 
-    block_status = await retrieval_utils.retrieve_block_status(project_id=projectId,
-                                                               project_block_height=max_block_height,
-                                                               block_height=block_height,
-                                                               reader_redis_conn=reader_redis_conn,
-                                                               writer_redis_conn=writer_redis_conn)
+    block_status = await retrieval_utils.retrieve_block_status(
+        project_id=projectId,
+        project_block_height=max_block_height,
+        block_height=block_height,
+        reader_redis_conn=reader_redis_conn,
+        writer_redis_conn=writer_redis_conn,
+        ipfs_read_client=request.app.ipfs_read_client
+    )
 
     if block_status is None:
         response.status_code = 404
@@ -669,91 +671,12 @@ async def get_block_data(
     )
     prev_dag_cid = r[0].decode('utf-8')
 
-    payload = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=2)
+    payload = await retrieval_utils.retrieve_block_data(
+        block_dag_cid=prev_dag_cid,
+        ipfs_read_client=request.app.ipfs_read_client,
+        writer_redis_conn=writer_redis_conn,
+        data_flag=2
+    )
 
     """ Return the payload data """
     return {prev_dag_cid: payload}
-
-
-# Get the containerData using container_id
-@app.get("/query/containerData/{container_id:str}")
-async def get_container_data(
-        request: Request,
-        response: Response,
-        container_id: str
-):
-    """
-        - retrieve the containerData from containerData key
-        - return containerData
-    """
-
-    rest_logger.debug("Retrieving containerData for container_id: %s",container_id)
-    container_data_key = f"containerData:{container_id}"
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await reader_redis_conn.hgetall(container_data_key)
-    out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-    if not out:
-        return {"error": f"The container_id:{container_id} is invalid"}
-    try:
-        container_data = ContainerData(**out)
-    except ValidationError as verr:
-        rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
-        return {}
-
-    return container_data.dict()
-
-
-@app.get("/query/executingContainers")
-async def get_executing_containers(
-        request: Request,
-        response: Response,
-        maxCount: int = Query(default=10),
-        data: str = Query(default="false")
-):
-    """
-        - Get all the container_id's from the executingContainers redis SET
-        - if the data field is true, then get the containerData for each of the container as well
-    """
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    if isinstance(data, str):
-        if data.lower() == "true":
-            data = True
-        else:
-            data = False
-    else:
-        data = False
-
-    executing_containers_key = f"executingContainers"
-    all_container_ids = await reader_redis_conn.smembers(executing_containers_key)
-
-    containers = list()
-    for container_id in all_container_ids:
-        container_id = container_id.decode('utf-8')
-        if data is True:
-            container_data_key = f"containerData:{container_id}"
-            out = await reader_redis_conn.hgetall(container_data_key)
-            out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-            if not out:
-                _container = {
-                    'containerId': container_id,
-                    'containerData': dict()
-                }
-            else:
-                try:
-                    container_data = ContainerData(**out)
-                except ValidationError as verr:
-                    rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
-                    _container = {
-                        'containerId': container_id,
-                        'containerData': dict()
-                    }
-                else:
-                    _container = {
-                        'containerId': container_id,
-                        'containerData': container_data.dict()
-                    }
-            containers.append(_container)
-        else:
-            containers.append(container_id)
-
-    return dict(count=len(containers), containers=containers)

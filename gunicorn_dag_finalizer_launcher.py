@@ -9,7 +9,6 @@ import sys
 import resource
 
 
-
 LOG_LEVEL = logging.getLevelName(os.environ.get("LOG_LEVEL", "DEBUG"))
 JSON_LOGS = True if os.environ.get("JSON_LOGS", "0") == "1" else False
 WORKERS = int(os.environ.get("GUNICORN_WORKERS", "20"))
@@ -104,7 +103,8 @@ if __name__ == '__main__':
         "errorlog": "-",
         "worker_class": "uvicorn.workers.UvicornWorker",
         "logger_class": StubbedGunicornLogger,
-        "post_worker_init": post_worker_init
+        "post_worker_init": post_worker_init,
+        "preload_app": True
     }
 
     StandaloneApplication(app, options).run()
