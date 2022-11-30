@@ -20,6 +20,17 @@ module.exports = {
       }
     },
     {
+      name   : "ap-dag-processor",
+      script : "python3 ./dag_finalizer.py",
+      cwd : CWD,
+      max_restarts: MAX_RESTART,
+      min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
+      env: {
+        NODE_ENV: NODE_ENV
+      }
+    },
+    {
       name   : "ap-diff-service",
       script : "python3 ./diff_calculation_service.py",
       cwd : CWD,
