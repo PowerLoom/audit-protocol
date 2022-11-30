@@ -456,20 +456,28 @@ func DeleteContentFromLocalCache(projectId string, dagCids *map[int]string, payl
 	for _, cid := range *dagCids {
 		fileName := fmt.Sprintf("%s/%s.json", path, cid)
 		err := os.Remove(fileName)
-		if err != nil && !strings.Contains(err.Error(), "no such file or directory") {
+		if err != nil {
+			if strings.Contains(err.Error(), "no such file or directory") {
+				continue
+			}
 			log.Errorf("Failed to remove file %s from local cache due to error %+v", fileName, err)
 			//TODO: Need to have some sort of pruning files older than 8 days logic to handle failures.
 			errCount++
 		}
+		log.Debugf("Deleted file %s successfully from local cache", fileName)
 	}
 
 	for _, cid := range *payloadCids {
 		fileName := fmt.Sprintf("%s/%s.json", path, cid)
 		err := os.Remove(fileName)
-		if err != nil && !strings.Contains(err.Error(), "no such file or directory") {
+		if err != nil {
+			if strings.Contains(err.Error(), "no such file or directory") {
+				continue
+			}
 			log.Errorf("Failed to remove file %s from local cache due to error %+v", fileName, err)
 			errCount++
 		}
+		log.Debugf("Deleted file %s successfully from local cache", fileName)
 	}
 	return errCount
 }
