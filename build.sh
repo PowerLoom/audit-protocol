@@ -16,3 +16,8 @@ cd ../
 echo "Building DAG Verifier Service"
 cd dag_verifier
 go build .
+
+cd ../
+echo "Building Token Aggregator Service"
+cd token-aggregator
+go build .

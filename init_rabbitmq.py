@@ -36,11 +36,8 @@ def init_exchanges_queues():
     to_be_inited = settings.rabbitmq.setup.queues
 
     # queue name, routing key pairs
-    # to_be_inited = [
-    #     ('audit-protocol-commit-payloads', 'commit-payloads'),
-    #     ('audit-protocol-diff-requests', 'diff-calculation')
-    # ]
     for queue_config in to_be_inited.values():
+
         # add namespace?
         queue_name = queue_config.queue_name_prefix + settings.instance_id
         routing_key = queue_config.routing_key_prefix + settings.instance_id

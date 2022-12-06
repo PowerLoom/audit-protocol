@@ -15,7 +15,6 @@ class ProjectStateMetadata(BaseModel):
     projectID: str
     dagChains: List[ProjectDAGChainSegmentMetadata]
 
-
 class SourceChainDetails(BaseModel):
     chainID: int
     epochStartHeight: int
@@ -34,6 +33,7 @@ class AuditRecordTxEventData(BaseModel):
 
 class PendingTransaction(BaseModel):
     txHash: str
+    requestID: str
     lastTouchedBlock: int = 0
     event_data: Optional[AuditRecordTxEventData] = dict()
 
@@ -45,12 +45,14 @@ class PayloadCommitAPIRequest(BaseModel):
     # skip anchor tx by default, unless passed
     skipAnchorProof: bool = True
     sourceChainDetails: Optional[SourceChainDetails] = None
+    requestID: Optional[str] = None
 
 
 class PayloadCommit(BaseModel):
     projectId: str
     commitId: str
     payload: Optional[dict] = None
+    requestID: Optional[str] = None
     # following two can be used to substitute for not supplying the payload but the CID and hash itself
     snapshotCID: Optional[str] = None
     apiKeyHash: Optional[str] = None
@@ -61,90 +63,9 @@ class PayloadCommit(BaseModel):
     skipAnchorProof: bool = True
     sourceChainDetails: Optional[SourceChainDetails] = None
 
-class FilecoinJobData(BaseModel):
-    stagedCid: str = ""
-    jobId: str = ""
-    jobStatus: str = ""
-    jobStatusDescription: str = ""
-    retries: int = 0
-    filecoinToken: str = ""
-
-
-class BloomFilterSettings(BaseModel):
-    max_elements: int = 0
-    error_rate: float = 0.0
-    filename: Optional[str] = ""
-
-
-class SiaData(BaseModel):
-    fileHash: str = ""
-    skylink: str = ""
-
-
-class SiaSkynetData(BaseModel):
-    skylink: str = ""
-
-
-class SiaRenterData(BaseModel):
-    fileHash: str = ""
-
-
-class BackupMetaData(BaseModel):
-    sia_skynet: Optional[SiaSkynetData] = SiaSkynetData()  # Create empty placeholders
-    sia_renter: Optional[SiaRenterData] = SiaRenterData()  # Create empty placeholders
-    filecoin: Optional[FilecoinJobData] = FilecoinJobData()  # Create empty placeholders
-
-    @validator("sia_skynet", "sia_renter", "filecoin")
-    def validate_json_data(cls, data, values, **kwargs):
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except json.JSONDecodeError as jdecerr:
-                print(jdecerr)
-
-        if isinstance(data, dict):
-            if kwargs['field'].name == "sia_skynet":
-                data = SiaSkynetData(**data)
-            elif kwargs['field'].name == "sia_renter":
-                data = SiaRenterData(**data)
-            elif kwargs['field'].name == "filecoin":
-                data = FilecoinJobData(**data)
-        return data
-
-
-class ContainerData(BaseModel):
-    toHeight: int
-    fromHeight: int
-    projectId: str
-    timestamp: int
-    backupTargets: Union[str, List[str]]
-    backupMetaData: Union[dict, str, BackupMetaData]
-    bloomFilterSettings: Union[dict, str, BloomFilterSettings]
-
-    @validator('backupMetaData', 'bloomFilterSettings', 'backupTargets')
-    def validate_json_data(cls, data, values, **kwargs):
-
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except json.JSONDecodeError as jdecerr:
-                print(jdecerr)
-
-        if isinstance(data, dict):
-
-            if kwargs['field'].name == 'backupMetaData':
-                data = BackupMetaData(**data)
-
-            elif kwargs['field'].name == 'bloomFilterSettings':
-                data = BloomFilterSettings(**data)
-
-        return data
-
-    def convert_to_json(self):
-        self.backupTargets = json.dumps(self.backupTargets)
-        self.backupMetaData = json.dumps(self.backupMetaData.dict())
-        self.bloomFilterSettings = json.dumps(self.bloomFilterSettings.dict())
-
+class DAGBlockRange(BaseModel):
+    head_block_cid: str
+    tail_block_cid: str
 
 class liquidityProcessedData(BaseModel):
     contractAddress: str
@@ -152,8 +73,8 @@ class liquidityProcessedData(BaseModel):
     liquidity: str
     volume_24h: str
     volume_7d: str
-    cid_volume_24h: str
-    cid_volume_7d: str
+    cid_volume_24h: DAGBlockRange
+    cid_volume_7d: DAGBlockRange
     fees_24h: str
     block_height: int
     block_timestamp: int
@@ -174,12 +95,29 @@ class liquidityProcessedData(BaseModel):
 class DAGBlockPayloadLinkedPath(BaseModel):
     cid: Dict[str, str]
 
+
 class DAGBlock(BaseModel):
     height: int
     prevCid: Optional[Dict[str, str]]
+    prevRoot: Optional[str] = None
     data: DAGBlockPayloadLinkedPath
     txHash: str
     timestamp: int
+
+
+class DAGFinalizerCBEventData(BaseModel):
+    apiKeyHash: str
+    tentativeBlockHeight: int
+    projectId: str
+    snapshotCid: str
+    payloadCommitId: str
+    timestamp: int
+
+
+class DAGFinalizerCallback(BaseModel):
+    txHash: str
+    requestID: str
+    event_data: DAGFinalizerCBEventData
 
 
 class DiffCalculationRequest(BaseModel):
@@ -194,7 +132,7 @@ class DiffCalculationRequest(BaseModel):
 
 class uniswapPairsSnapshotZset(BaseModel):
     cid: str
-    txHash: str
+    txHash: str = None
     begin_block_height_24h: int
     begin_block_timestamp_24h: int
     begin_block_height_7d: int
@@ -206,24 +144,29 @@ class uniswapPairsSnapshotZset(BaseModel):
 
 class uniswapDailyStatsSnapshotZset(BaseModel):
     cid: str
-    txHash: str
+    txHash: str = None
     txStatus: int
     dagHeight: int
     prevTxHash: str = None
 
-class uniswapPairSummaryCid7dResultant(BaseModel):
-    trade_volume_7d_cids: Dict[str, str]
-    latestTimestamp_volume_7d: str
+class PairLiquidity(BaseModel):
+    total_liquidity: float = 0.0
+    token0_liquidity: float = 0.0
+    token1_liquidity: float = 0.0
+    token0_liquidity_usd: float = 0.0
+    token1_liquidity_usd: float = 0.0
+    block_height_total_reserve: int = 0
+    block_timestamp_total_reserve: int = 0
 
-class uniswapPairSummary7dCidRange(BaseModel):
-    resultant: uniswapPairSummaryCid7dResultant
 
-class uniswapPairSummaryCid24hResultant(BaseModel):
-    trade_volume_24h_cids: Dict[str, str]
-    latestTimestamp_volume_24h: str
+class PairTradeVolume(BaseModel):
+    total_volume: int = 0
+    fees: int = 0
+    token0_volume: int = 0
+    token1_volume: int = 0
+    token0_volume_usd: int = 0
+    token1_volume_usd: int = 0
 
-class uniswapPairSummary24hCidRange(BaseModel):
-    resultant: uniswapPairSummaryCid24hResultant
 
 class ProjectBlockHeightStatus(BaseModel):
     project_id: str

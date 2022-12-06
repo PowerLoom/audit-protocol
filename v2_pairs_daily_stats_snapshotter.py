@@ -1,16 +1,14 @@
+from httpx import AsyncClient, Timeout, Limits
+from utils.retrieval_utils import retrieve_payload_data, retrieve_block_status
+from data_models import uniswapDailyStatsSnapshotZset
 from utils import redis_keys
 from utils.redis_conn import RedisPool
 from utils import helper_functions
-from utils.retrieval_utils import retrieve_payload_data
+from async_ipfshttpclient.main import AsyncIPFSClient
 from redis import asyncio as aioredis
-from tenacity import retry, AsyncRetrying, wait_random, stop_after_attempt
-from utils import retrieval_utils
 import asyncio
 import json
-from httpx import AsyncClient, Timeout, Limits
-from utils.retrieval_utils import retrieve_block_data, retrieve_block_status, SNAPSHOT_STATUS_MAP
 import logging.config
-from data_models import uniswapDailyStatsSnapshotZset, ProjectBlockHeightStatus
 import sys
 
 logger = logging.getLogger(__name__)
@@ -67,14 +65,13 @@ def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pai
     return linked_contract_snapshot
 
 
-async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redis_conn=None):
+async def v2_pairs_daily_stats_snapshotter(
+        async_httpx_client: AsyncClient,
+        ipfs_read_client,
+        redis_conn: aioredis.Redis
+):
     try:
-        if not redis_conn:
-            aioredis_pool = RedisPool()
-            await aioredis_pool.populate()
-            redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
-
-        # latest snaphot of v2 pair summary
+        # latest snapshot of v2 pair summary
         latest_pair_summary_snapshot = await redis_conn.zrevrange(
             name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
             start=0,
@@ -82,11 +79,11 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
             withscores=True
         )
         if len(latest_pair_summary_snapshot) < 1:
-            logger.debug(f"Pairs Summary snapshot zset is empty, sleeping till first snapshot is added")
+            logger.debug("Pairs Summary snapshot zset is empty, sleeping till first snapshot is added")
             return
         latest_pair_summary_payload, latest_pair_summary_block_height = latest_pair_summary_snapshot[0]
         latest_pair_summary_payload = json.loads(latest_pair_summary_payload.decode("utf-8"))
-        latest_pair_summary_payloadCID = latest_pair_summary_payload.get('cid')
+        latest_pair_summary_payload_cid = latest_pair_summary_payload.get('cid')
         latest_pair_summary_block_height = int(latest_pair_summary_block_height)
 
         # latest snapshot of v2 pair daily stats
@@ -106,14 +103,15 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
         if latest_pair_summary_block_height > pair_daily_stats_latest_block_height:
             latest_pair_summary_timestamp = await redis_conn.zscore(
                 name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
-                value=latest_pair_summary_payloadCID
+                value=latest_pair_summary_payload_cid
             )
             if not latest_pair_summary_timestamp:
                 logger.error(
-                    f"Error pairs summary timestamp zset doesn't have any entry for payloadCID: {latest_pair_summary_payloadCID}")
+                    "Error pairs summary timestamp zset doesn't have any entry for payloadCID: %s",
+                    latest_pair_summary_payload_cid)
                 return
 
-            latest_pair_summary_timestamp_payloadCID = latest_pair_summary_payloadCID
+            latest_pair_summary_timestamp_payload_cid = latest_pair_summary_payload_cid
             latest_pair_summary_timestamp = int(latest_pair_summary_timestamp)
 
             # evaluate 24h old timestamp
@@ -126,13 +124,13 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
             )
 
             # get exact 24h old payload CID or nearest one
-            pair_snapshot_payloadCID_24h = get_nearest_v2_pair_summary_snapshot(
+            pair_snapshot_payload_cid_24h = get_nearest_v2_pair_summary_snapshot(
                 list_of_zset_entries, pair_summary_timestamp_24h
             )
 
-            if pair_snapshot_payloadCID_24h == "":
+            if pair_snapshot_payload_cid_24h == "":
                 logger.debug(
-                    f"Pairs summary snapshots don't have enough data to get 24h old entry, so taking oldest available entry")
+                    "Pairs summary snapshots don't have enough data to get 24h old entry, so taking oldest available entry")
                 last_entry_of_summary_snapshot = await redis_conn.zrange(
                     name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
                     start=0,
@@ -140,19 +138,23 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                     withscores=True
                 )
                 if len(last_entry_of_summary_snapshot) < 1:
-                    logger.debug(f"Pairs summary snapshots don't have any entry")
+                    logger.debug("Pairs summary snapshots don't have any entry")
                     return
 
-                pair_snapshot_payloadCID_24h, last_entry_timestamp = last_entry_of_summary_snapshot[0]
-                pair_snapshot_payloadCID_24h = pair_snapshot_payloadCID_24h.decode("utf-8")
+                pair_snapshot_payload_cid_24h, _ = last_entry_of_summary_snapshot[0]
+                pair_snapshot_payload_cid_24h = pair_snapshot_payload_cid_24h.decode("utf-8")
 
             # fetch current and 24h old snapshot payload
             dag_block_latest, dag_block_24h = await asyncio.gather(
-                retrieve_payload_data(latest_pair_summary_timestamp_payloadCID),
-                retrieve_payload_data(pair_snapshot_payloadCID_24h)
+                retrieve_payload_data(latest_pair_summary_timestamp_payload_cid, ipfs_read_client),
+                retrieve_payload_data(pair_snapshot_payload_cid_24h, ipfs_read_client),
+                return_exceptions=True
             )
-            dag_block_latest = json.loads(dag_block_latest).get("data", None) if dag_block_latest else None
-            dag_block_24h = json.loads(dag_block_24h).get("data", None) if dag_block_24h else None
+            # FIXME: should be a much cleaner way to load json from returned result
+            dag_block_latest = json.loads(dag_block_latest).get("data", None) if \
+                not isinstance(dag_block_latest, BaseException) else None
+            dag_block_24h = json.loads(dag_block_24h).get("data", None) if \
+                not isinstance(dag_block_24h, BaseException) else None
 
             # link each contract obj for current and old snapshot
             linked_contracts_snapshot = link_contract_objs_of_v2_pairs_snapshot(dag_block_latest, dag_block_24h)
@@ -160,7 +162,7 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
             # parse common block height from v2 pair summary snapshot (no need validate height across pairs in snapshot)
             common_blockheight_reached = dag_block_latest[0].get("block_height", None)
             if not common_blockheight_reached:
-                logger.error(f"Error pairs daily stats snapshotter can't get common block height")
+                logger.error("Error pairs daily stats snapshotter can't get common block height")
                 return
 
             # evalute change in current and old snapshot values for each contract seperately
@@ -210,9 +212,9 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                 daily_stats_contracts.append(daily_stats)
 
         else:
-            logger.debug(f"Pair summary & daily stats snapshots are already in sync with block height")
+            logger.debug("Pair summary & daily stats snapshots are already in sync with block height")
             return
-        
+
         wait_for_snapshot_project_new_commit = False
         if daily_stats_contracts:
             summarized_payload = {'data': daily_stats_contracts}
@@ -229,10 +231,10 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                     session=async_httpx_client,
                     skipAnchorProof=False
                 )
-            except Exception as e:
+            except Exception as exc:
                 logger.error(
                     'Error while committing pairs daily stats snapshot to audit protocol. '
-                    'Exception: %s', e
+                    'Exception: %s', exc
                 )
             else:
                 if 'message' in response.keys():
@@ -250,7 +252,7 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                 # introduce a break condition if something goes wrong and snapshot daily stats does not move ahead
                 wait_cycles += 1
                 # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot daily stats submission
-                if wait_cycles > 18:
+                if wait_cycles > 4:
                     logger.debug(
                         "Waited for %s cycles, daily stats project has not moved ahead. Stopped waiting to "
                         "retry in next cycle.", wait_cycles
@@ -260,8 +262,12 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                 await asyncio.sleep(10)
 
                 block_status = await retrieve_block_status(
-                    redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
-                    0, updated_audit_project_block_height, redis_conn, redis_conn
+                    project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                    project_block_height=0,
+                    block_height=updated_audit_project_block_height,
+                    reader_redis_conn=redis_conn,
+                    writer_redis_conn=redis_conn,
+                    ipfs_read_client=ipfs_read_client
                 )
                 if block_status.status < 3:
                     continue
@@ -302,13 +308,11 @@ async def v2_pairs_daily_stats_snapshotter(async_httpx_client: AsyncClient, redi
                     logger.debug('Pruned pairs daily stats CID zset by %s elements', _)
 
                 logger.debug('V2 pairs daily stats snapshot updated...')
-
                 break
-
         return ""
 
-    except Exception as e:
-        logger.error(f"Error at pair data: {str(e)}", exc_info=True)
+    except Exception as exc:
+        logger.error("Error at pair data: %s", exc, exc_info=True)
 
 
 if __name__ == '__main__':

@@ -75,7 +75,8 @@ func (verifier *PruningVerifier) Init(settings *settings.SettingsObj) {
 	redisURL := settings.Redis.Host + ":" + strconv.Itoa(settings.Redis.Port)
 	redisDb := settings.Redis.Db
 	poolSize := settings.DagVerifierSettings.RedisPoolSize
-	verifier.RunInterval = settings.PruningServiceSettings.RunIntervalMins / 5
+	//Verify every half-time of pruningInterval
+	verifier.RunInterval = settings.PruningServiceSettings.RunIntervalMins / 2
 	verifier.redisClient = redisutils.InitRedisClient(redisURL, redisDb, poolSize)
 	verifier.settingsObj = settings
 	verifier.w3httpClient = InitW3sHTTPClient(settings)
@@ -149,8 +150,7 @@ func (verifier *PruningVerifier) FetchProjectList() {
 func (verifier *PruningVerifier) Run() {
 	//Fetch projects list
 	verifier.FetchProjectList()
-	//Verify every 1/3th of pruningInterval
-	pruningVerifierSleepInterval := time.Duration(verifier.settingsObj.PruningServiceInterval/3) * time.Minute
+	pruningVerifierSleepInterval := time.Duration(verifier.RunInterval) * time.Minute
 	for {
 		verifier.ProjectVerificationStatus = make(map[string]*ProjectPruningVerificationStatus)
 		if !verifier.FetchPruningVerificationStatusFromRedis() {

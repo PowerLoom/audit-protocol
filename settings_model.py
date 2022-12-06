@@ -1,6 +1,5 @@
 from pydantic import BaseModel, validator
-from data_models import BloomFilterSettings
-from typing import Union, List, Optional, Dict
+from typing import Union, Optional, Dict
 import json
 
 
@@ -88,6 +87,7 @@ class Settings(BaseModel):
     keepalive_secs: int = 600
     rlimit: dict
     ipfs_url: str
+    ipfs_reader_url: str
     rabbitmq: RabbitMQConfig
     snapshot_interval: int
     seed: str
@@ -110,7 +110,6 @@ class Settings(BaseModel):
     ipfs_timeout: int
     span_expire_timeout: int
     aiohtttp_timeouts: Union[HTTPClientConnection, dict]
-    bloom_filter_settings: Union[BloomFilterSettings, dict]
     webhook_listener: Union[WebhookListener, dict]
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
@@ -118,18 +117,3 @@ class Settings(BaseModel):
     calculate_diff: bool
     rpc_url: str
     consensus_config: ConsensusConfig
-
-    @validator("bloom_filter_settings", "webhook_listener", "redis", "redis_reader")
-    def convert_to_models(cls, data, values, **kwargs):
-
-        if isinstance(data, dict):
-            if kwargs['field'].name == "bloom_filter_settings":
-                data = BloomFilterSettings(**data)
-
-            elif kwargs['field'].name == "webhook_listener":
-                data = WebhookListener(**data)
-
-            elif (kwargs['field'].name == "redis") or (kwargs['field'] == "redis_reader"):
-                data = RedisConfig(**data)
-
-        return data

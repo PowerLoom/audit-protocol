@@ -100,7 +100,7 @@ func ProcessPendingSnapshot(snapshotCID string, payload *PayloadCommit) {
 		QueueLock.Lock()
 		delete(WaitQueueForConsensus, snapshotCID)
 		QueueLock.Unlock()
-		opStatus := AddToPendingTxns(payload, payload.ApiKeyHash)
+		opStatus := AddToPendingTxns(payload, payload.ApiKeyHash, payload.RequestID)
 		if !opStatus {
 			log.Errorf("Failed to invoke webhook listener callback")
 			return

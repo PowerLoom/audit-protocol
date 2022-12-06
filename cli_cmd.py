@@ -328,8 +328,6 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
     console.print("[bold red]Failure counts:[/bold red]", f"[bold red]{cycleDetails.get('projectsProcessFailedCount', None)}[/bold red]")
     console.print("[bold yellow]Unprocessed Project count:[/bold yellow]", f"[bold yellow]{cycleDetails.get('projectsNotProcessedCount', None)}[/bold yellow]\n\n")
 
-
-
 @app.command()
 def identify_projects_that_require_force_resubmission(namespace: str = typer.Option(None, "--namespace")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
@@ -446,6 +444,45 @@ def force_project_height_into_resubmission(namespace: str = typer.Option(None, "
     if count == 0:
        console.log("No projects required force resubmission")
 
+@app.command()
+def force_summary_project_height_ahead(namespace: str = typer.Option(None, "--namespace")):
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
+
+    print("\nThis command will force-push Summary project's redis state ahead.\n ")
+    count = 0
+
+    if not namespace:
+        console.log("No namespace provided, please provide a namespace")
+        return
+    projects = [
+        f"projectID:uniswap_V2TokensSummarySnapshot_{namespace}",
+        f"projectID:uniswap_V2PairsSummarySnapshot_{namespace}",
+        f"projectID:uniswap_V2DailyStatsSnapshot_{namespace}"
+        ]
+    for project in projects:
+        try:
+            block_height_key = f"{project}:blockHeight"
+            tentative_bh_key = f"{project}:tentativeBlockHeight"
+            console.log(f"\n[bold magenta]{project}[bold magenta]:")
+
+            project_height = r.get(block_height_key)
+            project_height = project_height.decode('utf-8')
+
+            tentative_project_height = r.get(tentative_bh_key)
+            tentative_project_height = tentative_project_height.decode('utf-8')
+
+            project_height = int(project_height)
+            tentative_height_project = int(tentative_project_height)
+            if project_height < tentative_height_project:
+                count+=1
+                result = r.set(block_height_key,tentative_project_height)
+                console.log(f"[bold blue]Force pushed {result} project blockHeight from {project_height} to height:[bold blue] [white]{tentative_project_height}[white]\n")
+            else:
+                console.log(f"No need to force-push height ahead for project: {project}")
+        except Exception as exc:
+            print(f"Error: {str(exc)} | project: {project}")
+    if count == 0:
+       console.log("No projects required force pushing heights")
 
 
 if __name__ == '__main__':

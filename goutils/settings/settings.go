@@ -44,7 +44,12 @@ type _DagVerifierSettings_ struct {
 	PruningVerification          bool          `json:"pruning_verification"`
 }
 
-//TODO: Move settings into a common package to be used by all go services under audit-protocol.
+type TokenAggregatorSettings_ struct {
+	Port            int `json:"port"`
+	RunIntervalSecs int `json:"run_interval_secs"`
+}
+
+// TODO: Move settings into a common package to be used by all go services under audit-protocol.
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
@@ -54,7 +59,7 @@ type SettingsObj struct {
 		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
 	IpfsURL          string `json:"ipfs_url"`
-	IpfsReaderURL    string `json:"ipfs_reader_url`
+	IpfsReaderURL    string `json:"ipfs_reader_url"`
 	SnapshotInterval int    `json:"snapshot_interval"`
 	Rlimit           struct {
 		FileDescriptors int `json:"file_descriptors"`
@@ -159,11 +164,12 @@ type SettingsObj struct {
 		RateLimiter     *RateLimiter_ `json:"rate_limit,omitempty"`
 		UploadURLSuffix string        `json:"upload_url_suffix"`
 	} `json:"web3_storage"`
-	DagVerifierSettings    _DagVerifierSettings_    `json:"dag_verifier"`
-	PruningServiceSettings *PruningServiceSettings_ `json:"pruning"`
-	UseConsensus           bool                     `json:"use_consensus"`
-	ConsensusConfig        ConsensusConfig_         `json:"consensus_config"`
-	InstanceId             string                   `json:"instance_id"`
+	DagVerifierSettings     _DagVerifierSettings_    `json:"dag_verifier"`
+	PruningServiceSettings  *PruningServiceSettings_ `json:"pruning"`
+	UseConsensus            bool                     `json:"use_consensus"`
+	ConsensusConfig         ConsensusConfig_         `json:"consensus_config"`
+	InstanceId              string                   `json:"instance_id"`
+	TokenAggregatorSettings TokenAggregatorSettings_ `json:"token_aggregator"`
 }
 
 type ConsensusConfig_ struct {

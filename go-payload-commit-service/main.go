@@ -18,6 +18,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	shell "github.com/ipfs/go-ipfs-api"
 	log "github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
@@ -426,14 +427,15 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 		}
 	}
 
-	var txHash string
+	var requestID, txHash string
 	var retryType retryType
 	if !payloadCommit.SkipAnchorProof {
-		txHash, retryType = PrepareAndSubmitTxnToChain(&payloadCommit)
+		requestID, txHash, retryType = PrepareAndSubmitTxnToChain(&payloadCommit)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
 			//TODO: Not retrying further..need to think of project recovery from this point.
 			log.Warnf("MAX Retries reached while trying to invoke tx-manager for project %s and commitId %s with tentativeBlockHeight %d.",
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further.")
+			requestID = ""
 		} else if retryType == NO_RETRY_SUCCESS {
 			log.Trace("Submitted txn to chain for %+v", payloadCommit)
 		} else {
@@ -441,6 +443,8 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			return true
 		}
 	} else {
+		requestID = uuid.New().String()
+		payloadCommit.RequestID = requestID
 		var status bool
 		txHash, status = GenerateTokenHash(&payloadCommit)
 		payloadCommit.ApiKeyHash = txHash
@@ -466,13 +470,13 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 			}
 		}
 	}
-	AddToPendingTxns(&payloadCommit, txHash)
+	AddToPendingTxns(&payloadCommit, txHash, requestID)
 	return true
 }
 
-func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string) bool {
+func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string, requestID string) bool {
 	/*Add to redis pendingTransactions*/
-	err := AddToPendingTxnsInRedis(payloadCommit, txHash)
+	err := AddToPendingTxnsInRedis(payloadCommit, requestID, txHash)
 	if err != nil {
 		//TODO: Not retrying further..need to think of project recovery from this point.
 		log.Errorf("Unable to add transaction to PendingTxns after max retries for project %s and commitId %s with tentativeBlockHeight %d.",
@@ -481,7 +485,7 @@ func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string) bool {
 	}
 	if payloadCommit.SkipAnchorProof {
 		//Notify DAG finalizer service as we are skipping proof anchor on chain.
-		retryType := InvokeDAGFinalizerCallback(payloadCommit)
+		retryType := InvokeDAGFinalizerCallback(payloadCommit, requestID)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
 			//TODO: Not retrying further..need to think of project recovery from this point.
 			log.Warnf("MAX Retries reached while trying to invoke DAG finalizer for project %s and commitId %s with tentativeBlockHeight %d.",
@@ -637,7 +641,7 @@ func StorePayloadCidInRedis(payload *PayloadCommit) error {
 	return nil
 }
 
-func AddToPendingTxnsInRedis(payload *PayloadCommit, txHash string) error {
+func AddToPendingTxnsInRedis(payload *PayloadCommit, requestID string, txHash string) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PENDING_TXNS, payload.ProjectId)
 	var pendingtxn PendingTransaction
 	pendingtxn.EventData.ProjectId = payload.ProjectId
@@ -647,6 +651,7 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, txHash string) error {
 	pendingtxn.EventData.TentativeBlockHeight = payload.TentativeBlockHeight
 	pendingtxn.EventData.ApiKeyHash = payload.ApiKeyHash
 	pendingtxn.EventData.SkipAnchorProof = payload.SkipAnchorProof
+	pendingtxn.RequestID = requestID
 
 	if payload.Resubmitted {
 		pendingtxn.LastTouchedBlock = payload.ResubmissionBlock
@@ -732,15 +737,15 @@ func GenerateTokenHash(payload *PayloadCommit) (string, bool) {
 	return tokenHash, true
 }
 
-func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
-	var tokenHash, txHash string
+func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, string, retryType) {
+	var tokenHash, requestID, txHash string
 	var status bool
 	var err error
 
 	if payload.ApiKeyHash == "" {
 		tokenHash, status = GenerateTokenHash(payload)
 		if !status {
-			return "", NO_RETRY_FAILURE
+			return "", "", NO_RETRY_FAILURE
 		}
 	} else {
 		tokenHash = payload.ApiKeyHash
@@ -750,10 +755,10 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
 
 	var retryType retryType
 	for retryCount := 0; ; {
-		txHash, retryType, err = SubmitTxnToChain(payload, tokenHash)
+		requestID, txHash, retryType, err = SubmitTxnToChain(payload, tokenHash)
 		if err != nil {
 			if retryType == NO_RETRY_FAILURE {
-				return txHash, retryType
+				return requestID, txHash, retryType
 			} else if retryType == RETRY_WITH_DELAY {
 				time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
 			}
@@ -761,7 +766,7 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
 				log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to tx-manager with err %+v after max retries of %d",
 					payload.SnapshotCID, payload.ProjectId, payload.CommitId, err, *settingsObj.RetryCount)
 				time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-				return txHash, RETRY_IMMEDIATE
+				return requestID, txHash, RETRY_IMMEDIATE
 			}
 			retryCount++
 			log.Errorf("Failed to send txn for snapshot %s for project %s with commitID %s to pendingTxns to tx-manager with err %+v ..retryCount %d",
@@ -771,7 +776,7 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, retryType) {
 		break
 	}
 
-	return txHash, NO_RETRY_SUCCESS
+	return requestID, txHash, NO_RETRY_SUCCESS
 }
 
 func UpdateTentativeBlockHeight(payload *PayloadCommit) error {
@@ -823,13 +828,14 @@ func GetTentativeBlockHeight(projectId string) (int, error) {
 
 // TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
 // As of now it is copy pasted and looks ugly.
-func InvokeDAGFinalizerCallback(payload *PayloadCommit) retryType {
+func InvokeDAGFinalizerCallback(payload *PayloadCommit, requestID string) retryType {
 	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.WebhookListener.Host, settingsObj.WebhookListener.Port)
 	var req AuditContractSimWebhookCallbackRequest
 	req.EventName = "RecordAppended"
 	req.Type = "event"
 	req.Ctime = time.Now().Unix()
 	req.TxHash = payload.ApiKeyHash
+	req.RequestID = requestID
 	req.EventData.ApiKeyHash = payload.ApiKeyHash
 	req.EventData.PayloadCommitId = payload.CommitId
 	req.EventData.ProjectId = payload.ProjectId
@@ -976,9 +982,10 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 	}
 }
 
-func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, retry retryType, err error) {
+func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (requestID string, txHash string, retry retryType, err error) {
 	reqURL := settingsObj.ContractCallBackend
 	var reqParams AuditContractCommitParams
+	reqParams.RequestID = payload.RequestID
 	reqParams.ApiKeyHash = tokenHash
 	reqParams.PayloadCommitId = payload.CommitId
 	reqParams.ProjectId = payload.ProjectId
@@ -987,19 +994,19 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	commonTxReqParams.Params, err = json.Marshal(reqParams)
 	if err != nil {
 		log.Fatalf("Failed to marshal AuditContractCommitParams %+v towards tx-manager with error %+v", reqParams, err)
-		return "", NO_RETRY_FAILURE, err
+		return "", "", NO_RETRY_FAILURE, err
 	}
 	body, err := json.Marshal(commonTxReqParams)
 	if err != nil {
 		log.Fatalf("Failed to marshal request %+v towards tx-manager with error %+v", commonTxReqParams, err)
-		return "", NO_RETRY_FAILURE, err
+		return "", "", NO_RETRY_FAILURE, err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(body))
 	if err != nil {
 		log.Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
 			reqURL, commonTxReqParams, err)
-		return "", NO_RETRY_FAILURE, err
+		return "", "", NO_RETRY_FAILURE, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("accept", "application/json")
@@ -1008,7 +1015,7 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	if err != nil {
 		log.Errorf("tx-manager Rate Limiter wait timeout with error %+v", err)
 		time.Sleep(1 * time.Second)
-		return "", RETRY_IMMEDIATE, err
+		return "", "", RETRY_IMMEDIATE, err
 	}
 
 	log.Debugf("Sending Req with params %+v to tx-manager URL %s for project %s with snapshotCID %s commitId %s tokenHash %s.",
@@ -1017,7 +1024,7 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	if err != nil {
 		log.Errorf("Failed to send request %+v towards tx-manager URL %s for project %s with snapshotCID %s commitId %s with error %+v",
 			req, reqURL, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-		return "", RETRY_WITH_DELAY, err
+		return "", "", RETRY_WITH_DELAY, err
 	}
 	defer res.Body.Close()
 	var resp AuditContractCommitResp
@@ -1025,30 +1032,30 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (txHash string, 
 	if err != nil {
 		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from tx-manager with error %+v",
 			payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-		return "", RETRY_WITH_DELAY, err
+		return "", "", RETRY_WITH_DELAY, err
 	}
 	if res.StatusCode == http.StatusOK {
 		err = json.Unmarshal(respBody, &resp)
 		if err != nil {
 			log.Errorf("Failed to unmarshal response %+v for project %s with snapshotCID %s commitId %s towards tx-manager with error %+v",
 				respBody, payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
-			return "", RETRY_WITH_DELAY, err
+			return "", "", RETRY_WITH_DELAY, err
 		}
 		if resp.Success {
 			log.Debugf("Received Success response %+v from tx-manager for project %s with snapshotCID %s commitId %s.",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId)
-			return resp.Data[0].TxHash, NO_RETRY_SUCCESS, nil
+			return resp.Data[0].RequestID, resp.Data[0].TxHash, NO_RETRY_SUCCESS, nil
 		} else {
 			var tmpRsp map[string]string
 			_ = json.Unmarshal(respBody, &tmpRsp)
 			log.Errorf("Received 200 OK with Error response %+v from tx-manager for project %s with snapshotCID %s commitId %s resp bytes %+v ",
 				resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, tmpRsp)
-			return "", RETRY_WITH_DELAY, errors.New("Received Error response from tx-manager : " + fmt.Sprintf("%+v", resp))
+			return "", "", RETRY_WITH_DELAY, errors.New("Received Error response from tx-manager : " + fmt.Sprintf("%+v", resp))
 		}
 	} else {
 		log.Errorf("Received Error response %+v from tx-manager for project %s with snapshotCID %s commitId %s with statusCode %d and status : %s ",
 			resp, payload.ProjectId, payload.SnapshotCID, payload.CommitId, res.StatusCode, res.Status)
-		return "", RETRY_WITH_DELAY, errors.New("Received Error response from tx-manager" + fmt.Sprint(respBody))
+		return "", "", RETRY_WITH_DELAY, errors.New("Received Error response from tx-manager" + fmt.Sprint(respBody))
 	}
 }
 

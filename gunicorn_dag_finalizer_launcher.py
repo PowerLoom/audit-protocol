@@ -2,12 +2,11 @@ from gunicorn.app.base import BaseApplication
 from gunicorn.glogging import Logger
 from loguru import logger
 from config import settings
-from dag_finalizer import app
+from dag_finalizer_callback_receiver import app
 import os
 import logging
 import sys
 import resource
-
 
 
 LOG_LEVEL = logging.getLevelName(os.environ.get("LOG_LEVEL", "DEBUG"))
@@ -104,7 +103,8 @@ if __name__ == '__main__':
         "errorlog": "-",
         "worker_class": "uvicorn.workers.UvicornWorker",
         "logger_class": StubbedGunicornLogger,
-        "post_worker_init": post_worker_init
+        "post_worker_init": post_worker_init,
+        "preload_app": True
     }
 
     StandaloneApplication(app, options).run()

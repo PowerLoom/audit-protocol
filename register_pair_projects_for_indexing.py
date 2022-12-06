@@ -17,7 +17,7 @@ NAMESPACE = 'UNISWAPV2'
 
 
 
-## CHANGE INDEX KEY FOR EACH INSTANCE: 
+## CHANGE INDEX KEY FOR EACH INSTANCE:
 if NAMESPACE == 'UNISWAPV2':
     REDIS_INDEXES_KEY = 'cache:indexesRequested'
 else:
@@ -37,10 +37,10 @@ def main():
     project_ids = dict()
     for each_pair in pairs:
         addr = each_pair.lower()
-        
+
         project_ids.update({f'uniswap_pairContract_trade_volume_{addr}_{NAMESPACE}': json.dumps({'series': ['24h', '7d']})})
         project_ids.update({f'uniswap_pairContract_pair_total_reserves_{addr}_{NAMESPACE}': json.dumps({'series': ['0']})})
-    
+
     r.hset(REDIS_INDEXES_KEY, mapping=project_ids)
     client = httpx.Client(limits=httpx.Limits(
         max_connections=20, max_keepalive_connections=20
@@ -58,7 +58,6 @@ def main():
             print(
                 f'NOT Registered project {each_project} for consensus service snapshot submission | '
                 f'Status code: {r.status_code} | Response: {r.text}')
-
 
 if __name__ == '__main__':
     main()

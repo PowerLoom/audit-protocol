@@ -32,6 +32,10 @@
 				"diff-requests":{
 					"queue_name_prefix":"audit-protocol-diff-requests:",
 					"routing_key_prefix":"diff-calculation:"
+				},
+				"dag-processing":{
+					"queue_name_prefix":"audit-protocol-dag-processing:",
+					"routing_key_prefix":"dag-processing:"
 				}
 			}
 		}
@@ -179,5 +183,9 @@
 		"max_idle_conns": 5,
 		"idle_conn_timeout":0,
 		"finalization_wait_time_secs": 60
+	},
+	"token_aggregator":{
+		"port": 8000,
+		"run_interval_secs": 60
 	}
 }
