@@ -14,8 +14,8 @@ def get_retrieval_request_info_key(request_id: str):
     return retrieval_request_info_key
 
 
-def get_last_pruned_key(project_id: str):
-    last_pruned_key = "lastPruned:{}".format(project_id)
+def get_pruning_status_key():
+    last_pruned_key = "projects:pruningStatus"
     return last_pruned_key
 
 

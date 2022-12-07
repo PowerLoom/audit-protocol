@@ -1,10 +1,12 @@
 from config import settings
 from maticvigil.EVCore import EVCore
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils import helper_functions
-from data_models import PendingTransaction, DAGBlock
+from data_models import PendingTransaction, DAGBlock, DAGFinalizerCallback
+from tenacity import retry, wait_random, wait_random_exponential, retry_if_exception_type, stop_after_attempt
 from typing import Tuple
+import aiohttp
 import async_timeout
 import asyncio
 import json
@@ -15,7 +17,7 @@ import hmac
 import sys
 from utils.file_utils import write_bytes_to_file, read_text_file
 
-class DAGCreationException(Exception):
+class IPFSDAGCreationException(Exception):
     pass
 
 
@@ -60,6 +62,14 @@ def check_signature(core_payload, signature):
     return _sign_rebuilt == signature
 
 
+async def send_commit_callback(aiohttp_session: aiohttp.ClientSession, url, payload):
+    if type(url) is bytes:
+        url = url.decode('utf-8')
+    async with aiohttp_session.post(url=url, json=payload) as resp:
+        json_response = await resp.json()
+        return json_response
+
+
 async def update_pending_tx_block_touch(
         pending_tx_set_entry: bytes,
         touched_at_block: int,
@@ -85,36 +95,32 @@ async def update_pending_tx_block_touch(
     return {'status': bool(r_) and bool(r__), 'results': {'zrem': r_, 'zadd': r__}}
 
 
-async def save_event_data(event_data: dict, pending_tx_set_entry: bytes, writer_redis_conn: aioredis.Redis):
+async def save_event_data(event_data: DAGFinalizerCallback, pending_tx_set_entry: bytes, writer_redis_conn: aioredis.Redis):
     """
         - Given event_data, save the txHash, timestamp, projectId, snapshotCid, tentativeBlockHeight
-        onto a redis HashTable with key: eventData:{payloadCommitId}
-        - Update state in pending tx
-        - And then add the payload_commit_id to a zset with key: projectId:{projectId}:pendingBlocks
-        with score being the tentativeBlockHeight
+          to update state in :pendingTransactions zset
     """
 
     fields = {
-        'txHash': event_data['txHash'],
-        'projectId': event_data['event_data']['projectId'],
-        'timestamp': event_data['event_data']['timestamp'],
-        'snapshotCid': event_data['event_data']['snapshotCid'],
-        'payloadCommitId': event_data['event_data']['payloadCommitId'],
-        'apiKeyHash': event_data['event_data']['apiKeyHash'],
-        'tentativeBlockHeight': event_data['event_data']['tentativeBlockHeight']
+        'txHash': event_data.txHash,
+        'projectId': event_data.event_data.projectId,
+        'timestamp': event_data.event_data.timestamp,
+        'snapshotCid': event_data.event_data.snapshotCid,
+        'payloadCommitId': event_data.event_data.payloadCommitId,
+        'apiKeyHash': event_data.event_data.apiKeyHash,
+        'tentativeBlockHeight': event_data.event_data.tentativeBlockHeight
     }
 
     return await update_pending_tx_block_touch(
         pending_tx_set_entry=pending_tx_set_entry,
         touched_at_block=-1,
         project_id=fields['projectId'],
-        tentative_block_height=int(event_data['event_data']['tentativeBlockHeight']),
+        tentative_block_height=int(event_data.event_data.tentativeBlockHeight),
         event_data=fields,
         writer_redis_conn=writer_redis_conn
     )
 
-
-async def get_dag_block(dag_cid: str, project_id:str):
+async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
     e_obj = None
     dag = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
     if dag is None:
@@ -123,12 +129,13 @@ async def get_dag_block(dag_cid: str, project_id:str):
         try:
             async with async_timeout.timeout(settings.ipfs_timeout) as cm:
                 try:
-                    dag = await ipfs_client.dag.get(dag_cid)
+                    dag = await ipfs_read_client.dag.get(dag_cid)
                     dag = dag.as_json()
                 except Exception as ex:
                     e_obj = ex
         except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
             e_obj = err
+
 
         if e_obj or cm.expired:
             return {}
@@ -136,10 +143,9 @@ async def get_dag_block(dag_cid: str, project_id:str):
         dag = json.loads(dag)
     return dag
 
-
-async def put_dag_block(dag_json: str, project_id:str):
+async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncIPFSClient):
     dag_json = dag_json.encode('utf-8')
-    out = await ipfs_client.dag.put(io.BytesIO(dag_json), pin=True)
+    out = await ipfs_write_client.dag.put(io.BytesIO(dag_json), pin=True)
     dag_cid = out.as_json()['Cid']['/']
     try:
         write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", dag_json, logger )
@@ -147,40 +153,120 @@ async def put_dag_block(dag_json: str, project_id:str):
         logger.error("Failed to write dag-block %s for project %s to local cache due to exception %s",
         dag_json,project_id, exc, exc_info=True)
 
+
     return dag_cid
 
 
-async def create_dag_block_timebound(
-    tx_hash: str,
-    project_id: str,
-    tentative_block_height: int,
-    payload_cid: str,
-    timestamp: int,
-    reader_redis_conn: aioredis.Redis,
-    writer_redis_conn: aioredis.Redis,
-    prev_cid_fetch: bool = True
-) -> Tuple[str, DAGBlock]:
-    try:
-        future_create_dag_block = create_dag_block(
-            tx_hash=tx_hash,
-            project_id=project_id,
-            tentative_block_height=tentative_block_height,
-            payload_cid=payload_cid,
-            timestamp=timestamp,
-            reader_redis_conn=reader_redis_conn,
-            writer_redis_conn=writer_redis_conn,
-            prev_cid_fetch=prev_cid_fetch
-        )
-        return await asyncio.wait_for(
-            future_create_dag_block,
-            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
-            timeout=settings.webhook_listener.redis_lock_lifetime - 1  # timeout a sec before the lifetime expiry
-        )
-    except Exception as err:
-        logger.error("Overall timeout or exception on DAG block creations, Exception: %s", err, exc_info=True)
-        raise DAGCreationException from err
+async def get_payload(payload_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
+    """ Given the payload cid, retrieve the payload. Payloads are also DAG blocks """
+    return await get_dag_block(payload_cid, project_id, ipfs_read_client)
 
 
+# TODO: exception handling around dag block creation failures
+async def create_dag_block_update_project_state(
+        tx_hash,
+        request_id,
+        project_id,
+        payload_commit_id,
+        tentative_block_height_event_data,
+        snapshot_cid,
+        timestamp,
+        reader_redis_conn,
+        writer_redis_conn,
+        fetch_prev_cid_for_dag_block_creation,
+        ipfs_write_client,
+        aiohttp_client_session: aiohttp.ClientSession,
+        custom_logger_obj
+):
+    _dag_cid, dag_block = await create_dag_block(
+        tx_hash=tx_hash,
+        project_id=project_id,
+        tentative_block_height=tentative_block_height_event_data,
+        payload_cid=snapshot_cid,
+        timestamp=timestamp,
+        reader_redis_conn=reader_redis_conn,
+        writer_redis_conn=writer_redis_conn,
+        prev_cid_fetch=fetch_prev_cid_for_dag_block_creation,
+        ipfs_write_client=ipfs_write_client
+    )
+    custom_logger_obj.info('Created DAG block with CID %s at height %s', _dag_cid,
+                           tentative_block_height_event_data)
+    # clear from pending set
+    _ = await writer_redis_conn.zremrangebyscore(
+        name=redis_keys.get_pending_transactions_key(project_id),
+        min=tentative_block_height_event_data,
+        max=tentative_block_height_event_data
+    )
+    if _:
+        custom_logger_obj.debug(
+            'Cleared entry for requestID %s from pending set at block height %s | project ID %s',
+            request_id, tentative_block_height_event_data, project_id
+        )
+    else:
+        custom_logger_obj.debug(
+            'Not sure if entry cleared for requestID %s from pending set at block height %s | '
+            'Redis return: %s | Project ID : %s',
+            request_id, tentative_block_height_event_data, _, project_id
+        )
+    # TODO: refactor DiffCalculationRequest as a timeseries indexing request for better on-the-fly higher order datasets
+    # if dag_block.prevCid:
+    #     diff_calculation_request = DiffCalculationRequest(
+    #         project_id=project_id,
+    #         dagCid=_dag_cid,
+    #         lastDagCid=dag_block.prevCid['/'],
+    #         payloadCid=pending_tx_obj.event_data.snapshotCid,
+    #         txHash=pending_tx_obj.event_data.txHash,
+    #         timestamp=pending_tx_obj.event_data.timestamp,
+    #         tentative_block_height=_tt_block_height
+    #     )
+    #     async with app.rmq_channel_pool.acquire() as channel:
+    #         # to save a call to rabbitmq. we already initialize exchanges and queues beforehand
+    #         # always ensure exchanges and queues are initialized as part of launch sequence,
+    #         # not to be checked here
+    #         exchange = await channel.get_exchange(
+    #             name=settings.rabbitmq.setup['core']['exchange'],
+    #             ensure=False
+    #         )
+    #         message = Message(
+    #             diff_calculation_request.json().encode('utf-8'),
+    #             delivery_mode=DeliveryMode.PERSISTENT,
+    #         )
+    #         await exchange.publish(
+    #             message=message,
+    #             routing_key='diff-calculation'
+    #         )
+    #         custom_logger.debug(
+    #             'Published diff calculation request | At height %s | Project %s',
+    #             _tt_block_height, project_id
+    #         )
+    # else:
+    #     custom_logger.debug(
+    #         'No diff calculation request to publish for first block | At height %s | Project %s',
+    #         _tt_block_height, project_id
+    #     )
+    # send commit ID confirmation callback
+    # retrieve callback URL for project ID
+    cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
+    if cb_url:
+        await send_commit_callback(
+            aiohttp_session=aiohttp_client_session,
+            url=cb_url,
+            payload={
+                'commitID': payload_commit_id,
+                'projectID': project_id,
+                'status': True
+            }
+        )
+    return _dag_cid, dag_block
+
+
+@retry(
+    reraise=True, wait=wait_random_exponential(multiplier=1, max=60),
+    # Randomly wait up to 2^x * 1 seconds between each retry until the range reaches 60 seconds
+    # then randomly up to 60 seconds afterwards
+    retry=retry_if_exception_type(IPFSDAGCreationException),
+    # stop=stop_after_attempt(5)  # redundant if we use wait_random_exponential()
+)
 async def create_dag_block(
         tx_hash: str,
         project_id: str,
@@ -189,28 +275,18 @@ async def create_dag_block(
         timestamp: int,
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
+        ipfs_write_client: AsyncIPFSClient,
         prev_cid_fetch: bool = True
 ) -> Tuple[str, DAGBlock]:
     """ Get the last dag cid using the tentativeBlockHeight"""
-    # a lock on a project does not exist more than settings.webhook_listener.redis_lock_lifetime seconds.
-    last_dag_cid = None
     prev_root = None
-    try:
-        future_dag_cid = helper_functions.get_dag_cid(
-            project_id=project_id,
-            block_height=tentative_block_height - 1,
-            reader_redis_conn=reader_redis_conn
-        )
-        last_dag_cid = await asyncio.wait_for(
-            future_dag_cid,
-            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
-            timeout=settings.webhook_listener.redis_lock_lifetime/2 * 0.8
-        )
-    except Exception as e:
-        logger.error("Failure while getting dag cid from Redis zset of project CIDs, Exception: %s", e, exc_info=True)
-        raise
+    last_dag_cid = await helper_functions.get_dag_cid(
+        project_id=project_id,
+        block_height=tentative_block_height - 1,
+        reader_redis_conn=reader_redis_conn
+    )
 
-    if prev_cid_fetch == False:
+    if not prev_cid_fetch:
         prev_root = last_dag_cid
         last_dag_cid = None
     """ Fill up the dag """
@@ -224,23 +300,24 @@ async def create_dag_block(
     )
 
     """ Convert dag structure to json and put it on ipfs dag """
-    # IPFS operations should raise exceptions well ahead of time
     try:
-        future_dag = put_dag_block(dag.json(exclude_none=True), project_id)
+        future_dag = put_dag_block(dag.json(exclude_none=True), project_id, ipfs_write_client)
         dag_cid = await asyncio.wait_for(
             future_dag,
             # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
             timeout=settings.webhook_listener.redis_lock_lifetime / 2 * 0.8
         )
+
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
-        raise DAGCreationException from e
+        raise IPFSDAGCreationException from e
     else:
         logger.debug("DAG created: %s", dag)
     """ Update redis keys """
     block_height_key = redis_keys.get_block_height_key(project_id=project_id)
     _ = await writer_redis_conn.set(block_height_key, tentative_block_height)
 
+    # FIXME: is last dag cid key necessary
     last_dag_cid_key = redis_keys.get_last_dag_cid_key(project_id)
     _ = await writer_redis_conn.set(last_dag_cid_key, dag_cid)
 

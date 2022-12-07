@@ -6,8 +6,8 @@ from config import settings
 from uuid import uuid4
 from utils.helper_functions import cleanup_children_procs
 from utils import diffmap_utils
-from IPFS_API import ipfshttpclient
 from data_models import DiffCalculationRequest, DAGBlock
+from async_ipfshttpclient.main import AsyncIPFSClient
 import redis
 import multiprocessing
 import logging
@@ -92,7 +92,10 @@ class DiffCalculationCallbackWorker(Process):
         for signame in [SIGINT, SIGTERM, SIGQUIT]:
             signal(signame, self.signal_handler)
 
-        self._ipfs_client = ipfshttpclient.connect(settings.ipfs_url)
+        # TODO: what is this async IPFS client doing in sync code?
+        #       cant initialize any way
+        #       all operations are async
+        self._ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
         self._redis_conn_pool = redis.BlockingConnectionPool(**REDIS_CONN_CONF, max_connections=20)
         self.rabbitmq_interactor: RabbitmqSelectLoopInteractor = RabbitmqSelectLoopInteractor(
             consume_queue_name=self._queue_name,
