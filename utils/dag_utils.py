@@ -146,7 +146,7 @@ async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPF
 async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncIPFSClient):
     dag_json = dag_json.encode('utf-8')
     out = await ipfs_write_client.dag.put(io.BytesIO(dag_json), pin=True)
-    dag_cid = out.as_json()['Cid']['/']
+    dag_cid = out['Cid']['/']
     try:
         write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", dag_json, logger )
     except Exception as exc:
