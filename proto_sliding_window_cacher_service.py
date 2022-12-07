@@ -70,7 +70,6 @@ async def find_tail(
         project_id=project_id,
         block_height=head,
         reader_redis_conn=redis_conn,
-        cache_size_unit=len(registered_projects)/2,
         ipfs_read_client=ipfs_read_client
     )
     present_ts = head_block['data']['payload']['timestamp']
@@ -79,7 +78,6 @@ async def find_tail(
             project_id=project_id,
             block_height=current_height,
             reader_redis_conn=redis_conn,
-            cache_size_unit=len(registered_projects)/2,
             ipfs_read_client=ipfs_read_client
         )
         if dag_block and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
@@ -180,7 +178,6 @@ async def get_max_height_pair_project(
             project_id=project_id,
             block_height=max_height,
             reader_redis_conn=writer_redis_conn,
-            cache_size_unit=len(registered_projects)/2,
             ipfs_read_client=ipfs_read_client
         )
         height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
@@ -207,8 +204,7 @@ async def adjust_projects_head_by_source_height(
                 project_id=project_map_id,
                 block_height=dag_block_height,
                 reader_redis_conn=writer_redis_conn,
-                ipfs_read_client=ipfs_read_client,
-                cache_size_unit=len(registered_projects)/2
+                ipfs_read_client=ipfs_read_client
             )
             source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
             source_height_map[project_map_id]["dag_block_height"] = dag_block_height

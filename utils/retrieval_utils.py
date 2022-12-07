@@ -273,9 +273,8 @@ async def retrieve_payload_data(
 async def get_dag_block_by_height(
         project_id, block_height,
         reader_redis_conn: aioredis.Redis,
-        ipfs_read_client: AsyncIPFSClient,
-        cache_size_unit
-):
+        ipfs_read_client: AsyncIPFSClient
+        ):
     dag_block = {}
 
     dag_cid = await helper_functions.get_dag_cid(
