@@ -180,7 +180,11 @@ async def get_max_height_pair_project(
             reader_redis_conn=writer_redis_conn,
             ipfs_read_client=ipfs_read_client
         )
-        height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
+        if dag_block:
+            height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
+        else:
+            sliding_cacher_logger.error("Could not fetch dag block at height %s for project %s",max_height, project_id)
+            return Exception("Could not fetch dag block at height %s for project %s",max_height, project_id)
     except Exception as err:
         return err
     finally:
