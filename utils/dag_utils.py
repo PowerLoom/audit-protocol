@@ -153,7 +153,6 @@ async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncI
         logger.error("Failed to write dag-block %s for project %s to local cache due to exception %s",
         dag_json,project_id, exc, exc_info=True)
 
-
     return dag_cid
 
 

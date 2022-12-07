@@ -270,6 +270,10 @@ async def v2_pairs_daily_stats_snapshotter(
                     writer_redis_conn=redis_conn,
                     ipfs_read_client=ipfs_read_client
                 )
+                if block_status is None:
+                    logger.error("block_status is returned as None at height %s for project %s",
+                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id())
+                    break
                 if block_status.status < 3:
                     continue
                 logger.debug(
