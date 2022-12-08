@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -25,6 +24,7 @@ import (
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
 
+	"github.com/powerloom/goutils/filecache"
 	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/settings"
 )
@@ -277,7 +277,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				return false
 			}
 		}
-		err = CachePayload(&payloadCommit)
+		err = filecache.StorePayloadToCache(settingsObj.PayloadCachePath+"/", payloadCommit.ProjectId, payloadCommit.SnapshotCID, payloadCommit.Payload)
 		if err != nil {
 			log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
 				payloadCommit.ProjectId, payloadCommit.CommitId, err)
@@ -358,55 +358,13 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	return true
 }
 
-func CachePayload(payloadCommit *PayloadCommit) error {
-	path := settingsObj.PayloadCachePath + "/" + payloadCommit.ProjectId + "/"
-	fileName := fmt.Sprintf("%s%s.json", path, payloadCommit.SnapshotCID)
-	for i := 0; i < *settingsObj.RetryCount; i++ {
-		file, err := os.Create(fileName)
-		if err != nil {
-			if strings.Contains(err.Error(), "no such file or directory") {
-				if _, err := os.Stat(path); os.IsNotExist(err) {
-					os.MkdirAll(path, 0700) // Create the directory if not exists
-				}
-				file, err = os.Create(fileName)
-				if err != nil {
-					log.Errorf("Unable to create file %s in specified path due to error %+v", fileName, err)
-					return err
-				}
-			} else {
-				log.Errorf("Unable to create file %s in specified path due to error %+v", fileName, err)
-				return err
-			}
-		}
-		defer file.Close()
-		fileWriter := bufio.NewWriter(file)
-		bytesWritten, err := fileWriter.Write(payloadCommit.Payload)
-		if err != nil {
-			log.Errorf("Failed to write payload to file %s due to error %+v", fileName, err)
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
-		err = fileWriter.Flush()
-		if err != nil {
-			log.Errorf("Failed to flush buffer to file %s due to error %+v", fileName, err)
-			return err
-		}
-		log.Debugf("Successfully wrote payload of size %d to file %s", bytesWritten, fileName)
-		return nil
-	}
-	return errors.New("failed to write payload to local file even after max retries")
-}
-
 func ReadPayloadFromCache(projectID string, payloadCid string) (*PayloadData, error) {
 	var payload PayloadData
-	path := settingsObj.PayloadCachePath + "/" + projectID + "/"
-	fileName := fmt.Sprintf("%s%s.json", path, payloadCid)
-
 	log.Debugf("Fetching payloadCid %s from local Cache", payloadCid)
-	bytes, err := os.ReadFile(fileName)
+	bytes, err := filecache.ReadFromCache(settingsObj.PayloadCachePath+"/", projectID, payloadCid)
 	if err != nil {
-		log.Errorf("Failed to read Json Payload from local cache, CID %s, bytes: %+v due to error %+v ",
-			payloadCid, bytes, err)
+		log.Errorf("Failed to fetch payloadCid from local Cache, CID %s, due to error %+v ",
+			payloadCid, err)
 		return nil, err
 	}
 	err = json.Unmarshal(bytes, &payload)
