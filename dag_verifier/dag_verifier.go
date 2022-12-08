@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -315,7 +316,9 @@ func (verifier *DagVerifier) GetPayloadFromCache(projectId string, payloadCid st
 	projectId = projectId[10:]
 	bytes, err := filecache.ReadFromCache(verifier.settings.PayloadCachePath, projectId, payloadCid)
 	if err != nil {
-		log.Errorf("Failed to fetch payload with cid %s for project %s from cache due to error %+v", payloadCid, projectId, err)
+		if !strings.Contains(err.Error(), "no such file or directory") {
+			log.Errorf("Failed to fetch payload with cid %s for project %s from cache due to error %+v", payloadCid, projectId, err)
+		}
 		return payload, err
 	}
 	err = json.Unmarshal(bytes, &payload)

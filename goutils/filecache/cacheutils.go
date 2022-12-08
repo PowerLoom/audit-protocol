@@ -56,8 +56,12 @@ func ReadFromCache(cachePath string, projectId string, cid string) ([]byte, erro
 	log.Debugf("Fetching fileName %s from local Cache", fileName)
 	bytes, err := os.ReadFile(fileName)
 	if err != nil {
-		log.Errorf("Failed to read Payload from local cache, fileName %s, bytes: %+v due to error %+v ",
-			fileName, bytes, err)
+		if strings.Contains(err.Error(), "no such file or directory") {
+			log.Infof("fileName %s, not present in cache ", fileName)
+		} else {
+			log.Errorf("Failed to read Payload from local cache, fileName %s, bytes: %+v due to error %+v ",
+				fileName, bytes, err)
+		}
 		return nil, err
 	}
 	log.Tracef("Fetched Payload fileName %s from local cache: %+v", fileName, bytes)
