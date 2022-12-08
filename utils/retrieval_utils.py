@@ -264,6 +264,8 @@ async def retrieve_payload_data(
     if project_id is not None:
         payload_data = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ payload_cid + ".json", None )
     if payload_data is None:
+        retrieval_utils_logger.info("Failed to read payload with CID %s for project %s from local cache ",
+        payload_cid,project_id)
         # Get the payload Data from ipfs
         _payload_data = await ipfs_read_client.cat(payload_cid)
         payload_data = _payload_data.decode('utf-8')
