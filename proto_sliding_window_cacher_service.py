@@ -210,8 +210,9 @@ async def adjust_projects_head_by_source_height(
                 reader_redis_conn=writer_redis_conn,
                 ipfs_read_client=ipfs_read_client
             )
-            source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
-            source_height_map[project_map_id]["dag_block_height"] = dag_block_height
+            if dag_block:
+                source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
+                source_height_map[project_map_id]["dag_block_height"] = dag_block_height
 
 
 async def build_primary_indexes(ipfs_read_client):
