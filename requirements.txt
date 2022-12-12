@@ -7,7 +7,6 @@ aiofiles
 aiohttp
 redis>=4.2.0rc1
 coloredlogs
-git+https://github.com/powerloom/IPFS-Toolkit-Python.git@3096b468ab0297b8ebdb5a7227a22fba8a1a8f8e
 dynaconf
 backports.pbkdf2
 certifi
