@@ -73,6 +73,8 @@ type Web3StorageErrResponse struct {
 var projectList map[string]*ProjectPruneState
 
 const DAG_CHAIN_STORAGE_TYPE_COLD string = "COLD"
+const DAG_CHAIN_STORAGE_TYPE_PRUNED string = "PRUNED"
+const DAG_CHAIN_STORAGE_TYPE_PENDING string = "pending"
 
 func main() {
 
@@ -389,19 +391,24 @@ func ProcessProject(projectId string) int {
 			}
 			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, projectId)
 
-			if dagSegment.StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
+			if dagSegment.StorageType == DAG_CHAIN_STORAGE_TYPE_PENDING {
 				log.WithField("CycleID", cycleDetails.CycleID).Infof("Performing Archival for project %s segment with endHeight %d", projectId, dagSegmentEndHeight)
 				projectReport.DAGSegmentsProcessed++
-				opStatus, err := ArchiveDAG(projectId, dagSegment.BeginHeight,
-					dagSegment.EndHeight, dagSegment.EndDAGCID)
-				if opStatus {
-					dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
+				if settingsObj.PruningServiceSettings.PerformArchival {
+					opStatus, err := ArchiveDAG(projectId, dagSegment.BeginHeight,
+						dagSegment.EndHeight, dagSegment.EndDAGCID)
+					if opStatus {
+						dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
+					} else {
+						log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectId, dagSegmentEndHeight)
+						projectReport.DAGSegmentsArchivalFailed++
+						projectReport.ArchivalFailureCause = err.Error()
+						UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
+						return -2
+					}
 				} else {
-					log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectId, dagSegmentEndHeight)
-					projectReport.DAGSegmentsArchivalFailed++
-					projectReport.ArchivalFailureCause = err.Error()
-					UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
-					return -2
+					log.Infof("Archival disabled, hence proceeding with pruning")
+					dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_PRUNED
 				}
 				startScore = dagSegment.BeginHeight
 				payloadCids := GetPayloadCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
