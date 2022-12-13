@@ -152,8 +152,8 @@ async def get_last_pruned_height(
         project_id: str,
         reader_redis_conn
 ):
-    last_pruned_key = redis_keys.get_last_pruned_key(project_id=project_id)
-    out: bytes = await reader_redis_conn.get(last_pruned_key)
+    last_pruned_key = redis_keys.get_pruning_status_key()
+    out: bytes = await reader_redis_conn.hget(last_pruned_key, project_id)
     if out:
         last_pruned_height: int = int(out.decode('utf-8'))
     else:

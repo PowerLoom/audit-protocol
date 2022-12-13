@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
-
+from async_ipfshttpclient.main import AsyncIPFSClientSingleton
 import utils.diffmap_utils
 from config import settings
 from uuid import uuid4
@@ -14,7 +14,7 @@ from utils import redis_keys
 from functools import partial
 from utils import retrieval_utils
 from utils.diffmap_utils import process_payloads_for_diff
-from data_models import ContainerData, PayloadCommit
+from data_models import PayloadCommit
 from pydantic import ValidationError
 from aio_pika import ExchangeType, DeliveryMode, Message
 from aio_pika.pool import Pool
@@ -96,16 +96,9 @@ async def startup_boilerplate():
     #     contract_address=settings.audit_contract,
     #     app_name='auditrecords'
     # )
-
-
-async def get_max_block_height(project_id: str, reader_redis_conn: aioredis.Redis):
-    """
-        - Given the projectId and redis_conn, get the prev_dag_cid, block height and
-        tetative block height of that projectId from redis
-    """
-    prev_dag_cid = await helper_functions.get_last_dag_cid(project_id=project_id, reader_redis_conn=reader_redis_conn)
-    return prev_dag_cid, last_payload_cid
-
+    app.ipfs_singleton = AsyncIPFSClientSingleton()
+    await app.ipfs_singleton.init_sessions()
+    app.ipfs_read_client = app.ipfs_singleton._ipfs_read_client
 
 async def create_retrieval_request(project_id: str, from_height: int, to_height: int, data: int, writer_redis_conn: aioredis.Redis):
     request_id = str(uuid4())
@@ -452,34 +445,11 @@ async def get_payloads(
         response: Response,
         projectId: str,
         from_height: int = Query(default=1),
-        diffs: Optional[str] = Query(default='true'),  # FIXME: default flag behavior unexpected
         to_height: int = Query(default=-1),
         data: Optional[str] = Query(None)
 ):
-    """
-        - Given the from and to_height do the following steps:
-            - Check if there is any intersection between any of the previously
-            cached spans.
 
-            - If there is no overlap, then generate the requestID and return it
-
-            - If there is an overlap, then do:
-                - If there is any data point that needs to be fetched from a container that
-                is not cached on local system
-                    -  generate a requestID and return it
-
-                - Split the data into two separate spans: container_fetch_data and ipfs_fetch_data
-
-                    - Now fetch the data present in IPFS and cached containers and put them together
-                    to hold data for entire span
-
-                    - return the data
-
-                    - save the span and add a timeout to it.
-
-    """
     reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
     out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
 
     if out == 0:
@@ -496,15 +466,6 @@ async def get_payloads(
         else:
             data = False
 
-    if diffs:
-        # rest_logger.debug('Diffs flag value: %s', diffs)
-        if diffs.lower() == 'true':
-            diffs = True
-            # rest_logger.debug('Converting diff map flag to: %s', diffs)
-        else:
-            diffs = False
-            # rest_logger.debug('Converting diff map flag to: %s', diffs)
-
     if to_height == -1:
         to_height = max_block_height
 
@@ -515,121 +476,22 @@ async def get_payloads(
     last_pruned_height = await helper_functions.get_last_pruned_height(
         project_id=projectId, reader_redis_conn=reader_redis_conn
     )
-    rest_logger.debug('Last pruned height: %s. Checking max overlap...', last_pruned_height)
+    rest_logger.debug('Last pruned height: %s.', last_pruned_height)
 
-    # TODO: review logic around span, overlap, cached blocks etc. It's a complete shitpile at the moment.
-    # for eg: check_overlap() is called once more from fetch_blocks(). Why?
-    # ( a span is supposed to be a LRU cache of sorts adjusted within a moving window as DAG blocks keep piling up)
-    max_overlap, max_span_id, each_height_spans = await retrieval_utils.check_overlap(
-        from_height=from_height,
-        to_height=to_height,
-        project_id=projectId,
-        reader_redis_conn=reader_redis_conn
-    )
-    # rest_logger.debug("Max overlap, Max Span ID, Each height spans:")
-    # rest_logger.debug(max_overlap)
-    # rest_logger.debug(max_span_id)
-    # rest_logger.debug(each_height_spans)
-
-    if (max_overlap == 0.0) and (from_height <= last_pruned_height):
-        rest_logger.debug("Creating a retrieval request")
-        _data = 1 if data else 0
-        request_id = await create_retrieval_request(
-            project_id=projectId,
-            from_height=from_height,
-            to_height=to_height,
-            data=_data,
-            writer_redis_conn=writer_redis_conn)
-
-        return {'requestId': request_id}
-
-    # Get the containers required and the cached values
-    containers, cached = await retrieval_utils.check_containers(
-        from_height=from_height,
-        to_height=to_height,
-        each_height_spans=each_height_spans,
-        project_id=projectId,
-        reader_redis_conn=reader_redis_conn
-    )
-
-    rest_logger.debug(f"Containers Required: {containers}")
-
-    if len(containers) > 0:
-        rest_logger.debug("Creating a retrieval request")
-        _data = 1 if data else 0
-        request_id = await create_retrieval_request(
-            project_id=projectId,
-            from_height=from_height,
-            to_height=to_height,
-            data=_data,
-            writer_redis_conn=writer_redis_conn)
-
-        return {'requestId': request_id}
+    #TODO: Add support to fetch from archived data using dagSegments and traversal logic.
+    if (from_height <= last_pruned_height):
+        rest_logger.debug("Querying for archived data not yet supported.")
+        return {'error': 'The data being queried has been archived. Querying for archived data is not supported.'}
 
     dag_blocks = await retrieval_utils.fetch_blocks(
         from_height=from_height,
         to_height=to_height,
         project_id=projectId,
         data_flag=data,
-        reader_redis_conn=reader_redis_conn
+        reader_redis_conn=reader_redis_conn,
+        ipfs_read_client=request.app.ipfs_read_client
     )
-
-    current_height = to_height
-    cur_dag_cid = None
-    idx = 0
-    blocks = list()
-    while current_height >= from_height:
-        # rest_logger.debug("Fetching block at height: %s", current_height)
-        if not cur_dag_cid:
-            project_cids_key_zset = redis_keys.get_dag_cids_key(projectId)
-            r = await reader_redis_conn.zrangebyscore(
-                name=project_cids_key_zset,
-                min=current_height,
-                max=current_height,
-                withscores=False
-            )
-            if r:
-                cur_dag_cid = r[0].decode('utf-8')
-            else:
-                return {'error': 'NoRecordsFound'}
-        data_flag = 1 if data else 0
-        # NOTE: not yet clear why the earlier call to retrieval_utils.fetch_blocks() would not populate `dag_blocks` map
-        if dag_blocks.get(cur_dag_cid) is None:
-            # rest_logger.debug("Fetching block from IPFS")
-            block = await retrieval_utils.retrieve_block_data(cur_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=data_flag)
-        else:
-            # rest_logger.debug("Block already fetched")
-            block = dag_blocks.get(cur_dag_cid)
-        # rest_logger.debug("Block Retrieved: ")
-        # rest_logger.debug(block)
-        formatted_block = dict()
-        formatted_block['dagCid'] = cur_dag_cid
-        formatted_block.update({k: v for k, v in block.items()})
-        formatted_block['prevDagCid'] = formatted_block.pop('prevCid')
-
-        # NOTE: removed a duplicate diff generation logic.
-        # Get the diff_map between the current and previous snapshot
-        # rest_logger.debug('Diff flag set as: %s', diffs)
-        if diffs:
-            # FIXME: find a better way to get the entire chunk of diffs within the height range. insert each accordingly
-            diff_at_height_r = await reader_redis_conn.zrangebyscore(
-                name=redis_keys.get_diff_snapshots_key(projectId),
-                min=current_height,
-                max=current_height,
-                withscores=False
-            )
-            if diff_at_height_r:
-                diff_map = json.loads(diff_at_height_r[0])['diff']
-            else:
-                diff_map = {}
-            formatted_block['diff'] = diff_map
-        blocks.append(formatted_block)
-        if formatted_block['prevDagCid']:
-            cur_dag_cid = formatted_block['prevDagCid']['/']
-            # the decrement in current_height will ensure the loop ends here so we dont need to set cur_dag_cid
-        current_height = current_height - 1
-        idx += 1
-    return blocks
+    return dag_blocks
 
 
 @app.get('/{projectId}/payloads/height')
@@ -708,7 +570,12 @@ async def get_block(
 
     prev_dag_cid = r[0].decode('utf-8')
 
-    block = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+    block = await retrieval_utils.retrieve_block_data(
+        block_dag_cid=prev_dag_cid,
+        ipfs_read_client=request.app.ipfs_read_client,
+        writer_redis_conn=writer_redis_conn,
+        data_flag=0
+    )
 
     return {prev_dag_cid: block}
 
@@ -736,11 +603,14 @@ async def get_block_status(
     )
     rest_logger.debug(max_block_height)
 
-    block_status = await retrieval_utils.retrieve_block_status(project_id=projectId,
-                                                               project_block_height=max_block_height,
-                                                               block_height=block_height,
-                                                               reader_redis_conn=reader_redis_conn,
-                                                               writer_redis_conn=writer_redis_conn)
+    block_status = await retrieval_utils.retrieve_block_status(
+        project_id=projectId,
+        project_block_height=max_block_height,
+        block_height=block_height,
+        reader_redis_conn=reader_redis_conn,
+        writer_redis_conn=writer_redis_conn,
+        ipfs_read_client=request.app.ipfs_read_client
+    )
 
     if block_status is None:
         response.status_code = 404
@@ -801,91 +671,12 @@ async def get_block_data(
     )
     prev_dag_cid = r[0].decode('utf-8')
 
-    payload = await retrieval_utils.retrieve_block_data(prev_dag_cid, writer_redis_conn=writer_redis_conn, data_flag=2)
+    payload = await retrieval_utils.retrieve_block_data(
+        block_dag_cid=prev_dag_cid,
+        ipfs_read_client=request.app.ipfs_read_client,
+        writer_redis_conn=writer_redis_conn,
+        data_flag=2
+    )
 
     """ Return the payload data """
     return {prev_dag_cid: payload}
-
-
-# Get the containerData using container_id
-@app.get("/query/containerData/{container_id:str}")
-async def get_container_data(
-        request: Request,
-        response: Response,
-        container_id: str
-):
-    """
-        - retrieve the containerData from containerData key
-        - return containerData
-    """
-
-    rest_logger.debug("Retrieving containerData for container_id: %s",container_id)
-    container_data_key = f"containerData:{container_id}"
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await reader_redis_conn.hgetall(container_data_key)
-    out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-    if not out:
-        return {"error": f"The container_id:{container_id} is invalid"}
-    try:
-        container_data = ContainerData(**out)
-    except ValidationError as verr:
-        rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
-        return {}
-
-    return container_data.dict()
-
-
-@app.get("/query/executingContainers")
-async def get_executing_containers(
-        request: Request,
-        response: Response,
-        maxCount: int = Query(default=10),
-        data: str = Query(default="false")
-):
-    """
-        - Get all the container_id's from the executingContainers redis SET
-        - if the data field is true, then get the containerData for each of the container as well
-    """
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    if isinstance(data, str):
-        if data.lower() == "true":
-            data = True
-        else:
-            data = False
-    else:
-        data = False
-
-    executing_containers_key = f"executingContainers"
-    all_container_ids = await reader_redis_conn.smembers(executing_containers_key)
-
-    containers = list()
-    for container_id in all_container_ids:
-        container_id = container_id.decode('utf-8')
-        if data is True:
-            container_data_key = f"containerData:{container_id}"
-            out = await reader_redis_conn.hgetall(container_data_key)
-            out = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-            if not out:
-                _container = {
-                    'containerId': container_id,
-                    'containerData': dict()
-                }
-            else:
-                try:
-                    container_data = ContainerData(**out)
-                except ValidationError as verr:
-                    rest_logger.debug(f"The containerData {out} retrieved from redis is invalid with error {verr}", exc_info=True)
-                    _container = {
-                        'containerId': container_id,
-                        'containerData': dict()
-                    }
-                else:
-                    _container = {
-                        'containerId': container_id,
-                        'containerData': container_data.dict()
-                    }
-            containers.append(_container)
-        else:
-            containers.append(container_id)
-
-    return dict(count=len(containers), containers=containers)

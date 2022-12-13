@@ -37,7 +37,8 @@ def init_exchanges_queues():
     # queue name, routing key pairs
     to_be_inited = [
         ('audit-protocol-commit-payloads', 'commit-payloads'),
-        ('audit-protocol-diff-requests', 'diff-calculation')
+        ('audit-protocol-diff-requests', 'diff-calculation'),
+        ('audit-protocol-dag-processing', 'dag-processing')
     ]
     for queue_name, routing_key in to_be_inited:
         # add namespace?

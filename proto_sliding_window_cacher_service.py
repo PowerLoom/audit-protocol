@@ -3,13 +3,20 @@ import json
 import logging
 import sys
 from functools import wraps
-from httpx import AsyncClient, Timeout, Limits
-from redis import asyncio as aioredis
+from config import settings
+from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils.redis_conn import RedisPool
 from utils import retrieval_utils
 from pair_data_aggregation_service import v2_pairs_data
 from v2_pairs_daily_stats_snapshotter import v2_pairs_daily_stats_snapshotter
+from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
+from redis import asyncio as aioredis
+import asyncio
+import json
+import logging
+import sys
+import os
 
 sliding_cacher_logger = logging.getLogger(__name__)
 sliding_cacher_logger.setLevel(logging.DEBUG)
@@ -47,19 +54,33 @@ def convert_time_period_str_to_timestamp(time_period_str: str):
     return ts_map.get(time_period_str, 60 * 60)  # 1 hour timestamp returned by default
 
 
-async def find_tail(head: int, tail: int, project_id: str, time_period_ts: int, registered_projects, redis_conn: aioredis.Redis):
+async def find_tail(
+        head: int,
+        tail: int,
+        project_id: str,
+        time_period_ts: int,
+        registered_projects,
+        redis_conn: aioredis.Redis,
+        ipfs_read_client: AsyncIPFSClient
+):
     sliding_cacher_logger.debug(f"Seeking tail starting for projectId: {project_id}:{time_period_ts}")
 
     current_height = tail
     head_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id, block_height=head,
-            reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
-        )
+        project_id=project_id,
+        block_height=head,
+        reader_redis_conn=redis_conn,
+        cache_size_unit=len(registered_projects)/2,
+        ipfs_read_client=ipfs_read_client
+    )
     present_ts = head_block['data']['payload']['timestamp']
     while current_height < head:
         dag_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id, block_height=current_height,
-            reader_redis_conn=redis_conn, cache_size_unit=len(registered_projects)/2
+            project_id=project_id,
+            block_height=current_height,
+            reader_redis_conn=redis_conn,
+            cache_size_unit=len(registered_projects)/2,
+            ipfs_read_client=ipfs_read_client
         )
         if dag_block and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
             sliding_cacher_logger.debug(f"Found tail after traversing {abs(current_height - tail)} blocks for projectId: {project_id}:{time_period_ts}")
@@ -69,6 +90,7 @@ async def find_tail(head: int, tail: int, project_id: str, time_period_ts: int, 
     sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
     return None
 
+
 @acquire_bounded_semaphore
 async def build_primary_index(
         project_id: str,
@@ -76,10 +98,11 @@ async def build_primary_index(
         height_map: dict,
         registered_projects: list,
         semaphore: asyncio.BoundedSemaphore,
-        writer_redis_conn: aioredis.Redis
+        writer_redis_conn: aioredis.Redis,
+        ipfs_read_client: AsyncIPFSClient
 ):
     """
-        :param time_period: supported time_period strings as of now:  ['24h', '7d', '0']
+        : param time_period: supported time_period strings as of now:  ['24h', '7d', '0']
     """
     # find markers
     # NOTE: every periodic run, the head although is always chosen to be the max height
@@ -101,7 +124,9 @@ async def build_primary_index(
     if not all(markers):
         sliding_cacher_logger.info('Finding %s tail marker for the first time for project %s', time_period, project_id)
         #passing prev tail as 1 since we are looking for tail for the first time.
-        tail_marker = await find_tail(head_marker,1, project_id, time_period_ts, registered_projects, writer_redis_conn)
+        tail_marker = await find_tail(
+            head_marker,1, project_id, time_period_ts, registered_projects, writer_redis_conn, ipfs_read_client
+        )
         if not tail_marker:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s for %s calculation', project_id, time_period
@@ -115,7 +140,9 @@ async def build_primary_index(
         )
     else:
         tail_marker = int(markers[1])
-        tail_ahead = await find_tail(head_marker, tail_marker, project_id, time_period_ts, registered_projects, writer_redis_conn)
+        tail_ahead = await find_tail(
+            head_marker, tail_marker, project_id, time_period_ts, registered_projects, writer_redis_conn, ipfs_read_client
+        )
         if not tail_ahead:
             sliding_cacher_logger.error(
                 'not enough blocks against project ID: %s to seek tail ahead for %s calculation | present head: %s',
@@ -133,13 +160,15 @@ async def build_primary_index(
                 head_marker, tail_ahead, time_period, project_id
             )
 
+
 @acquire_bounded_semaphore
 async def get_max_height_pair_project(
     project_id: str,
     height_map: dict,
     registered_projects: list,
     semaphore: asyncio.BoundedSemaphore,
-    writer_redis_conn: aioredis.Redis
+    writer_redis_conn: aioredis.Redis,
+    ipfs_read_client: AsyncIPFSClient
 ):
     project_height_key = redis_keys.get_block_height_key(project_id)
     max_height = await writer_redis_conn.get(project_height_key)
@@ -148,8 +177,11 @@ async def get_max_height_pair_project(
     try:
         max_height = int(max_height.decode('utf-8'))
         dag_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id, block_height=max_height,
-            reader_redis_conn=writer_redis_conn, cache_size_unit=len(registered_projects)/2
+            project_id=project_id,
+            block_height=max_height,
+            reader_redis_conn=writer_redis_conn,
+            cache_size_unit=len(registered_projects)/2,
+            ipfs_read_client=ipfs_read_client
         )
         height_map[project_id] = {"source_height": dag_block["data"]["payload"]["chainHeightRange"]["end"], "dag_block_height": max_height}
     except Exception as err:
@@ -158,7 +190,13 @@ async def get_max_height_pair_project(
         return max_height
 
 
-async def adjust_projects_head_by_source_height(source_height_map, smallest_source_height, registered_projects, writer_redis_conn):
+async def adjust_projects_head_by_source_height(
+        source_height_map,
+        smallest_source_height,
+        registered_projects,
+        writer_redis_conn,
+        ipfs_read_client: AsyncIPFSClient
+):
     for project_map_id, project_map in source_height_map.items():
         dag_block_height = int(project_map["dag_block_height"])
         cycles = 0
@@ -166,14 +204,17 @@ async def adjust_projects_head_by_source_height(source_height_map, smallest_sour
             cycles += 1
             dag_block_height -= 1
             dag_block = await retrieval_utils.get_dag_block_by_height(
-                project_id=project_map_id, block_height=dag_block_height,
-                reader_redis_conn=writer_redis_conn, cache_size_unit=len(registered_projects)/2
+                project_id=project_map_id,
+                block_height=dag_block_height,
+                reader_redis_conn=writer_redis_conn,
+                ipfs_read_client=ipfs_read_client,
+                cache_size_unit=len(registered_projects)/2
             )
             source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
             source_height_map[project_map_id]["dag_block_height"] = dag_block_height
 
 
-async def build_primary_indexes():
+async def build_primary_indexes(ipfs_read_client):
     aioredis_pool = RedisPool()
     await aioredis_pool.populate()
     writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
@@ -185,7 +226,6 @@ async def build_primary_indexes():
     project_id_to_register_series = dict(zip(registered_project_ids, registered_projects_ts))
     project_source_height_map = {}
 
-
     sliding_cacher_logger.debug("Fetching maximum height for all projectIds")
     tasks = list()
     semaphore = asyncio.BoundedSemaphore(20)
@@ -195,7 +235,8 @@ async def build_primary_indexes():
             'height_map': project_source_height_map,
             'registered_projects': registered_projects,
             'semaphore': semaphore,
-            'writer_redis_conn': writer_redis_conn
+            'writer_redis_conn': writer_redis_conn,
+            'ipfs_read_client': ipfs_read_client
         })
         tasks.append(fn)
     max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
@@ -214,7 +255,13 @@ async def build_primary_indexes():
 
     sliding_cacher_logger.debug(f"Adjusting all projects height to match common minimum height: {smallest_source_height}")
     try:
-        await adjust_projects_head_by_source_height(project_source_height_map, smallest_source_height, registered_projects, writer_redis_conn)
+        await adjust_projects_head_by_source_height(
+            project_source_height_map,
+            smallest_source_height,
+            registered_projects,
+            writer_redis_conn,
+            ipfs_read_client
+        )
     except Exception as exc:
         sliding_cacher_logger.error(f"can\'t adjust projects height for smallest source height | error_msg: {exc}")
         return
@@ -230,7 +277,8 @@ async def build_primary_indexes():
                 'height_map': height_map,
                 'registered_projects': registered_projects,
                 'semaphore': semaphore,
-                'writer_redis_conn': writer_redis_conn
+                'writer_redis_conn': writer_redis_conn,
+                'ipfs_read_client': ipfs_read_client
             })
             tasks.append(fn)
     await asyncio.gather(*tasks)
@@ -238,16 +286,26 @@ async def build_primary_indexes():
 
 async def periodic_retrieval():
     # TODO: make these configurable
+    async_transport = AsyncHTTPTransport(
+        limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=30)
+    )
     async_httpx_client = AsyncClient(
         timeout=Timeout(timeout=5.0),
         follow_redirects=False,
-        limits=Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5.0)
+        transport=async_transport
     )
+    ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
+    await ipfs_write_client.init_session()
+    await ipfs_read_client.init_session()
+    aioredis_pool = RedisPool()
+    await aioredis_pool.populate()
+    redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     while True:
-        await build_primary_indexes()
+        await build_primary_indexes(ipfs_read_client=ipfs_read_client)
         await asyncio.gather(
-            v2_pairs_data(async_httpx_client),
-            v2_pairs_daily_stats_snapshotter(async_httpx_client),
+            v2_pairs_data(async_httpx_client, ipfs_write_client, ipfs_read_client),
+            v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
             asyncio.sleep(90)
         )
         sliding_cacher_logger.debug('Finished a cycle of indexing...')

@@ -1,5 +1,5 @@
 from eth_utils import keccak
-from utils.ipfs_async import client as ipfs_client
+from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils import helper_functions
 from utils import dag_utils
@@ -274,45 +274,26 @@ async def fetch_blocks(
         to_height: int,
         project_id: str,
         data_flag: bool,
-        reader_redis_conn: aioredis.Redis
+        reader_redis_conn: aioredis.Redis,
+        ipfs_read_client: AsyncIPFSClient
 ):
     """
         - Given the from_height and to_height fetch the blocks based on whether there are any spans
         that exists or not
     """
-
-    max_overlap, max_span_id, each_height_spans = await check_overlap(
-        project_id=project_id,
-        from_height=from_height,
-        to_height=to_height,
-        reader_redis_conn=reader_redis_conn
-    )
-
+    #TODO: Add support to fetch from archived data using dagSegments and traversal logic.
     current_height = to_height
-    dag_blocks = {}
+    dag_blocks = list()
     while current_height >= from_height:
         dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height,
                                                      reader_redis_conn=reader_redis_conn)
-        if each_height_spans.get(current_height) is None:
-            # not in span (supposed to be a LRU cache of sorts with a moving window as DAG blocks keep piling up)
-            dag_cid = await helper_functions.get_dag_cid(project_id=project_id, block_height=current_height,
-                                                         reader_redis_conn=reader_redis_conn)
-            dag_block = await dag_utils.get_dag_block(dag_cid)
-            if data_flag:
-                dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
-        else:
-            dag_block: list = await fetch_from_span(
-                from_height=current_height,
-                to_height=current_height,
-                span_id=each_height_spans[current_height],
-                project_id=project_id,
-                reader_redis_conn=reader_redis_conn
-            )
-
-        dag_blocks[dag_cid] = dag_block
+        fetch_data_flag = 0 # Get only the DAG Block
+        if data_flag:
+            fetch_data_flag = 1 # Get DAG Block with data
+        dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=fetch_data_flag, ipfs_read_client=ipfs_read_client)
+        dag_block['dagCid'] = dag_cid
+        dag_blocks.append(dag_block)
         current_height = current_height - 1
-
-        # retrieval_utils_logger.debug(dag_blocks)
 
     return dag_blocks
 
@@ -322,12 +303,14 @@ async def fetch_blocks(
 # TX_CONFIRMATION_PENDING = 3,
 # TX_CONFIRMED=4,
 
+# TODO: since return type hint is ProjectBlockHeightStatus, review the cases where None is returned
 async def retrieve_block_status(
         project_id: str,
         project_block_height: int,  # supplying 0 indicates finalized height of project should be fetched separately
         block_height: int,
         reader_redis_conn: aioredis.Redis,
-        writer_redis_conn: aioredis.Redis
+        writer_redis_conn: aioredis.Redis,
+        ipfs_read_client: AsyncIPFSClient
 ) -> ProjectBlockHeightStatus:
     block_status = ProjectBlockHeightStatus(
         project_id=project_id,
@@ -406,7 +389,12 @@ async def retrieve_block_status(
             return None
         dag_cid = r[0].decode('utf-8')
 
-        block = await retrieve_block_data(dag_cid, writer_redis_conn=writer_redis_conn, data_flag=0)
+        block = await retrieve_block_data(
+            block_dag_cid=dag_cid,
+            ipfs_read_client=ipfs_read_client,
+            writer_redis_conn=writer_redis_conn,
+            data_flag=0
+        )
         block_status.payload_cid = block['data']['cid']['/']
         block_status.tx_hash = block['txHash']
         block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
@@ -420,7 +408,12 @@ async def retrieve_block_status(
     wait=wait_random_exponential(multiplier=1, max=30),
     stop=stop_after_attempt(3),
 )
-async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0):
+async def retrieve_block_data(
+        block_dag_cid,
+        ipfs_read_client: AsyncIPFSClient,
+        writer_redis_conn=None,
+        data_flag=0
+):
     """
         A function which will get dag block from ipfs and also increment its hits
         Args:
@@ -444,7 +437,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     #     retrieval_utils_logger.debug(r)
 
     """ Retrieve the DAG block from ipfs """
-    _block = await ipfs_client.dag.get(block_dag_cid)
+    _block = await ipfs_read_client.dag.get(block_dag_cid)
     block = _block.as_json()
     # block = preprocess_dag(block)
     if data_flag == 0:
@@ -453,7 +446,7 @@ async def retrieve_block_data(block_dag_cid, writer_redis_conn=None, data_flag=0
     payload = dict()
 
     """ Get the payload Data """
-    payload_data = await ipfs_client.cat(block['data']['cid']['/'])
+    payload_data = await ipfs_read_client.cat(block['data']['cid']['/'])
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
@@ -484,7 +477,15 @@ async def retrieve_payload_cid(project_id: str, block_height: int,reader_redis_c
     return payload_cid
 
 
-async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
+# TODO: find all vestigal parameters that once upon a time
+#       1. expected a redis connection injection
+#       2. the injection decorator has been removed
+#       3. as well as the code block that needed a redis connection is gone
+async def retrieve_payload_data(
+        payload_cid,
+        ipfs_read_client: AsyncIPFSClient,
+        writer_redis_conn=None
+):
     """
         - Given a payload_cid, get its data from ipfs, at the same time increase its hit
     """
@@ -495,8 +496,15 @@ async def retrieve_payload_data(payload_cid, writer_redis_conn=None):
         #retrieval_utils_logger.debug(payload_cid)
 
     """ Get the payload Data from ipfs """
-    _payload_data = await ipfs_client.cat(payload_cid)
-    payload_data = _payload_data.decode('utf-8')
+    _payload_data = await ipfs_read_client.cat(payload_cid)
+    if not _payload_data:
+        return None
+
+    if isinstance(_payload_data, str):
+        payload_data = _payload_data
+    else:
+        payload_data = _payload_data.decode('utf-8')
+
     return payload_data
 
 
@@ -528,7 +536,12 @@ def prune_dag_block_cache(cache_size_unit):
     # prune result list and make it a dict again
     SHARED_DAG_BLOCKS_CACHE = dict(ordered_items[:pruning_length])
 
-async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: aioredis.Redis, cache_size_unit):
+async def get_dag_block_by_height(
+        project_id, block_height,
+        reader_redis_conn: aioredis.Redis,
+        ipfs_read_client: AsyncIPFSClient,
+        cache_size_unit
+):
     dag_block = {}
 
     dag_cid = await helper_functions.get_dag_cid(
@@ -543,7 +556,9 @@ async def get_dag_block_by_height(project_id, block_height, reader_redis_conn: a
     if dag_cid and SHARED_DAG_BLOCKS_CACHE.get(dag_cid, False):
         return SHARED_DAG_BLOCKS_CACHE.get(dag_cid)['data']
 
-    dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=1)
+    dag_block = await retrieve_block_data(
+        block_dag_cid=dag_cid, data_flag=1, ipfs_read_client=ipfs_read_client
+    )
     dag_block = dag_block if dag_block else {}
 
     dag_block["dagCid"] = dag_cid
