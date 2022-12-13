@@ -488,7 +488,13 @@ class DAGFinalizationCallbackProcessor:
                             'DAG blocks finalized in total: %s',
                             finalized_block_height_project + 1, blocks_created
                         )
-
+                    elif len(immediate_tx_next_to_finalized_filter) > 1:
+                        custom_logger.critical(
+                            'Found multiple pending tx entry with last touched block=-1 at height %s immediately '
+                            'following finalized project %s height: %s | Entries: %s',
+                            finalized_block_height_project + 1, project_id, finalized_block_height_project,
+                            immediate_tx_next_to_finalized_filter
+                        )
         elif tentative_block_height_event_data == finalized_block_height_project + 1:
             """
                 An event which is in-order has arrived. Create a dag block for this event

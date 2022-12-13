@@ -59,23 +59,11 @@ async def startup_boilerplate():
 async def handle_dag_cb(
         request: Request,
         response: Response,
-        x_hook_signature: str = Header(None),
 ):
     # global project_specific_locks_multiprocessing_map
     event_data = await request.json()
     response_body = dict()
     response_status_code = 200
-    # Verify the payload that has arrived.
-    if x_hook_signature and settings.webhook_listener.validate_header_sig:
-        is_safe = dag_utils.check_signature(event_data, x_hook_signature)
-        if is_safe:
-            rest_logger.debug("The arriving payload has been verified")
-            pass
-        else:
-            rest_logger.debug("Received wrong signature payload")
-            response.status_code = response_status_code
-            response_body = {'status': 'BadXHookSignature'}
-            return response_body
     if 'event_name' in event_data.keys():
         if event_data['event_name'] == 'RecordAppended':
             # rest_logger.debug(event_data)
