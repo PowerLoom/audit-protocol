@@ -277,7 +277,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				return false
 			}
 		}
-		err = filecache.StorePayloadToCache(settingsObj.PayloadCachePath+"/", payloadCommit.ProjectId, payloadCommit.SnapshotCID, payloadCommit.Payload)
+		err = filecache.StorePayloadToCache(settingsObj.PayloadCachePath, payloadCommit.ProjectId, payloadCommit.SnapshotCID, payloadCommit.Payload)
 		if err != nil {
 			log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
 				payloadCommit.ProjectId, payloadCommit.CommitId, err)

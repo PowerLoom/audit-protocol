@@ -12,7 +12,7 @@ import (
 )
 
 func StorePayloadToCache(cachePath string, projectId string, payloadCid string, payload []byte) error {
-	cachePath = cachePath + projectId + "/"
+	cachePath = cachePath + "/" + projectId + "/"
 	fileName := fmt.Sprintf("%s%s.json", cachePath, payloadCid)
 	for i := 0; i < 3; i++ {
 		file, err := os.Create(fileName)
