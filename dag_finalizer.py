@@ -1,5 +1,5 @@
 from functools import wraps
-from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_queue_name, get_rabbitmq_routing_key
+from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_queue_name, get_rabbitmq_routing_key, get_rabbitmq_core_exchange
 from utils import redis_keys
 from utils import helper_functions
 from async_ipfshttpclient.main import AsyncIPFSClientSingleton, AsyncIPFSClient
@@ -332,7 +332,7 @@ class DAGFinalizationCallbackProcessor:
                         # always ensure exchanges and queues are initialized as part of launch sequence,
                         # not to be checked here
                         exchange = await channel.get_exchange(
-                            name=settings.rabbitmq.setup['core']['exchange'],
+                            name=get_rabbitmq_core_exchange(),
                             ensure=False
                         )
                         for queued_tentative_height_ in pending_confirmation_callbacks_txs_filtered_map.keys():
@@ -376,7 +376,7 @@ class DAGFinalizationCallbackProcessor:
                             )
                             await exchange.publish(
                                 message=message,
-                                routing_key='commit-payloads'
+                                routing_key=get_rabbitmq_routing_key('commit-payloads')
                             )
                             custom_logger.debug(
                                 'Re-Published payload against commit ID %s , tentative block height %s for '
