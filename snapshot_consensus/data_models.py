@@ -65,3 +65,22 @@ class ConsensusService(BaseModel):
 class SettingsConf(BaseModel):
     consensus_service: ConsensusService
     redis: RedisConfig
+
+
+# Data model for a list of snapshotters
+class Snapshotters(BaseModel):
+    projectId: str
+    snapshotters: List[str]
+
+
+# Data model for a list of epochs
+class Epochs(BaseModel):
+    projectId: str
+    epochs: List[str]
+
+
+# Data model for a submission
+class Submission(BaseModel):
+    snapshotterInstanceID: str
+    snapshotCID: str
+    submittedTS: int
