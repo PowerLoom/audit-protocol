@@ -1,10 +1,11 @@
 from .data_models import (
     SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus, SnapshotBase,
-    EpochConsensusStatus, Snapshotters, Epochs, Submission
+    EpochConsensusStatus, Snapshotters, Epoch, EpochData, Submission, SubmissionStatus, Message
 )
-from typing import List
+from typing import List, Optional
+from fastapi.responses import JSONResponse
 from .conf import settings
-from .helpers.state import submission_delayed, register_submission, check_submissions_consensus
+from .helpers.state import submission_delayed, register_submission, check_consensus, check_submissions_consensus
 from .helpers.redis_keys import *
 from fastapi import FastAPI, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,6 @@ import json
 import redis
 import time
 import asyncio
-
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -40,7 +40,7 @@ origins = ["*"]
 
 redis_lock = redis.Redis()
 
-app = FastAPI(docs_url=None, openapi_url=None, redoc_url=None)
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -161,10 +161,10 @@ async def epoch_status(
     return SubmissionResponse(status=status, delayedSubmission=False, finalizedSnapshotCID=finalized_cid).dict()
 
 
-# List of projects tracked/registered '/metrics/projects' . Response will be the list of projectIDs that are being tracked for consensus.
-@app.get("/metrics/projects")
-async def get_projects(request: Request,
-        response: Response):
+# List of projects tracked/registered '/metrics/projects' . 
+# Response will be the list of projectIDs that are being tracked for consensus.
+@app.get("/metrics/projects", responses={404: {"model": Message}})
+async def get_projects(request: Request, response: Response):
     """
     Returns a list of project IDs that are being tracked for consensus.
     """
@@ -176,20 +176,27 @@ async def get_projects(request: Request,
     return projects
 
 
-# List of snapshotters registered for a project '/metrics/{projectid}/snapshotters'. Response will be the list of instance-IDs of the snapshotters that are participanting in consensus for this project.
-@app.get("/metrics/{project_id}/snapshotters", response_model=Snapshotters)
-async def get_snapshotters(project_id: str, request: Request,
-        response: Response):
+# List of snapshotters registered for a project '/metrics/{projectid}/snapshotters'. 
+# Response will be the list of instance-IDs of the snapshotters that are participanting in consensus for this project.
+@app.get("/metrics/{project_id}/snapshotters", response_model=Snapshotters, responses={404: {"model": Message}})
+async def get_snapshotters(project_id: str, request: Request, response: Response):
     """
     Returns a list of instance-IDs of snapshotters that are participating in consensus for the given project.
     """
     snapshotters = await request.app.reader_redis_pool.smembers(
         get_project_registered_peers_set_key(project_id)
     )
+    # NOTE: Ideal way is to check if project exists first and then get the snapshotters.
+    # But right now fetching project list is expensive. So we are doing it this way.
+    if not snapshotters:
+        return JSONResponse(status_code=404, content={"message": f"Either the project is not registered or there are no snapshotters for project {project_id}"})
+
     return Snapshotters(projectId=project_id, snapshotters=snapshotters)
 
-# List of epochs submitted per project '/metrics/{projectid}/epochs' . Response will be the list of epochs whose state is currently available in consensus service.
-@app.get("/metrics/{project_id}/epochs", response_model=Epochs)
+
+# List of epochs submitted per project '/metrics/{projectid}/epochs' . 
+# Response will be the list of epochs whose state is currently available in consensus service.
+@app.get("/metrics/{project_id}/epochs", response_model=EpochData, responses={404: {"model": Message}})
 async def get_epochs(project_id: str, request: Request,
         response: Response):
     """
@@ -198,30 +205,55 @@ async def get_epochs(project_id: str, request: Request,
     epoch_keys = await request.app.reader_redis_pool.keys(
         get_project_epochs(project_id)
     )
+    if not epoch_keys:
+        return JSONResponse(status_code=404, content={"message": f"No epochs found for project {project_id}. Either project is not valid or was just added."})
 
-    epochs = sorted(list(set([key.decode('utf-8').split(':')[2] for key in epoch_keys])))
-    return Epochs(projectId=project_id, epochs=epochs)
+    epoch_ends = sorted(list(set([eval(key.decode('utf-8').split(':')[2]) for key in epoch_keys])))
+    epochs = []
+    epoch_status_tasks = [check_consensus(project_id, epoch_end, request.app.reader_redis_pool) for epoch_end in epoch_ends]
+    epoch_status = await asyncio.gather(*epoch_status_tasks)
+    for i in range(len(epoch_ends)):
+        finalized = False
+        if epoch_status[i][0] == SubmissionAcceptanceStatus.finalized:
+            finalized = True
+        epochs.append(Epoch(sourcechainEndheight=epoch_ends[i], finalized=finalized))
+    return EpochData(projectId=project_id, epochs=epochs)
 
 
-# Submission details for an epoch '/metrics/{projectid}/{epoch}/submissionStatus' . This shall include whether consensus has been achieved along with final snapshotCID. The details of snapshot submissions snapshotterID and submissionTime along with snapshot submitted.
-@app.get("/metrics/{project_id}/{epoch}/submissionStatus", response_model=List[Submission])
+# Submission details for an epoch '/metrics/{projectid}/{epoch}/submissionStatus' . 
+# This shall include whether consensus has been achieved along with final snapshotCID. 
+# The details of snapshot submissions snapshotterID and submissionTime along with snapshot submitted.
+@app.get(
+    "/metrics/{project_id}/{epoch}/submissionStatus", 
+    response_model=List[Submission], responses={404: {"model": Message}})
 async def get_submission_status(project_id: str, epoch: str, request: Request,
         response: Response):
     """
     Returns the submission details for the given project and epoch, including whether consensus has been achieved and the final snapshot CID.
     Also includes the details of snapshot submissions, such as snapshotter ID and submission time.
     """
-
+    submission_schedule = json.loads(
+        await request.app.reader_redis_pool.get(get_epoch_submission_schedule_key(project_id, epoch))
+    )
     submission_data = await request.app.reader_redis_pool.hgetall(
         get_epoch_submissions_htable_key(project_id, epoch)
     )
+    if not submission_data:
+        return JSONResponse(status_code=404, content={"message": f"Project with projectID {project_id} and epoch {epoch} not found"})
+    
     submissions = []
     for k, v in submission_data.items():
         k, v = k.decode("utf-8"), json.loads(v)
+        if v["submittedTS"] < submission_schedule["end"]:
+            submission_status = SubmissionStatus.within_schedule
+        else:
+            submission_status = SubmissionStatus.delayed
+        
         submission = Submission(
-            snapshotterInstanceID=k,
-            submittedTS= v["submittedTS"],
-            snapshotCID=v["snapshotCID"])
+            snapshotterInstanceID = k,
+            submittedTS = v["submittedTS"],
+            snapshotCID = v["snapshotCID"],
+            submissionStatus = submission_status)
         submissions.append(submission)
     
     return submissions
