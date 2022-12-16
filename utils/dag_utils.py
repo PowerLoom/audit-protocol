@@ -14,7 +14,7 @@ import logging
 from redis import asyncio as aioredis
 import hmac
 import sys
-
+from utils.file_utils import write_bytes_to_file, read_text_file
 
 class IPFSDAGCreationException(Exception):
     pass
@@ -93,35 +93,45 @@ async def save_event_data(event_data: DAGFinalizerCallback, pending_tx_set_entry
         writer_redis_conn=writer_redis_conn
     )
 
-
-async def get_dag_block(dag_cid: str, ipfs_read_client: AsyncIPFSClient):
+async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
     e_obj = None
-    try:
-        async with async_timeout.timeout(settings.ipfs_timeout) as cm:
-            try:
-                dag = await ipfs_read_client.dag.get(dag_cid)
-            except Exception as e:
-                e_obj = e
-    except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
-        e_obj = err
+    dag = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
+    if dag is None:
+        logger.info("Failed to read dag-block with CID %s for project %s from local cache ",
+        dag_cid,project_id)
+        try:
+            async with async_timeout.timeout(settings.ipfs_timeout) as cm:
+                try:
+                    dag = await ipfs_read_client.dag.get(dag_cid)
+                    dag = dag.as_json()
+                except Exception as ex:
+                    e_obj = ex
+        except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
+            e_obj = err
 
-    if e_obj or cm.expired:
-        return {}
 
-    return dag.as_json()
+        if e_obj or cm.expired:
+            return {}
+    else:
+        dag = json.loads(dag)
+    return dag
 
-
-async def put_dag_block(dag_json: str, ipfs_write_client: AsyncIPFSClient):
+async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncIPFSClient):
     dag_json = dag_json.encode('utf-8')
     out = await ipfs_write_client.dag.put(io.BytesIO(dag_json), pin=True)
     dag_cid = out['Cid']['/']
+    try:
+        write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", dag_json, logger )
+    except Exception as exc:
+        logger.error("Failed to write dag-block %s for project %s to local cache due to exception %s",
+        dag_json,project_id, exc, exc_info=True)
 
     return dag_cid
 
 
-async def get_payload(payload_cid: str, ipfs_read_client: AsyncIPFSClient):
+async def get_payload(payload_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
     """ Given the payload cid, retrieve the payload. Payloads are also DAG blocks """
-    return await get_dag_block(payload_cid, ipfs_read_client)
+    return await get_dag_block(payload_cid, project_id, ipfs_read_client)
 
 
 # TODO: exception handling around dag block creation failures
@@ -263,7 +273,13 @@ async def create_dag_block(
 
     """ Convert dag structure to json and put it on ipfs dag """
     try:
-        dag_cid = await put_dag_block(dag.json(exclude_none=True), ipfs_write_client)
+        future_dag = put_dag_block(dag.json(exclude_none=True), project_id, ipfs_write_client)
+        dag_cid = await asyncio.wait_for(
+            future_dag,
+            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
+            timeout=settings.webhook_listener.redis_lock_lifetime / 2 * 0.8
+        )
+
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise IPFSDAGCreationException from e

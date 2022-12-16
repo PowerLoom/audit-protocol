@@ -73,6 +73,8 @@ type Web3StorageErrResponse struct {
 var projectList map[string]*ProjectPruneState
 
 const DAG_CHAIN_STORAGE_TYPE_COLD string = "COLD"
+const DAG_CHAIN_STORAGE_TYPE_PRUNED string = "PRUNED"
+const DAG_CHAIN_STORAGE_TYPE_PENDING string = "pending"
 
 func main() {
 
@@ -389,19 +391,24 @@ func ProcessProject(projectId string) int {
 			}
 			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, projectId)
 
-			if dagSegment.StorageType != DAG_CHAIN_STORAGE_TYPE_COLD {
+			if dagSegment.StorageType == DAG_CHAIN_STORAGE_TYPE_PENDING {
 				log.WithField("CycleID", cycleDetails.CycleID).Infof("Performing Archival for project %s segment with endHeight %d", projectId, dagSegmentEndHeight)
 				projectReport.DAGSegmentsProcessed++
-				opStatus, err := ArchiveDAG(projectId, dagSegment.BeginHeight,
-					dagSegment.EndHeight, dagSegment.EndDAGCID)
-				if opStatus {
-					dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
+				if settingsObj.PruningServiceSettings.PerformArchival {
+					opStatus, err := ArchiveDAG(projectId, dagSegment.BeginHeight,
+						dagSegment.EndHeight, dagSegment.EndDAGCID)
+					if opStatus {
+						dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_COLD
+					} else {
+						log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectId, dagSegmentEndHeight)
+						projectReport.DAGSegmentsArchivalFailed++
+						projectReport.ArchivalFailureCause = err.Error()
+						UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
+						return -2
+					}
 				} else {
-					log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectId, dagSegmentEndHeight)
-					projectReport.DAGSegmentsArchivalFailed++
-					projectReport.ArchivalFailureCause = err.Error()
-					UpdatePruningProjectReportInRedis(&projectReport, projectPruneState)
-					return -2
+					log.Infof("Archival disabled, hence proceeding with pruning")
+					dagSegment.StorageType = DAG_CHAIN_STORAGE_TYPE_PRUNED
 				}
 				startScore = dagSegment.BeginHeight
 				payloadCids := GetPayloadCidsFromRedis(projectId, startScore, dagSegmentEndHeight)
@@ -424,7 +431,6 @@ func ProcessProject(projectId string) int {
 				log.WithField("CycleID", cycleDetails.CycleID).Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
 				errCount = UnPinFromIPFS(projectId, payloadCids)
 				projectReport.UnPinFailed += errCount
-
 				UpdateDagSegmentStatusToRedis(projectId, dagSegmentEndHeight, &dagSegment)
 
 				projectPruneState.LastPrunedHeight = dagSegmentEndHeight
@@ -436,7 +442,8 @@ func ProcessProject(projectId string) int {
 					PruneProjectInRedis(projectId, startScore, dagSegmentEndHeight)
 				}
 				UpdatePrunedStatusToRedis(projectPruneState)
-
+				errCount = DeleteContentFromLocalCache(projectId, dagCids, payloadCids)
+				projectReport.LocalCacheDeletionsFailed += errCount
 				projectReport.DAGSegmentsArchived++
 				projectReport.CIDsUnPinned += len(*payloadCids) + len(*dagCids)
 				projectProcessed = true
@@ -448,6 +455,38 @@ func ProcessProject(projectId string) int {
 		return 0
 	}
 	return 1
+}
+
+func DeleteContentFromLocalCache(projectId string, dagCids *map[int]string, payloadCids *map[int]string) int {
+	path := settingsObj.PayloadCachePath
+	errCount := 0
+	for _, cid := range *dagCids {
+		fileName := fmt.Sprintf("%s/%s/%s.json", path, projectId, cid)
+		err := os.Remove(fileName)
+		if err != nil {
+			if strings.Contains(err.Error(), "no such file or directory") {
+				continue
+			}
+			log.Errorf("Failed to remove file %s from local cache due to error %+v", fileName, err)
+			//TODO: Need to have some sort of pruning files older than 8 days logic to handle failures.
+			errCount++
+		}
+		log.Debugf("Deleted file %s successfully from local cache", fileName)
+	}
+
+	for _, cid := range *payloadCids {
+		fileName := fmt.Sprintf("%s/%s/%s.json", path, projectId, cid)
+		err := os.Remove(fileName)
+		if err != nil {
+			if strings.Contains(err.Error(), "no such file or directory") {
+				continue
+			}
+			log.Errorf("Failed to remove file %s from local cache due to error %+v", fileName, err)
+			errCount++
+		}
+		log.Debugf("Deleted file %s successfully from local cache", fileName)
+	}
+	return errCount
 }
 
 func BackupZsetsToFile(projectId string, startScore int, endScore int, payloadCids *map[int]string, dagCids *map[int]string) {
