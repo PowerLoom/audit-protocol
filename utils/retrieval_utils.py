@@ -11,6 +11,8 @@ from config import settings
 from bloom_filter import BloomFilter
 from tenacity import wait_random_exponential, stop_after_attempt, retry
 from data_models import ProjectBlockHeightStatus, PendingTransaction
+from utils.file_utils import read_text_file
+from utils.dag_utils import get_dag_block
 
 retrieval_utils_logger = logging.getLogger(__name__)
 retrieval_utils_logger.setLevel(level=logging.DEBUG)
@@ -33,242 +35,6 @@ SNAPSHOT_STATUS_MAP = {
     "TX_CONFIRMED": 4
 }
 
-
-async def check_ipfs_pinned(from_height: int, to_height: int):
-    """
-        - Given the span, check if these blocks exist of IPFS yet
-        or if they have to be retrieved through the container
-    """
-    pass
-
-
-def check_intersection(span_a, span_b):
-    """
-        - Given two spans, check the intersection between them
-    """
-
-    set_a = set(range(span_a[0], span_a[1] + 1))
-    set_b = set(range(span_b[0], span_b[1] + 1))
-    overlap = set_a & set_b
-    result = float(len(overlap)) / len(set_a)
-    result = result * 100
-    return result
-
-
-async def check_overlap(
-        from_height: int,
-        to_height: int,
-        project_id: str,
-        reader_redis_conn: aioredis.Redis
-):
-    """
-        - Given a span, check its intersection with other spans and find
-        the span which intersects the most.
-        - If there is no intersection with any of the spans, the return -1
-    """
-
-    # Get the list of all spans
-    live_span_key = redis_keys.get_live_spans_key(project_id=project_id, span_id="*")
-    span_keys = await reader_redis_conn.keys(pattern=live_span_key)
-    retrieval_utils_logger.debug(span_keys)
-    # Iterate through each span and check the intersection for each span
-    # with the given from_height and to_height
-    max_overlap = 0.0
-    max_span_id = ""
-    each_height_spans = {}
-    for span_key in span_keys:
-        if isinstance(span_key, bytes):
-            span_key = span_key.decode('utf-8')
-
-        out = await reader_redis_conn.get(span_key)
-        if out:
-            try:
-                span_data = json.loads(out.decode('utf-8'))
-            except json.JSONDecodeError as jerr:
-                retrieval_utils_logger.error(jerr, exc_info=True)
-                continue
-        else:
-            continue
-
-        target_span = (span_data.get('fromHeight'), span_data.get('toHeight'))
-        try:
-            overlap = check_intersection(span_a=(from_height, to_height), span_b=target_span)
-        except Exception as e:
-            retrieval_utils_logger.debug("Check intersection function failed.. ")
-            retrieval_utils_logger.error(e, exc_info=True)
-            overlap = 0.0
-
-        if overlap > max_overlap:
-            max_overlap = overlap
-            max_span_id = span_key.split(':')[-1]
-
-        # Check overlap for each height:
-        current_height = from_height
-        while current_height <= to_height:
-            if each_height_spans.get(current_height) is None:
-                try:
-                    overlap = check_intersection(span_a=(current_height, current_height), span_b=target_span)
-                except Exception as e:
-                    retrieval_utils_logger.debug("Check intersection Failed")
-                if overlap == 100.0:
-                    each_height_spans[current_height] = span_key.split(':')[-1]
-            current_height = current_height + 1
-
-    return max_overlap, max_span_id, each_height_spans
-
-
-async def get_container_id(
-        dag_block_height: int,
-        dag_cid: str,
-        project_id: str,
-        reader_redis_conn: aioredis.Redis
-):
-    """
-        - Given the dag_block_height and dag_cid, get the container_id for the container
-        which holds this dag_block
-    """
-
-    target_containers = await reader_redis_conn.zrangebyscore(
-        name=redis_keys.get_containers_created_key(project_id),
-        max=settings.container_height * 2 + dag_block_height + 1,
-        min=dag_block_height - settings.container_height * 2 - 1
-    )
-    container_id = None
-    container_data = dict()
-    for container_id in target_containers:
-        """ Get the data for the container """
-        container_id = container_id.decode('utf-8')
-        container_data_key = redis_keys.get_container_data_key(container_id)
-        out = await reader_redis_conn.hgetall(container_data_key)
-        container_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in out.items()}
-        bloom_filter_settings = json.loads(container_data['bloomFilterSettings'])
-        bloom_object = BloomFilter(**bloom_filter_settings)
-        if dag_cid in bloom_object:
-            break
-
-    return container_id, container_data
-
-
-async def check_container_cached(
-        container_id: str,
-        reader_redis_conn: aioredis.Redis
-):
-    """
-        - Given the container_id check if the data for that container is
-        cached on redis
-    """
-
-    cached_container_key = redis_keys.get_cached_containers_key(container_id)
-    out = await reader_redis_conn.exists(cached_container_key)
-    if out is 1:
-        return True
-    else:
-        return False
-
-
-async def check_containers(
-        from_height,
-        to_height,
-        project_id: str,
-        reader_redis_conn: aioredis.Redis,
-        each_height_spans: dict
-
-):
-    """
-        - Given the from_height and to_height, check for each dag_cid, what container is required
-        and if that container is cached
-    """
-    # Get the dag cid's for the span
-    out = await reader_redis_conn.zrangebyscore(
-        name=redis_keys.get_dag_cids_key(project_id=project_id),
-        max=to_height,
-        min=from_height,
-        withscores=True
-    )
-
-    last_pruned_height = await helper_functions.get_last_pruned_height(project_id=project_id,
-                                                                       reader_redis_conn=reader_redis_conn)
-
-    containers_required = []
-    cached = {}
-    for dag_cid, dag_block_height in out:
-        dag_cid = dag_cid.decode('utf-8')
-
-        # Check if the dag_cid is beyond the range of max_ipfs_blocks
-        if (dag_block_height > last_pruned_height) or (each_height_spans.get(dag_block_height) is not None):
-            # The dag block is safe
-            continue
-        else:
-            container_id, container_data = await get_container_id(
-                dag_block_height=dag_block_height,
-                dag_cid=dag_cid,
-                project_id=project_id,
-                reader_redis_conn=reader_redis_conn
-            )
-
-            containers_required.append({container_id: container_data})
-            is_cached = await check_container_cached(container_id, reader_redis_conn=reader_redis_conn)
-            cached[container_id] = is_cached
-
-    return containers_required, cached
-
-
-async def fetch_from_span(
-        from_height: int,
-        to_height: int,
-        span_id: str,
-        project_id: str,
-        reader_redis_conn: aioredis.Redis
-):
-    """
-        - Given the span_id and the span, fetch blocks in that range, if
-        they exist
-    """
-    live_span_key = redis_keys.get_live_spans_key(span_id=span_id, project_id=project_id)
-    span_data = await reader_redis_conn.get(live_span_key)
-
-    if span_data:
-        try:
-            span_data = json.loads(span_data)
-        except json.JSONDecodeError as jerr:
-            retrieval_utils_logger.error(jerr, exc_info=True)
-            return -1
-
-    current_height = from_height
-    blocks = []
-    while current_height <= to_height:
-        blocks.append(span_data['dag_blocks'][current_height])
-        current_height = current_height + 1
-
-    return blocks
-
-
-async def save_span(
-        from_height: int,
-        to_height: int,
-        project_id: str,
-        dag_blocks: dict,
-        writer_redis_conn: aioredis.Redis
-):
-    """
-        - Given the span, save it.
-        - Important to assign it a timeout to make sure that key disappears after a
-        certain time.
-    """
-    span_data = {
-        'fromHeight': from_height,
-        'toHeight': to_height,
-        'projectId': project_id
-    }
-    span_id = keccak(text=json.dumps(span_data)).hex()
-
-    span_data.pop('projectId')
-    span_data['dag_blocks'] = dag_blocks
-    live_span_key = redis_keys.get_live_spans_key(project_id=project_id, span_id=span_id)
-    _ = await writer_redis_conn.set(live_span_key, json.dumps(span_data))
-    _ = await writer_redis_conn.expire(live_span_key, settings.span_expire_timeout)
-
-
 async def fetch_blocks(
         from_height: int,
         to_height: int,
@@ -290,7 +56,9 @@ async def fetch_blocks(
         fetch_data_flag = 0 # Get only the DAG Block
         if data_flag:
             fetch_data_flag = 1 # Get DAG Block with data
-        dag_block = await retrieve_block_data(block_dag_cid=dag_cid, data_flag=fetch_data_flag, ipfs_read_client=ipfs_read_client)
+        dag_block = await retrieve_block_data(
+            block_dag_cid=dag_cid, data_flag=fetch_data_flag,
+            project_id=project_id, ipfs_read_client=ipfs_read_client)
         dag_block['dagCid'] = dag_cid
         dag_blocks.append(dag_block)
         current_height = current_height - 1
@@ -303,7 +71,6 @@ async def fetch_blocks(
 # TX_CONFIRMATION_PENDING = 3,
 # TX_CONFIRMED=4,
 
-# TODO: since return type hint is ProjectBlockHeightStatus, review the cases where None is returned
 async def retrieve_block_status(
         project_id: str,
         project_block_height: int,  # supplying 0 indicates finalized height of project should be fetched separately
@@ -361,7 +128,7 @@ async def retrieve_block_status(
                 block_status.tx_hash = pending_txn.event_data.txHash
                 block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
                 block_status.payload_cid = payload_cid
-                return
+                return block_status
 
         # if all the entry had empty txHash
         if all_empty_txhash:
@@ -391,6 +158,7 @@ async def retrieve_block_status(
 
         block = await retrieve_block_data(
             block_dag_cid=dag_cid,
+            project_id=project_id,
             ipfs_read_client=ipfs_read_client,
             writer_redis_conn=writer_redis_conn,
             data_flag=0
@@ -409,7 +177,8 @@ async def retrieve_block_status(
     stop=stop_after_attempt(3),
 )
 async def retrieve_block_data(
-        block_dag_cid,
+        block_dag_cid:str,
+        project_id:str,
         ipfs_read_client: AsyncIPFSClient,
         writer_redis_conn=None,
         data_flag=0
@@ -436,17 +205,13 @@ async def retrieve_block_data(
     #     retrieval_utils_logger.debug(block_dag_cid)
     #     retrieval_utils_logger.debug(r)
 
-    """ Retrieve the DAG block from ipfs """
-    _block = await ipfs_read_client.dag.get(block_dag_cid)
-    block = _block.as_json()
-    # block = preprocess_dag(block)
+    block = await get_dag_block(block_dag_cid, project_id, ipfs_read_client=ipfs_read_client)
     if data_flag == 0:
         return block
-
     payload = dict()
-
     """ Get the payload Data """
-    payload_data = await ipfs_read_client.cat(block['data']['cid']['/'])
+    payload_data = await retrieve_payload_data(block['data']['cid']['/'], project_id)
+
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
@@ -483,7 +248,8 @@ async def retrieve_payload_cid(project_id: str, block_height: int,reader_redis_c
 #       3. as well as the code block that needed a redis connection is gone
 async def retrieve_payload_data(
         payload_cid,
-        ipfs_read_client: AsyncIPFSClient,
+        project_id:str=None,
+        ipfs_read_client: AsyncIPFSClient=None,
         writer_redis_conn=None
 ):
     """
@@ -494,54 +260,23 @@ async def retrieve_payload_data(
         #r = await writer_redis_conn.zincrby(payload_key, 1.0, payload_cid)
         #retrieval_utils_logger.debug("Payload Data hit for: ")
         #retrieval_utils_logger.debug(payload_cid)
-
-    """ Get the payload Data from ipfs """
-    _payload_data = await ipfs_read_client.cat(payload_cid)
-    if not _payload_data:
-        return None
-
-    if isinstance(_payload_data, str):
-        payload_data = _payload_data
-    else:
+    payload_data = None
+    if project_id is not None:
+        payload_data = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ payload_cid + ".json", None )
+    if payload_data is None:
+        retrieval_utils_logger.info("Failed to read payload with CID %s for project %s from local cache ",
+        payload_cid,project_id)
+        # Get the payload Data from ipfs
+        _payload_data = await ipfs_read_client.cat(payload_cid)
         payload_data = _payload_data.decode('utf-8')
 
     return payload_data
 
-
-async def get_blocks_from_container(container_id, dag_cids: list):
-    """
-        Given the dag_cids, get those dag block from the given container
-    """
-    pass
-
-
-### SHARED IN-MEMORY CACHE FOR DAG BLOCK DATA ####
-### INCLUDES PAYLOAD DATA ########################
-SHARED_DAG_BLOCKS_CACHE = {}
-
-def prune_dag_block_cache(cache_size_unit):
-    cache_size_unit = cache_size_unit if cache_size_unit and isinstance(cache_size_unit, int) else 180
-
-    # export shared cache as global variable | python-design: https://bugs.python.org/issue9049
-    global SHARED_DAG_BLOCKS_CACHE
-
-    # only prune when size of cache greater than cache_size_unit * 5
-    if len(SHARED_DAG_BLOCKS_CACHE) <= cache_size_unit * 5:
-        return
-
-    # prune to make size of dict cache_size * 4
-    pruning_length = cache_size_unit * 4
-    # sort dict
-    ordered_items = sorted(SHARED_DAG_BLOCKS_CACHE.items(), key=lambda item: item[1]['block_height'])
-    # prune result list and make it a dict again
-    SHARED_DAG_BLOCKS_CACHE = dict(ordered_items[:pruning_length])
-
 async def get_dag_block_by_height(
         project_id, block_height,
         reader_redis_conn: aioredis.Redis,
-        ipfs_read_client: AsyncIPFSClient,
-        cache_size_unit
-):
+        ipfs_read_client: AsyncIPFSClient
+        ):
     dag_block = {}
 
     dag_cid = await helper_functions.get_dag_cid(
@@ -552,19 +287,12 @@ async def get_dag_block_by_height(
     if not dag_cid:
         return {}
 
-    # use cache if available
-    if dag_cid and SHARED_DAG_BLOCKS_CACHE.get(dag_cid, False):
-        return SHARED_DAG_BLOCKS_CACHE.get(dag_cid)['data']
-
     dag_block = await retrieve_block_data(
-        block_dag_cid=dag_cid, data_flag=1, ipfs_read_client=ipfs_read_client
-    )
+        block_dag_cid=dag_cid, project_id=project_id,data_flag=1,
+        ipfs_read_client=ipfs_read_client
+        )
+
     dag_block = dag_block if dag_block else {}
-
     dag_block["dagCid"] = dag_cid
-
-    # cache result
-    SHARED_DAG_BLOCKS_CACHE[dag_cid] = {'data': dag_block, 'block_height': block_height}
-    prune_dag_block_cache(cache_size_unit)
 
     return dag_block

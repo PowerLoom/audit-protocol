@@ -58,10 +58,9 @@ type SettingsObj struct {
 		Port        int           `json:"port"`
 		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
-	IpfsURL          string `json:"ipfs_url"`
-	IpfsReaderURL    string `json:"ipfs_reader_url"`
-	SnapshotInterval int    `json:"snapshot_interval"`
-	Rlimit           struct {
+	IpfsURL       string `json:"ipfs_url"`
+	IpfsReaderURL string `json:"ipfs_reader_url"`
+	Rlimit        struct {
 		FileDescriptors int `json:"file_descriptors"`
 	} `json:"rlimit"`
 	Rabbitmq struct {
@@ -80,22 +79,7 @@ type SettingsObj struct {
 	RetryCount            *int          `json:"retry_count"`
 	RetryIntervalSecs     int           `json:"retry_interval_secs"`
 	HttpClientTimeoutSecs int           `json:"http_client_timeout_secs"`
-	RPCMatic              string        `json:"rpc_matic"`
-	ContractAddresses     struct {
-		IuniswapV2Factory string `json:"iuniswap_v2_factory"`
-		IuniswapV2Router  string `json:"iuniswap_v2_router"`
-		IuniswapV2Pair    string `json:"iuniswap_v2_pair"`
-		USDT              string `json:"USDT"`
-		DAI               string `json:"DAI"`
-		USDC              string `json:"USDC"`
-		WETH              string `json:"WETH"`
-		MAKER             string `json:"MAKER"`
-		WETHUSDT          string `json:"WETH-USDT"`
-	} `json:"contract_addresses"`
-	MetadataCache string `json:"metadata_cache"`
-	DagTableName  string `json:"dag_table_name"`
-	Seed          string `json:"seed"`
-	Redis         struct {
+	Redis                 struct {
 		Host     string `json:"host"`
 		Port     int    `json:"port"`
 		Db       int    `json:"db"`
@@ -113,34 +97,13 @@ type SettingsObj struct {
 		RetreivalsSingle  string `json:"retreivals_single"`
 		RetreivalsBulk    string `json:"retreivals_bulk"`
 	} `json:"table_names"`
-	CleanupServiceInterval   int    `json:"cleanup_service_interval"`
-	AuditContract            string `json:"audit_contract"`
-	AppName                  string `json:"app_name"`
-	PowergateClientAddr      string `json:"powergate_client_addr"`
-	MaxIpfsBlocks            int    `json:"max_ipfs_blocks"`
-	MaxPendingPayloadCommits int    `json:"max_pending_payload_commits"`
-	BlockStorage             string `json:"block_storage"`
-	PayloadStorage           string `json:"payload_storage"`
-	ContainerHeight          int    `json:"container_height"`
-	BloomFilterSettings      struct {
-		MaxElements int         `json:"max_elements"`
-		ErrorRate   float64     `json:"error_rate"`
-		Filename    interface{} `json:"filename"`
-	} `json:"bloom_filter_settings"`
-	PayloadCommitInterval      int           `json:"payload_commit_interval"`
-	PayloadCommitConcurrency   int           `json:"payload_commit_concurrency"`
-	PruningServiceInterval     int           `json:"pruning_service_interval"`
-	RetrievalServiceInterval   int           `json:"retrieval_service_interval"`
-	DealWatcherServiceInterval int           `json:"deal_watcher_service_interval"`
-	BackupTargets              []string      `json:"backup_targets"`
-	MaxPayloadCommits          int           `json:"max_payload_commits"`
-	UnpinMode                  string        `json:"unpin_mode"`
-	MaxPendingEvents           int           `json:"max_pending_events"`
-	IpfsTimeout                int           `json:"ipfs_timeout"`
-	IPFSRateLimiter            *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
-	SpanExpireTimeout          int           `json:"span_expire_timeout"`
-	APIKey                     string        `json:"api_key"`
-	AiohtttpTimeouts           struct {
+	CleanupServiceInterval   int           `json:"cleanup_service_interval"`
+	AuditContract            string        `json:"audit_contract"`
+	PayloadCommitConcurrency int           `json:"payload_commit_concurrency"`
+	IpfsTimeout              int           `json:"ipfs_timeout"`
+	IPFSRateLimiter          *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
+	APIKey                   string        `json:"api_key"`
+	AiohtttpTimeouts         struct {
 		SockRead    int `json:"sock_read"`
 		SockConnect int `json:"sock_connect"`
 		Connect     int `json:"connect"`
@@ -156,6 +119,7 @@ type SettingsObj struct {
 	} `json:"web3_storage"`
 	DagVerifierSettings     _DagVerifierSettings_    `json:"dag_verifier"`
 	PruningServiceSettings  *PruningServiceSettings_ `json:"pruning"`
+	PayloadCachePath        string                   `json:"local_cache_path"`
 	TokenAggregatorSettings TokenAggregatorSettings_ `json:"token_aggregator"`
 }
 

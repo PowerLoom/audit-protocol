@@ -572,6 +572,7 @@ async def get_block(
 
     block = await retrieval_utils.retrieve_block_data(
         block_dag_cid=prev_dag_cid,
+        project_id=projectId,
         ipfs_read_client=request.app.ipfs_read_client,
         writer_redis_conn=writer_redis_conn,
         data_flag=0
@@ -673,6 +674,7 @@ async def get_block_data(
 
     payload = await retrieval_utils.retrieve_block_data(
         block_dag_cid=prev_dag_cid,
+        project_id=projectId,
         ipfs_read_client=request.app.ipfs_read_client,
         writer_redis_conn=writer_redis_conn,
         data_flag=2

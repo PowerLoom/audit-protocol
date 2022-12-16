@@ -41,8 +41,7 @@ type _ChainHeightRange_ struct {
 }
 
 type PayloadData struct {
-	ChainHeightRange  *_ChainHeightRange_ `json:"chainHeightRange"`
-	EndBlockTimestamp float64             `json:"timestamp"`
+	ChainHeightRange *_ChainHeightRange_ `json:"chainHeightRange"`
 }
 
 type Snapshot struct {

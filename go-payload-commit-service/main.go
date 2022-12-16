@@ -24,6 +24,7 @@ import (
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
 
+	"github.com/powerloom/goutils/filecache"
 	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/settings"
 )
@@ -276,13 +277,18 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				return false
 			}
 		}
-
+		err = filecache.StorePayloadToCache(settingsObj.PayloadCachePath, payloadCommit.ProjectId, payloadCommit.SnapshotCID, payloadCommit.Payload)
+		if err != nil {
+			log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
+				payloadCommit.ProjectId, payloadCommit.CommitId, err)
+		}
 		err = StorePayloadCidInRedis(&payloadCommit)
 		if err != nil {
 			log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",
 				payloadCommit.ProjectId, payloadCommit.CommitId, err)
 			return false
 		}
+
 		//Update TentativeBlockHeight for the project
 		err = UpdateTentativeBlockHeight(&payloadCommit)
 		if err != nil {
@@ -352,6 +358,25 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	return true
 }
 
+func ReadPayloadFromCache(projectID string, payloadCid string) (*PayloadData, error) {
+	var payload PayloadData
+	log.Debugf("Fetching payloadCid %s from local Cache", payloadCid)
+	bytes, err := filecache.ReadFromCache(settingsObj.PayloadCachePath+"/", projectID, payloadCid)
+	if err != nil {
+		log.Errorf("Failed to fetch payloadCid from local Cache, CID %s, due to error %+v ",
+			payloadCid, err)
+		return nil, err
+	}
+	err = json.Unmarshal(bytes, &payload)
+	if err != nil {
+		log.Errorf("Failed to Unmarshal Json Payload from local Cache, CID %s, bytes: %+v due to error %+v ",
+			payloadCid, bytes, err)
+		return nil, err
+	}
+	log.Debugf("Fetched Payload with CID %s from local cache: %+v", payloadCid, payload)
+	return &payload, nil
+}
+
 func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 	for retryCount := 0; ; {
 
@@ -388,11 +413,17 @@ func GetPreviousSnapshot(projectId string, lastTentativeBlockHeight int) (*Paylo
 			projectId, lastTentativeBlockHeight, err)
 		return nil, err
 	}
-	payload, err := GetPayloadFromIPFS(payloadCid, 1)
+
+	payload, err := ReadPayloadFromCache(projectId, payloadCid)
 	if err != nil {
-		log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
+		log.Infof("Failed to fetch payload from local Cache for CID %s for project %s at height %d due to error %+v. Fetching from IPFS",
 			payloadCid, projectId, lastTentativeBlockHeight, err)
-		return nil, err
+		payload, err = GetPayloadFromIPFS(payloadCid, 1)
+		if err != nil {
+			log.Errorf("Failed to fetch payload from IPFS for CID %s for project %s at height %d from redis due to error %+v",
+				payloadCid, projectId, lastTentativeBlockHeight, err)
+			return nil, err
+		}
 	}
 	return payload, nil
 }

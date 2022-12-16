@@ -21,6 +21,7 @@ type ProjectPruningReport struct {
 	ArchivalFailureCause      string `json:"failureCause,omitempty"`
 	CIDsUnPinned              int    `json:"CIDsUnPinned"`
 	UnPinFailed               int    `json:"unPinFailed,omitempty"`
+	LocalCacheDeletionsFailed int    `json:"localCacheDeletionsFailed,omitempty"`
 }
 
 type PruningCycleDetails struct {

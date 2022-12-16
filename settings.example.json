@@ -13,7 +13,7 @@
 			"burst": 20
 		}
 	},
-	"rpc_url": "https://rpc-eth-lb.blockvigil.com/v1/****",
+	"rpc_url": "https://<rpc-url>/****",
 	"rabbitmq": {
 		"user": "guest",
 		"password": "guest",
@@ -73,34 +73,14 @@
 		"retreivals_bulk":"retreivals_bulk"
 	},
 	"audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
-	"powergate_client_addr"	: "127.0.0.1:5002",
-	"max_ipfs_blocks" : 30,
-	"max_pending_payload_commits": 5,
-	"block_storage": "IPFS",
-	"payload_storage": "IPFS",
-	"container_height": 500,
-	"bloom_filter_settings": {
-		"max_elements": 500,
-		"error_rate": 0.0001,
-		"filename": null
-	},
 	"aiohtttp_timeouts": {
 		"sock_read": 5,
 		"sock_connect": 5,
 		"connect": 5
 	},
-	"payload_commit_interval": 2,
 	"payload_commit_concurrency": 20,
-	"pruning_service_interval": 10,
-	"retrieval_service_interval": 3,
-	"deal_watcher_service_interval": 3,
-	"api_key": "",
-	"backup_targets": ["sia:skynet"],
-	"unpin_mode": "all",
-	"max_pending_events": 2,
-	"max_payload_commits": 4,
+	"local_cache_path":"/home/ubuntu/local_cache/",
 	"ipfs_timeout": 20,
-	"span_expire_timeout": 600,
 	"calculate_diff": false,
 	"web3_storage":{
 		"url":"https://api.web3.storage",
