@@ -208,7 +208,7 @@ async def get_epochs(project_id: str, request: Request,
     if not epoch_keys:
         return JSONResponse(status_code=404, content={"message": f"No epochs found for project {project_id}. Either project is not valid or was just added."})
 
-    epoch_ends = sorted(list(set([eval(key.decode('utf-8').split(':')[2]) for key in epoch_keys])))
+    epoch_ends = sorted(list(set([eval(key.decode('utf-8').split(':')[2]) for key in epoch_keys])), reverse=True)
     epochs = []
     epoch_status_tasks = [check_consensus(project_id, epoch_end, request.app.reader_redis_pool) for epoch_end in epoch_ends]
     epoch_status = await asyncio.gather(*epoch_status_tasks)
@@ -232,12 +232,16 @@ async def get_submission_status(project_id: str, epoch: str, request: Request,
     Returns the submission details for the given project and epoch, including whether consensus has been achieved and the final snapshot CID.
     Also includes the details of snapshot submissions, such as snapshotter ID and submission time.
     """
-    submission_schedule = json.loads(
-        await request.app.reader_redis_pool.get(get_epoch_submission_schedule_key(project_id, epoch))
-    )
+
+    submission_schedule = await request.app.reader_redis_pool.get(get_epoch_submission_schedule_key(project_id, epoch))
+    if not submission_schedule:
+        return JSONResponse(status_code=404, content={"message": f"Submission schedule for projectID {project_id} and epoch {epoch} not found"})
+    submission_schedule = json.loads(submission_schedule)
+
     submission_data = await request.app.reader_redis_pool.hgetall(
         get_epoch_submissions_htable_key(project_id, epoch)
     )
+
     if not submission_data:
         return JSONResponse(status_code=404, content={"message": f"Project with projectID {project_id} and epoch {epoch} not found"})
     
