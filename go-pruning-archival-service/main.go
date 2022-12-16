@@ -461,7 +461,7 @@ func DeleteContentFromLocalCache(projectId string, dagCids *map[int]string, payl
 	path := settingsObj.PayloadCachePath
 	errCount := 0
 	for _, cid := range *dagCids {
-		fileName := fmt.Sprintf("%s/%s.json", path, cid)
+		fileName := fmt.Sprintf("%s/%s/%s.json", path, projectId, cid)
 		err := os.Remove(fileName)
 		if err != nil {
 			if strings.Contains(err.Error(), "no such file or directory") {
@@ -475,7 +475,7 @@ func DeleteContentFromLocalCache(projectId string, dagCids *map[int]string, payl
 	}
 
 	for _, cid := range *payloadCids {
-		fileName := fmt.Sprintf("%s/%s.json", path, cid)
+		fileName := fmt.Sprintf("%s/%s/%s.json", path, projectId, cid)
 		err := os.Remove(fileName)
 		if err != nil {
 			if strings.Contains(err.Error(), "no such file or directory") {
