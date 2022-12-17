@@ -65,9 +65,31 @@ class ConsensusService(BaseModel):
     port: str
 
 
+class NodeConfig(BaseModel):
+    url: str
+
+class RPCConfig(BaseModel):
+    nodes: List[NodeConfig]
+    retry: int
+    request_time_out: int
+
+
+class EpochConfig(BaseModel):
+    height: int
+    head_offset: int
+    block_time: int
+
+
+class ChainConfig(BaseModel):
+    rpc: RPCConfig
+    chain_id: int
+    epoch: EpochConfig
+
+
 class SettingsConf(BaseModel):
     consensus_service: ConsensusService
     redis: RedisConfig
+    chain: ChainConfig
 
 
 # Data model for a list of snapshotters

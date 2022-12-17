@@ -9,5 +9,25 @@
 		"port": 6379,
 		"db": 0,
 		"password": null
+	},
+	"chain":{
+		"rpc": {
+			"nodes": [
+				{
+					"url": "***"
+				},
+				{
+					"url": "***"
+				}
+			],
+			"retry": 3,
+			"request_time_out": 5
+		},
+		"chain_id":1,
+		"epoch": {
+			"height": 10,
+			"head_offset": 2,
+			"block_time": 2
+		}
 	}
 }
