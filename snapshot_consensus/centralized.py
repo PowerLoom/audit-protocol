@@ -1,6 +1,6 @@
 from .data_models import (
     SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus, SnapshotBase,
-    EpochConsensusStatus, Snapshotters, Epoch, EpochData, Submission, SubmissionStatus, Message
+    EpochConsensusStatus, Snapshotters, Epoch, EpochData, Submission, SubmissionStatus, Message, EpochInfo
 )
 from typing import List, Optional
 from fastapi.responses import JSONResponse
@@ -261,3 +261,33 @@ async def get_submission_status(project_id: str, epoch: str, request: Request,
         submissions.append(submission)
     
     return submissions
+
+
+@app.get("/currentEpoch", response_model=EpochInfo, responses={404: {"model": Message}})
+async def get_current_epoch(request: Request,
+        response: Response):
+    """
+    Returns the current epoch information.
+
+    Returns:
+        dict: A dictionary with the following keys:
+            "chain-id" (int): The chain ID.
+            "epochStartBlockHeight" (int): The epoch start block height.
+            "epochEndBlockHeight" (int): The epoch end block height.
+    """
+    # Get the current epoch end block height from Redis
+    epoch_end_block_height = await app.writer_redis_pool.get(get_system_ticker_linear_last_epoch())
+
+    if epoch_end_block_height is None:
+        return JSONResponse(status_code=404, content={"message": "Epoch not found! Make sure the system ticker is running."})
+
+    epoch_end_block_height = int(epoch_end_block_height.decode("utf-8"))
+    # Calculate the epoch start block height using the epoch length from the configuration
+    epoch_start_block_height = epoch_end_block_height - settings.chain.epoch.height + 1
+
+    # Return the current epoch information as a JSON response
+    return {
+        "chainId": settings.chain.chain_id,
+        "epochStartBlockHeight": epoch_start_block_height,
+        "epochEndBlockHeight": epoch_end_block_height
+    }

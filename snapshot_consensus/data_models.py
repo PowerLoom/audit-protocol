@@ -117,3 +117,9 @@ class Submission(BaseModel):
 
 class Message(BaseModel):
     message: str
+
+    
+class EpochInfo(BaseModel):
+    chainId: int
+    epochStartBlockHeight: int
+    epochEndBlockHeight: int

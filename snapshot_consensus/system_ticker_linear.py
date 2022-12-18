@@ -60,19 +60,7 @@ def redis_cleanup(fn):
 class LinearTickerProcess(Process):
     def __init__(self, name):
         Process.__init__(self, name=name)
-    
-    async def create(self, **kwargs):
-        self.aioredis_pool = RedisPool(writer_redis_conf=settings.redis)
-        await self.aioredis_pool.populate()
-        self.reader_redis_pool = self.aioredis_pool.reader_redis_pool
-        self.writer_redis_pool = self.aioredis_pool.writer_redis_pool
-        self.redis_thread: threading.Thread
-        self._rabbitmq_thread: threading.Thread
-        self._rabbitmq_queue = queue.Queue()
-        
-        self._shutdown_initiated = False
-        self.last_sent_block = 0
-        self._logger = logging.getLogger('PowerLoom|EpochTicker|Linear')
+        self._logger = logging.getLogger(self.name)
 
         stdout_handler = logging.StreamHandler(sys.stdout)
         stderr_handler = logging.StreamHandler(sys.stderr)
@@ -81,31 +69,43 @@ class LinearTickerProcess(Process):
         self._logger.setLevel(logging.DEBUG)
         self._logger.addHandler(stdout_handler)
         self._logger.addHandler(stderr_handler)
+        self._shutdown_initiated = False
+        self.last_sent_block = 0
         
-        self._begin = kwargs.get('begin', 0)
+
+    async def setup(self, **kwargs):
+        self.aioredis_pool = RedisPool(writer_redis_conf=settings.redis)
+        await self.aioredis_pool.populate()
+        self.reader_redis_pool = self.aioredis_pool.reader_redis_pool
+        self.writer_redis_pool = self.aioredis_pool.writer_redis_pool
+        self.redis_thread: threading.Thread
+        
         self._end = kwargs.get('end')
-        
 
     def _generic_exit_handler(self, signum, sigframe):
         if signum in [SIGINT, SIGTERM, SIGQUIT] and not self._shutdown_initiated:
             self._shutdown_initiated = True
             raise GenericExitOnSignal
 
+
     @redis_cleanup
-    async def main(self):
-        # logging.config.dictConfig(config_logger_with_namespace('PowerLoom|EpochCollator'))
+    async def init(self, begin_block_epoch:int =0):
         for signame in [signal.SIGINT, signal.SIGTERM, signal.SIGQUIT]:
             signal.signal(signame, self._generic_exit_handler)
+        last_block_data_redis = await self.writer_redis_pool.get(name=get_system_ticker_linear_last_epoch())
+        if last_block_data_redis:
+            # Can't provide begin block which previous state is present in redis
+            if begin_block_epoch != 0:
+                self._logger.debug(f'Attempting to start from {begin_block_epoch} but last block {last_block_data_redis.decode("utf-8")} found in Redis.')
+                self._logger.debug('Either use clean_slate_ticker.py to reset the Redis state or remove the begin_block_epoch argument.')
+                sys.exit()
+            else:
+                self._logger.debug('Begin block not given, attempting starting from Redis')
+                begin_block_epoch = int(last_block_data_redis.decode("utf-8"))
+                self._logger.debug(f'Found last epoch block : {begin_block_epoch} in Redis. Starting from checkpoint.')
 
-        
-
-        setproctitle('PowerLoom|SystemEpochClock|Linear')
-        begin_block_epoch = self._begin
-        if begin_block_epoch == 0:
-            self._logger.debug('Begin block not given, attempting starting from Redis')
-            begin_block_epoch = int((await self.writer_redis_pool.get(name=get_system_ticker_linear_last_epoch())).decode("utf-8"))+1
-            self._logger.debug(f'Found last epoch block : {begin_block_epoch} in Redis. Starting from checkpoint.')
-
+        setproctitle(self.name)
+            
         end_block_epoch = self._end
         sleep_secs_between_chunks = 60
         rpc_obj = ConstructRPC(network_id=settings.chain.chain_id)
@@ -176,15 +176,14 @@ class LinearTickerProcess(Process):
                         begin_block_epoch = end_block_epoch + 1
 
 
-def main(begin=0):
-    """Main function to spin up the process."""
+def main(begin_block:int=0):
+    """Spin up the ticker process in event loop"""
     ticker_process = LinearTickerProcess(name="PowerLoom|SystemEpochClock|Linear")
     kwargs = dict()
-    if begin>0:
-        kwargs['begin'] = begin
-    asyncio.run(ticker_process.create(**kwargs))
-    asyncio.run(ticker_process.main())
+    asyncio.run(ticker_process.setup(**kwargs))
+    asyncio.run(ticker_process.init(begin_block))
 
-    
-if __name__ == '__main__':
-    main()
+
+# if __name__ == '__main__':
+    # main()
+    # main(begin_block=16206151)
