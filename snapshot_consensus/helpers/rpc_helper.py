@@ -145,15 +145,3 @@ class ConstructRPC:
         if defaultBlock is not None:
             self._querystring["params"].append(defaultBlock)
         return self._querystring
-
-
-# if __name__ == "__main__":
-
-#     rpc_nodes_obj = RPCNodesObject(
-#                 NODES=["https://mainnet.infura.io/v3/436f027eae94495c9288ff8f7a08e62b"],
-#                 RETRY_LIMIT=2
-#             )
-
-#     rpc_obj = ConstructRPC(network_id=1)
-
-#     print(rpc_obj.rpc_eth_blocknumber(rpc_nodes_obj))
