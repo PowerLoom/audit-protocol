@@ -20,6 +20,7 @@ import json
 import redis
 import time
 import asyncio
+import uvicorn
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -41,6 +42,8 @@ origins = ["*"]
 redis_lock = redis.Redis()
 
 app = FastAPI()
+app.logger = service_logger
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -280,7 +283,6 @@ async def get_current_epoch(request: Request,
 
     if epoch_end_block_height is None:
         return JSONResponse(status_code=404, content={"message": "Epoch not found! Make sure the system ticker is running."})
-
     epoch_end_block_height = int(epoch_end_block_height.decode("utf-8"))
     # Calculate the epoch start block height using the epoch length from the configuration
     epoch_start_block_height = epoch_end_block_height - settings.chain.epoch.height + 1
@@ -291,3 +293,11 @@ async def get_current_epoch(request: Request,
         "epochStartBlockHeight": epoch_start_block_height,
         "epochEndBlockHeight": epoch_end_block_height
     }
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host=settings.consensus_service.host,
+        port=settings.consensus_service.port
+    )

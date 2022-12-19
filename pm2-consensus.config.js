@@ -21,7 +21,7 @@ module.exports = {
     },
     {
       name   : "off-chain-consensus",
-      script : `uvicorn snapshot_consensus.centralized:app --reload`,
+      script : `${INTERPRETER} -m snapshot_consensus.centralized`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       env: {
