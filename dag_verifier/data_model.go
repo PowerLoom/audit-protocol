@@ -21,6 +21,7 @@ type SummaryProjectState struct {
 
 type DagChainReport struct {
 	Namespace                   string                `json:"namespace"`
+	InstanceId                  string                `json:"instanceid"`
 	Severity                    string                `json:"severity"`                               //HIGH,MEDIUM, LOW, CLEAR
 	ProjectsWithCacheIssueCount int                   `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
 	ProjectsTrackedCount        int                   `json:"projectsTrackedCount,omitempty"`
