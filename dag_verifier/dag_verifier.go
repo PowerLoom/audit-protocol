@@ -42,7 +42,7 @@ type DagVerifier struct {
 }
 
 // TODO: Migrate to env or settings.
-const NAMESPACE string = "UNISWAPV2"
+const NAMESPACE string = "UNISWAPV2-ph15-prod"
 const PAIR_TRADEVOLUME_PROJECTID string = "projectID:uniswap_pairContract_trade_volume_%s_%s"
 const PAIR_TOTALRESERVE_PROJECTID string = "projectID:uniswap_pairContract_pair_total_reserves_%s_%s"
 const REDIS_KEY_PROJECT_BLOCK_HEIGHT string = "%s:blockHeight"
