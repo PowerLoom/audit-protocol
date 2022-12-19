@@ -44,6 +44,9 @@ class SubmissionAcceptanceStatus(str, Enum):
     # if submission deadline has passed, all peers have not submitted and 2/3 not reached
     indeterminate = 'INDETERMINATE'
 
+class SubmissionStatus(str, Enum):
+    within_schedule = 'WITHIN_SCHEDULE'
+    delayed = 'DELAYED'
 
 class EpochConsensusStatus(str, Enum):
     consensus_achieved = 'CONSENSUS_ACHIEVED'
@@ -65,3 +68,30 @@ class ConsensusService(BaseModel):
 class SettingsConf(BaseModel):
     consensus_service: ConsensusService
     redis: RedisConfig
+
+
+# Data model for a list of snapshotters
+class Snapshotters(BaseModel):
+    projectId: str
+    snapshotters: List[str]
+
+
+class Epoch(BaseModel):
+    sourcechainEndheight: int
+    finalized: bool
+
+# Data model for a list of epoch data
+class EpochData(BaseModel):
+    projectId: str
+    epochs: List[Epoch]
+
+
+# Data model for a submission
+class Submission(BaseModel):
+    snapshotterInstanceID: str
+    snapshotCID: str
+    submittedTS: int
+    submissionStatus: SubmissionStatus
+
+class Message(BaseModel):
+    message: str
