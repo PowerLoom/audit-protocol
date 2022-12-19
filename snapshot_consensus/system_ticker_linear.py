@@ -48,7 +48,6 @@ def redis_cleanup(fn):
                                     , self.last_sent_block+1)
             except Exception as E:
                 self._logger.error('Error while saving last state: %s', E)
-                pass
         except Exception as E:
             self._logger.error('Error while running process: %s', E)
         finally:
@@ -184,6 +183,11 @@ def main(begin_block:int=0):
     asyncio.run(ticker_process.init(begin_block))
 
 
-# if __name__ == '__main__':
-    # main()
-    # main(begin_block=16206151)
+if __name__ == '__main__':
+
+    args = sys.argv
+    if len(args) > 1:
+        begin_block = int(args[1])
+        main(begin_block=begin_block)
+    else:
+        main()
