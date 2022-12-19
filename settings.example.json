@@ -129,14 +129,14 @@
 	"pruning":{
 		"run_interval_mins": 600,
 		"segment_size": 720,
-		"concurrency":20,
+		"concurrency":1,
 		"car_storage_path":"/tmp/",
 		"ipfs_rate_limit":{
-			"req_per_sec": 20,
-			"burst": 20
+			"req_per_sec": 10,
+			"burst": 10
 		},
 		"ipfs_timeout_secs": 300,
-		"perform_archival": true,
+		"perform_archival": false,
 		"perform_ipfs_unpin": true,
 		"prune_redis_zsets":true,
 		"backup_redis_zsets_to_file": false,
