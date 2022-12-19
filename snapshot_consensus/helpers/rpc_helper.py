@@ -1,5 +1,6 @@
 from itertools import repeat
 from .message_models import RPCNodesObject
+from ..conf import settings
 from functools import wraps
 import requests
 import time
@@ -20,6 +21,8 @@ service_logger.setLevel(logging.DEBUG)
 service_logger.addHandler(stdout_handler)
 service_logger.addHandler(stderr_handler)
 
+REQUEST_TIMEOUT = settings.chain.rpc.request_timeout
+RETRY_LIMIT = settings.chain.rpc.retry
 
 def auto_retry(tries=3, exc=Exception, delay=5):
     def deco(func):
@@ -61,7 +64,7 @@ class ConstructRPC:
             for _url in rpc_urls:
                 try:
                     retry[_url] += 1
-                    r = requests.post(_url, json=q_s, timeout=5)
+                    r = requests.post(_url, json=q_s, timeout=REQUEST_TIMEOUT)
                     json_response = r.json()
                 except (requests.exceptions.Timeout,
                         requests.exceptions.ConnectionError,
@@ -84,7 +87,7 @@ class ConstructRPC:
         else:
             return new_blocknumber
 
-    @auto_retry(tries=2, exc=BailException)
+    @auto_retry(tries=RETRY_LIMIT, exc=BailException)
     def rpc_eth_getblock_by_number(self, blocknum, rpc_nodes):
         rpc_response = self.sync_post_json_rpc(procedure="eth_getBlockByNumber", rpc_nodes=rpc_nodes,
                                                params=[hex(blocknum), False])
@@ -94,46 +97,6 @@ class ConstructRPC:
             raise
         else:
             return blockdetails
-
-    @auto_retry(tries=2, exc=BailException)
-    def rpc_eth_get_tx_count(self, account, rpc_nodes, block):
-        rpc_response = self.sync_post_json_rpc(procedure='eth_getTransactionCount',
-                                               params=[account, block],
-                                               rpc_nodes=rpc_nodes)
-        try:
-            tx_count = int(rpc_response["result"], 16)
-        except Exception as e:
-            raise
-        else:
-            return tx_count
-
-    @auto_retry(tries=2, exc=BailException)
-    def rpc_eth_get_tx_receipt(self, tx, rpc_nodes):
-        rpc_response = self.sync_post_json_rpc(procedure="eth_getTransactionReceipt",
-                                               rpc_nodes=rpc_nodes,
-                                               params=[tx])
-        try:
-            tx_receipt = rpc_response["result"]
-        except KeyError as e:
-            process_name = multiprocessing.current_process().name
-            rpc_logger.debug("{1}: Unexpected JSON RPC response: {0}".format(rpc_response, process_name))
-            raise
-        else:
-            return tx_receipt
-
-    @auto_retry(tries=2, exc=BailException)
-    def rpc_eth_get_tx_by_hash(self, tx, rpc_nodes):
-        rpc_response = self.sync_post_json_rpc(procedure="eth_getTransactionByHash",
-                                               rpc_nodes=rpc_nodes,
-                                               params=[tx])
-        try:
-            tx_hash = rpc_response["result"]
-        except KeyError as e:
-            process_name = multiprocessing.current_process().name
-            rpc_logger.debug("{1}: Unexpected JSON RPC response: {0}".format(rpc_response, process_name))
-            raise
-        else:
-            return tx_hash
 
     def construct_one_timeRPC(self, procedure, params, defaultBlock=None):
         self._querystring["method"] = procedure

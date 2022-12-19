@@ -276,7 +276,7 @@ async def get_current_epoch(request: Request,
             "epochEndBlockHeight" (int): The epoch end block height.
     """
     # Get the current epoch end block height from Redis
-    epoch_end_block_height = await app.writer_redis_pool.get(get_system_ticker_linear_last_epoch())
+    epoch_end_block_height = await app.writer_redis_pool.get(get_epoch_generator_last_epoch())
 
     if epoch_end_block_height is None:
         return JSONResponse(status_code=404, content={"message": "Epoch not found! Make sure the system ticker is running."})

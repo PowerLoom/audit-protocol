@@ -21,13 +21,14 @@
 				}
 			],
 			"retry": 3,
-			"request_time_out": 5
+			"request_timeout": 5
 		},
 		"chain_id":1,
 		"epoch": {
 			"height": 10,
 			"head_offset": 2,
-			"block_time": 2
+			"block_time": 15,
+			"history_length": 1000
 		}
 	}
 }

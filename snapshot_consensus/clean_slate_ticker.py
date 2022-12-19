@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from utils.redis_conn import RedisPool
-from .helpers.redis_keys import get_system_ticker_linear_last_epoch, get_system_ticker_linear_epoch_history
+from .helpers.redis_keys import get_epoch_generator_last_epoch, get_epoch_generator_epoch_history
 from .conf import settings
 
 # Set up logging
@@ -21,10 +21,10 @@ async def cleanup_redis_state():
     writer_redis_pool = redis_pool.writer_redis_pool
 
     # Delete the keys used by the code
-    await writer_redis_pool.delete(get_system_ticker_linear_last_epoch())
-    logger.info("Deleted key: %s", get_system_ticker_linear_last_epoch())
-    await writer_redis_pool.delete(get_system_ticker_linear_epoch_history())
-    logger.info("Deleted key: %s", get_system_ticker_linear_epoch_history())
+    await writer_redis_pool.delete(get_epoch_generator_last_epoch())
+    logger.info("Deleted key: %s", get_epoch_generator_last_epoch())
+    await writer_redis_pool.delete(get_epoch_generator_epoch_history())
+    logger.info("Deleted key: %s", get_epoch_generator_epoch_history())
 
 if __name__ == '__main__':
     # Run the cleanup function in an asyncio event loop

@@ -12,7 +12,7 @@ module.exports = {
   apps : [
     {
       name   : "epoch-tracker",
-      script : `${INTERPRETER} -m snapshot_consensus.system_ticker_linear ${BEGIN_BLOCK } `,
+      script : `${INTERPRETER} -m snapshot_consensus.epoch_generator ${BEGIN_BLOCK } `,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       env: {

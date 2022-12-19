@@ -10,7 +10,7 @@ from time import sleep
 from multiprocessing import Process
 from .conf import settings
 from utils.redis_conn import RedisPool
-from .helpers.redis_keys import get_system_ticker_linear_last_epoch, get_system_ticker_linear_epoch_history
+from .helpers.redis_keys import get_epoch_generator_last_epoch, get_epoch_generator_epoch_history
 from setproctitle import setproctitle
 from exceptions import GenericExitOnSignal
 from .helpers.rpc_helper import ConstructRPC
@@ -40,7 +40,7 @@ def redis_cleanup(fn):
             try:
                 self._logger.debug('Waiting for pushing latest epoch to Redis')
 
-                await self.writer_redis_pool.set(get_system_ticker_linear_last_epoch(), self.last_sent_block)
+                await self.writer_redis_pool.set(get_epoch_generator_last_epoch(), self.last_sent_block)
 
                 self._logger.debug('Shutting down after sending out last epoch with end block height as %s,'
                                     ' starting blockHeight to be used during next restart is %s'
@@ -57,7 +57,7 @@ def redis_cleanup(fn):
     return wrapper
 
 
-class LinearTickerProcess(Process):
+class EpochGenerator(Process):
     def __init__(self, name, simulation_mode=False):
         Process.__init__(self, name=name)
         self._logger = logging.getLogger(self.name)
@@ -98,7 +98,7 @@ class LinearTickerProcess(Process):
     async def init(self, begin_block_epoch:int =0):
         for signame in [signal.SIGINT, signal.SIGTERM, signal.SIGQUIT]:
             signal.signal(signame, self._generic_exit_handler)
-        last_block_data_redis = await self.writer_redis_pool.get(name=get_system_ticker_linear_last_epoch())
+        last_block_data_redis = await self.writer_redis_pool.get(name=get_epoch_generator_last_epoch())
         if last_block_data_redis:
             # Can't provide begin block which previous state is present in redis
             if begin_block_epoch != 0:
@@ -178,12 +178,19 @@ class LinearTickerProcess(Process):
                             break
                         self._logger.debug('Epoch of sufficient length found: %s', epoch_block)
                         
-                        await self.writer_redis_pool.set(name=get_system_ticker_linear_last_epoch(), value=epoch_block['end'])
+                        await self.writer_redis_pool.set(name=get_epoch_generator_last_epoch(), value=epoch_block['end'])
 
                         await self.writer_redis_pool.zadd(
-                            name=get_system_ticker_linear_epoch_history(),
-                            mapping={json.dumps(epoch_block['end']): int(time.time())}
+                            name=get_epoch_generator_epoch_history(),
+                            mapping={json.dumps((epoch_block['begin'],epoch_block['end'])): int(time.time())}
                         )
+
+                        epoch_generator_history_len = await self.writer_redis_pool.zcard(get_epoch_generator_epoch_history())
+
+                        # Remove oldest epoch history if length exceeds configured limit
+                        history_len = settings.chain.epoch.history_length
+                        if epoch_generator_history_len > history_len:
+                            await self.writer_redis_pool.zremrangebyrank(get_epoch_generator_epoch_history(), 0, -history_len)
 
                         self.last_sent_block = epoch_block['end']
                         self._logger.debug('Waiting to push next epoch in %d seconds...', sleep_secs_between_chunks)
@@ -195,7 +202,7 @@ class LinearTickerProcess(Process):
 
 def main(begin_block:int=0, simulation_mode=False):
     """Spin up the ticker process in event loop"""
-    ticker_process = LinearTickerProcess(name="PowerLoom|EpochTracker|Linear", simulation_mode=simulation_mode)
+    ticker_process = EpochGenerator(name="PowerLoom|EpochTracker|Linear", simulation_mode=simulation_mode)
     kwargs = dict()
     asyncio.run(ticker_process.setup(**kwargs))
     asyncio.run(ticker_process.init(begin_block))

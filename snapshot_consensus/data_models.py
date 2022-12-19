@@ -71,13 +71,14 @@ class NodeConfig(BaseModel):
 class RPCConfig(BaseModel):
     nodes: List[NodeConfig]
     retry: int
-    request_time_out: int
+    request_timeout: int
 
 
 class EpochConfig(BaseModel):
     height: int
     head_offset: int
     block_time: int
+    history_length: int
 
 
 class ChainConfig(BaseModel):
