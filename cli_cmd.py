@@ -445,38 +445,44 @@ def force_project_height_into_resubmission(namespace: str = typer.Option(None, "
        console.log("No projects required force resubmission")
 
 @app.command()
-def force_summary_project_height_ahead(namespace: str = typer.Option(None, "--namespace")):
+def force_pair_projects_height_ahead(namespace: str = typer.Option(None, "--namespace")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
-    print("\nThis command will force-push Summary project's redis state ahead.\n ")
+    print("\nThis command will force-push Pair project's state ahead.\n ")
     count = 0
 
     if not namespace:
         console.log("No namespace provided, please provide a namespace")
         return
-    projects = [
-        f"projectID:uniswap_V2TokensSummarySnapshot_{namespace}",
-        f"projectID:uniswap_V2PairsSummarySnapshot_{namespace}",
-        f"projectID:uniswap_V2DailyStatsSnapshot_{namespace}"
-        ]
-    for project in projects:
+    blockHeightProjects_pattern = f"projectID:*{namespace}*:blockHeight"
+    for project in r.scan_iter(match=blockHeightProjects_pattern):
         try:
+            project = project.decode('utf-8')
+            project = re.sub(r':blockHeight', '', project)
             block_height_key = f"{project}:blockHeight"
-            tentative_bh_key = f"{project}:tentativeBlockHeight"
+            pending_txns_key = f"{project}:pendingTransactions"
             console.log(f"\n[bold magenta]{project}[bold magenta]:")
 
             project_height = r.get(block_height_key)
             project_height = project_height.decode('utf-8')
 
-            tentative_project_height = r.get(tentative_bh_key)
-            tentative_project_height = tentative_project_height.decode('utf-8')
-
+            pending_txns = r.r.zrangebyscore(
+                    name=pending_txns_key,
+                    min=project_height,
+                    max=project_height+10,
+                    withscores=True,
+                )
             project_height = int(project_height)
-            tentative_height_project = int(tentative_project_height)
-            if project_height < tentative_height_project:
-                count+=1
-                result = r.set(block_height_key,tentative_project_height)
-                console.log(f"[bold blue]Force pushed {result} project blockHeight from {project_height} to height:[bold blue] [white]{tentative_project_height}[white]\n")
+
+            #pending_txns = pending_txns.decode('utf-8')
+            if len(pending_txns) > 0:
+                next_available_height = int(pending_txns[0][1])
+                if next_available_height > project_height+1:
+                    console.log(f"Finalized Height is {project_height}, next available height is {next_available_height}. Hence force pushing project {project}")
+                    count+=1
+                    result = r.set(block_height_key,next_available_height-1)
+                    #TODO: Need to update dag_verifier logic as well???
+                    console.log(f"[bold blue]Force pushed {result} project blockHeight from {project_height} to height:[bold blue] [white]{next_available_height-1}[white]\n")
             else:
                 console.log(f"No need to force-push height ahead for project: {project}")
         except Exception as exc:
