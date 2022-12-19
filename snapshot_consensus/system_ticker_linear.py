@@ -52,12 +52,13 @@ def redis_cleanup(fn):
             self._logger.error('Error while running process: %s', E)
         finally:
             self._logger.debug('Shutting down')
-            sys.exit(0)
+            if not self._simulation_mode:
+                sys.exit(0)
     return wrapper
 
 
 class LinearTickerProcess(Process):
-    def __init__(self, name):
+    def __init__(self, name, simulation_mode=False):
         Process.__init__(self, name=name)
         self._logger = logging.getLogger(self.name)
 
@@ -68,12 +69,18 @@ class LinearTickerProcess(Process):
         self._logger.setLevel(logging.DEBUG)
         self._logger.addHandler(stdout_handler)
         self._logger.addHandler(stderr_handler)
+
+        self._simulation_mode = simulation_mode
         self._shutdown_initiated = False
         self.last_sent_block = 0
         
 
     async def setup(self, **kwargs):
-        self.aioredis_pool = RedisPool(writer_redis_conf=settings.redis)
+        if self._simulation_mode:
+            self._logger.debug('Simulation mode is on')
+            self.aioredis_pool = RedisPool(writer_redis_conf=settings.test_redis)
+        else:
+            self.aioredis_pool = RedisPool(writer_redis_conf=settings.test_redis)
         await self.aioredis_pool.populate()
         self.reader_redis_pool = self.aioredis_pool.reader_redis_pool
         self.writer_redis_pool = self.aioredis_pool.writer_redis_pool
@@ -97,16 +104,23 @@ class LinearTickerProcess(Process):
             if begin_block_epoch != 0:
                 self._logger.debug(f'Attempting to start from {begin_block_epoch} but last block {last_block_data_redis.decode("utf-8")} found in Redis.')
                 self._logger.debug('Either use clean_slate_ticker.py to reset the Redis state or remove the begin_block_epoch argument.')
-                sys.exit()
+                if not self._simulation_mode:
+                    sys.exit(0)
+                else:
+                    return
             else:
                 self._logger.debug('Begin block not given, attempting starting from Redis')
-                begin_block_epoch = int(last_block_data_redis.decode("utf-8"))
+                begin_block_epoch = int(last_block_data_redis.decode("utf-8"))+1
                 self._logger.debug(f'Found last epoch block : {begin_block_epoch} in Redis. Starting from checkpoint.')
 
         setproctitle(self.name)
             
         end_block_epoch = self._end
-        sleep_secs_between_chunks = 60
+        # Sleep only 1 second to speed up simulation
+        if self._simulation_mode:
+            sleep_secs_between_chunks = 1
+        else:
+            sleep_secs_between_chunks = 60
         rpc_obj = ConstructRPC(network_id=settings.chain.chain_id)
         rpc_urls = []
         for node in settings.chain.rpc.nodes:
@@ -116,8 +130,9 @@ class LinearTickerProcess(Process):
             NODES=rpc_urls,
             RETRY_LIMIT=settings.chain.rpc.retry
         )
+        generated_block_counter = 0
         self._logger.debug('Starting %s', Process.name)
-        while True:
+        while True if not self._simulation_mode else generated_block_counter < 10:
             try:
                 cur_block = rpc_obj.rpc_eth_blocknumber(rpc_nodes=rpc_nodes_obj)
             except Exception as ex:
@@ -158,6 +173,9 @@ class LinearTickerProcess(Process):
                             begin_block_epoch = epoch[0]
                             break
                         epoch_block = {'begin': epoch[0], 'end': epoch[1]}
+                        generated_block_counter += 1
+                        if self._simulation_mode and generated_block_counter >= 10:
+                            break
                         self._logger.debug('Epoch of sufficient length found: %s', epoch_block)
                         
                         await self.writer_redis_pool.set(name=get_system_ticker_linear_last_epoch(), value=epoch_block['end'])
@@ -175,9 +193,9 @@ class LinearTickerProcess(Process):
                         begin_block_epoch = end_block_epoch + 1
 
 
-def main(begin_block:int=0):
+def main(begin_block:int=0, simulation_mode=False):
     """Spin up the ticker process in event loop"""
-    ticker_process = LinearTickerProcess(name="PowerLoom|SystemEpochClock|Linear")
+    ticker_process = LinearTickerProcess(name="PowerLoom|EpochTracker|Linear", simulation_mode=simulation_mode)
     kwargs = dict()
     asyncio.run(ticker_process.setup(**kwargs))
     asyncio.run(ticker_process.init(begin_block))

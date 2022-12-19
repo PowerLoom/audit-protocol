@@ -11,7 +11,7 @@ const MIN_UPTIME = 60000;
 module.exports = {
   apps : [
     {
-      name   : "system-ticker-linear",
+      name   : "epoch-tracker",
       script : `${INTERPRETER} -m snapshot_consensus.system_ticker_linear ${BEGIN_BLOCK } `,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
@@ -20,7 +20,7 @@ module.exports = {
       }
     },
     {
-      name   : "offchain-consensus-api",
+      name   : "off-chain-consensus",
       script : `uvicorn snapshot_consensus.centralized:app --reload`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
