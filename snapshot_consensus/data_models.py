@@ -90,7 +90,7 @@ class ChainConfig(BaseModel):
 class SettingsConf(BaseModel):
     consensus_service: ConsensusService
     redis: RedisConfig
-    test_redis: RedisConfig
+    test_redis: Optional[RedisConfig]
     chain: ChainConfig
 
 

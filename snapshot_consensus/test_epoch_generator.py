@@ -5,6 +5,7 @@ from utils.redis_conn import RedisPool
 from .helpers.redis_keys import get_epoch_generator_last_epoch, get_epoch_generator_epoch_history
 from .conf import settings
 from .epoch_generator import EpochGenerator
+import sys
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -13,6 +14,10 @@ handler = logging.StreamHandler()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+if not settings.test_redis:
+    logger.error("test_redis not defined in settings")
+    sys.exit(1)
 
 async def cleanup_redis(redis_conn: RedisPool):
     # Delete the keys used by the code

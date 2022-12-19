@@ -78,9 +78,13 @@ class EpochGenerator(Process):
     async def setup(self, **kwargs):
         if self._simulation_mode:
             self._logger.debug('Simulation mode is on')
-            self.aioredis_pool = RedisPool(writer_redis_conf=settings.test_redis)
+            if settings.test_redis:
+                self.aioredis_pool = RedisPool(writer_redis_conf=settings.test_redis)
+            else:
+                self._logger.error('Test Redis not configured')
+                sys.exit(0)
         else:
-            self.aioredis_pool = RedisPool(writer_redis_conf=settings.test_redis)
+            self.aioredis_pool = RedisPool(writer_redis_conf=settings.redis)
         await self.aioredis_pool.populate()
         self.reader_redis_pool = self.aioredis_pool.reader_redis_pool
         self.writer_redis_pool = self.aioredis_pool.writer_redis_pool
