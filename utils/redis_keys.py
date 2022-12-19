@@ -4,6 +4,14 @@ def get_payload_commit_key(payload_commit_id: str):
     return payload_commit_key
 
 
+def get_project_first_epoch_end_height(project_id):
+    return f'projectID:{project_id}:firstEpochEndHeight'
+
+
+def get_project_epoch_size(project_id):
+    return f'projectID:{project_id}:epochSize'
+
+
 def get_pending_retrieval_requests_key():
     pending_retrieval_requests_key = "pendingRetrievalRequests"
     return pending_retrieval_requests_key

@@ -67,11 +67,12 @@ async def submission_delayed(project_id, epoch_end, auto_init_schedule, redis_co
     else:
         return int(time.time()) > schedule.end
 
+
 async def check_consensus(
         project_id: str,
         epoch_end: int,
         redis_conn: aioredis.Redis
-)-> Tuple[SubmissionAcceptanceStatus, Union[str, None]]:
+) -> Tuple[SubmissionAcceptanceStatus, Union[str, None]]:
     all_submissions = await redis_conn.hgetall(
         name=get_epoch_submissions_htable_key(
             project_id=project_id,
@@ -109,24 +110,22 @@ async def check_consensus(
                 return SubmissionAcceptanceStatus.accepted, None
 
 
-    
 async def check_submissions_consensus(
         submission: Union[SnapshotSubmission, SnapshotBase],
         redis_conn: aioredis.Redis,
         epoch_consensus_check=False
 ) -> Tuple[SubmissionAcceptanceStatus, Union[str, None]]:
-    # get all submissions
-    all_submissions = await redis_conn.hgetall(
-        name=get_epoch_submissions_htable_key(
-            project_id=submission.projectID,
-            epoch_end=submission.epoch.end,
-        )
-    )
     # map snapshot CID to instance ID list
-    if not epoch_consensus_check and \
-            submission.instanceID not in map(lambda x: x.decode('utf-8'), all_submissions.keys()):
-        return SubmissionAcceptanceStatus.notsubmitted, None
-    
+    if not epoch_consensus_check:
+        # get all submissions
+        all_submissions = await redis_conn.hgetall(
+            name=get_epoch_submissions_htable_key(
+                project_id=submission.projectID,
+                epoch_end=submission.epoch.end,
+            )
+        )
+        if submission.instanceID not in map(lambda x: x.decode('utf-8'), all_submissions.keys()):
+            return SubmissionAcceptanceStatus.notsubmitted, None
     return await check_consensus(submission.projectID, submission.epoch.end, redis_conn)
 
 

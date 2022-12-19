@@ -80,6 +80,7 @@ class ConsensusConfig(BaseModel):
     idle_conn_timeout: int
     finalization_wait_time_secs: int
 
+
 class Settings(BaseModel):
     instance_id: str
     host: str
@@ -102,4 +103,5 @@ class Settings(BaseModel):
     contract_addresses: Union[ContractAddresses, dict]
     calculate_diff: bool
     rpc_url: str
+    use_consensus: bool = False
     consensus_config: ConsensusConfig

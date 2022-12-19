@@ -107,7 +107,6 @@ async def commit_payload(
         rest_logger.error('Got bad request: %s | Parsing error: %s', req_json, e, exc_info=True)
         return {'error': 'Invalid request'}
 
-
     project_id = req_parsed.projectId
     out = await helper_functions.check_project_exists(
         project_id=project_id, reader_redis_conn=request.app.reader_redis_pool
