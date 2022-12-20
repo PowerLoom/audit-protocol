@@ -146,6 +146,8 @@ async def create_dag_block_update_project_state(
         reader_redis_conn,
         writer_redis_conn,
         fetch_prev_cid_for_dag_block_creation,
+        # parent CID should be from event_height - parent_cid_height_diff, for eg event_height - 1
+        parent_cid_height_diff,
         ipfs_write_client,
         aiohttp_client_session: aiohttp.ClientSession,
         custom_logger_obj
@@ -159,6 +161,7 @@ async def create_dag_block_update_project_state(
         reader_redis_conn=reader_redis_conn,
         writer_redis_conn=writer_redis_conn,
         prev_cid_fetch=fetch_prev_cid_for_dag_block_creation,
+        parent_cid_height_diff=parent_cid_height_diff,
         ipfs_write_client=ipfs_write_client
     )
     custom_logger_obj.info('Created DAG block with CID %s at height %s', _dag_cid,
@@ -248,13 +251,14 @@ async def create_dag_block(
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
         ipfs_write_client: AsyncIPFSClient,
+        parent_cid_height_diff=1,
         prev_cid_fetch: bool = True
 ) -> Tuple[str, DAGBlock]:
     """ Get the last dag cid using the tentativeBlockHeight"""
     prev_root = None
     last_dag_cid = await helper_functions.get_dag_cid(
         project_id=project_id,
-        block_height=tentative_block_height - 1,
+        block_height=tentative_block_height - parent_cid_height_diff,
         reader_redis_conn=reader_redis_conn
     )
 

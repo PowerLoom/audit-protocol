@@ -146,6 +146,8 @@ class DAGFinalizationCallbackProcessor:
             self,
             dag_finalizer_callback_obj: DAGFinalizerCallback,
             post_finalization_pending_txs,  # pending tx entries from (current callback height+1)
+            # parent CID should be from event_height - parent_cid_height_diff, for eg event_height - 1
+            parent_cid_height_diff,
             custom_logger_obj,
             reader_redis_conn: aioredis.Redis,
             writer_redis_conn: aioredis.Redis,
@@ -169,6 +171,7 @@ class DAGFinalizationCallbackProcessor:
             reader_redis_conn=reader_redis_conn,
             writer_redis_conn=writer_redis_conn,
             fetch_prev_cid_for_dag_block_creation=fetch_prev_cid_for_dag_block_creation,
+            parent_cid_height_diff=parent_cid_height_diff,
             ipfs_write_client=self._ipfs_writer_client,
             custom_logger_obj=custom_logger_obj,
             payload_commit_id=dag_finalizer_callback_obj.event_data.payloadCommitId,
@@ -206,6 +209,7 @@ class DAGFinalizationCallbackProcessor:
                     writer_redis_conn=writer_redis_conn,
                     ipfs_write_client=self._ipfs_writer_client,
                     fetch_prev_cid_for_dag_block_creation=pending_q_fetch_prev_cid_for_dag_block_creation,
+                    parent_cid_height_diff=parent_cid_height_diff,
                     payload_commit_id=pending_tx_obj.event_data.payloadCommitId,
                     aiohttp_client_session=aiohttp_client_session
                 )
@@ -480,6 +484,7 @@ class DAGFinalizationCallbackProcessor:
                         blocks_created = await self._in_order_block_creation_and_state_update(
                             dag_finalizer_callback_obj=dag_finalization_cb,
                             post_finalization_pending_txs=all_pending_tx_entries,
+                            parent_cid_height_diff=1,
                             custom_logger_obj=custom_logger,
                             reader_redis_conn=reader_redis_conn,
                             writer_redis_conn=writer_redis_conn,
@@ -539,14 +544,17 @@ class DAGFinalizationCallbackProcessor:
                                         epoch=EpochBase(begin=y - project_epoch_size + 1, end=y),
                                         projectID=project_id,
                                         instanceID=settings.instance_id
-                                    ),
+                                    ).dict(),
                                     general_task_id=x
                                     # useful for referencing back tentative height on response returned
                                 )
                                 for x, y in epochs_to_fetch.items()
                             ]
                             # 3. query consensus service for snapshots and create DAG block
-                            consensus_snapshots_response = await asyncio.gather(*consensus_snapshots_fetch_tasks)
+                            consensus_snapshots_response = await asyncio.gather(
+                                *consensus_snapshots_fetch_tasks,
+                                return_exceptions=True
+                            )
                             # TODO: handle cases where consensus might not have been reached for certain epochs or
                             #  never even submitted. Notes on the feature follow:
                             #  For now, following solution to handle this scenario can be taken.
@@ -556,8 +564,35 @@ class DAGFinalizationCallbackProcessor:
                             #  Cid(h-1)`. handle this specific response for `/epochStatus` (as consensus service
                             #  shall return 404) and still proceed with finalization of pending transactions and add
                             #  them to the DAG Chain.
+                            mark_next_block_creation_as_skipped = 0
                             for tentative_height, each_consensus_response in consensus_snapshots_response:
-                                parsed_snapshot_response = SubmissionResponse.parse_obj(each_consensus_response)
+                                if isinstance(consensus_snapshots_response, Exception):
+                                    mark_next_block_creation_as_skipped += 1
+                                    custom_logger.warning(
+                                        'Consensus Self Healing | Exception fetching snapshot from consensus service '
+                                        'against epoch end height %s, expected tentative height: %s | Blocks to be '
+                                        'skipped for assigning parent to next DAG block creation %s: %s',
+                                        epochs_to_fetch[tentative_height],
+                                        tentative_height,
+                                        mark_next_block_creation_as_skipped,
+                                        consensus_snapshots_response
+                                    )
+                                    continue
+                                try:
+                                    parsed_snapshot_response = SubmissionResponse.parse_obj(each_consensus_response)
+                                except Exception as e:
+                                    mark_next_block_creation_as_skipped += 1
+                                    custom_logger.warning(
+                                        'Consensus Self Healing | Exception converting response to data model '
+                                        'against epoch end height %s, expected tentative height: %s | Blocks to be '
+                                        'skipped for assigning parent to next DAG block creation %s: %s',
+                                        epochs_to_fetch[tentative_height],
+                                        tentative_height,
+                                        e,
+                                        exc_info=True
+                                    )
+                                    continue
+
                                 custom_logger.info(
                                     'Consensus Self Healing | Fetched snapshot CID %s from consensus service against '
                                     'epoch end height %s, expected tentative height: %s',
@@ -581,18 +616,36 @@ class DAGFinalizationCallbackProcessor:
                                         requestID=str(uuid.UUID(int=0)),
                                         event_data=dummy_event_data
                                     )
+
                                     await self._in_order_block_creation_and_state_update(
                                         dag_finalizer_callback_obj=dag_finalization_cb,
                                         # pass nothing here
                                         post_finalization_pending_txs=list(),
+                                        parent_cid_height_diff=mark_next_block_creation_as_skipped,
                                         custom_logger_obj=custom_logger,
                                         reader_redis_conn=reader_redis_conn,
                                         writer_redis_conn=writer_redis_conn,
                                         aiohttp_client_session=self._aiohttp_client_session
                                     )
+
                                     custom_logger.info(
-                                        'Consensus Self Healing | Finished processing DAG block insertion at height %s',
-                                        tentative_height
+                                        'Consensus Self Healing | Finished processing DAG block insertion at height %s '
+                                        'against epoch %s | Blocks skipped to assign parent: %s',
+                                        tentative_height,
+                                        epochs_to_fetch[tentative_height],
+                                        mark_next_block_creation_as_skipped
+                                    )
+                                    mark_next_block_creation_as_skipped = 0
+                                else:
+                                    mark_next_block_creation_as_skipped += 1
+                                    custom_logger.warning(
+                                        'Consensus Self Healing | Consensus service reports inconsistent status '
+                                        'against epoch end height %s, expected tentative height: %s | Blocks to be '
+                                        'skipped for assigning parent to next DAG block creation %s: %s',
+                                        epochs_to_fetch[tentative_height],
+                                        tentative_height,
+                                        mark_next_block_creation_as_skipped,
+                                        parsed_snapshot_response
                                     )
                         else:
                             custom_logger.critical(
@@ -639,6 +692,7 @@ class DAGFinalizationCallbackProcessor:
                         lambda x: int(x[1]) > tentative_block_height_event_data,
                         all_pending_tx_entries
                     ),
+                    parent_cid_height_diff=1,
                     custom_logger_obj=custom_logger,
                     reader_redis_conn=reader_redis_conn,
                     writer_redis_conn=writer_redis_conn,
