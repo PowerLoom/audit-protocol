@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -426,6 +427,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	var dagSummary DagChainReport
 	dagSummary.Namespace = NAMESPACE
 	dagSummary.InstanceId = verifier.settings.InstanceId
+	dagSummary.HostName, _ = os.Hostname()
 	currentCycleDAGchainHeight := make(map[string]int64, len(verifier.projects))
 	var currentMinChainHeight int64
 	currentMinChainHeight, _ = strconv.ParseInt(verifier.lastVerifiedDagBlockHeights[verifier.projects[0]], 10, 64)
