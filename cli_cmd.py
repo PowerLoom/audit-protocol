@@ -465,14 +465,14 @@ def force_pair_projects_height_ahead(namespace: str = typer.Option(None, "--name
 
             project_height = r.get(block_height_key)
             project_height = project_height.decode('utf-8')
+            project_height = int(project_height)
 
-            pending_txns = r.r.zrangebyscore(
+            pending_txns = r.zrangebyscore(
                     name=pending_txns_key,
                     min=project_height,
                     max=project_height+10,
                     withscores=True,
                 )
-            project_height = int(project_height)
 
             #pending_txns = pending_txns.decode('utf-8')
             if len(pending_txns) > 0:
@@ -489,6 +489,40 @@ def force_pair_projects_height_ahead(namespace: str = typer.Option(None, "--name
             print(f"Error: {str(exc)} | project: {project}")
     if count == 0:
        console.log("No projects required force pushing heights")
+
+
+@app.command()
+def skip_pair_projects_verified_heights(namespace: str = typer.Option(None, "--namespace")):
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
+
+    print("\nThis command will force-push Summary project's redis state ahead.\n ")
+    count = 0
+
+    if not namespace:
+        console.log("No namespace provided, please provide a namespace")
+        return
+    count = 0
+    verification_status_key = f"projects:{namespace}:dagVerificationStatus"
+    projects = r.hgetall(verification_status_key)
+    console.log("project count %s",len(projects))
+    for project,verified_height in projects.items():
+        project_str = project.decode('utf-8')
+        if project_str.find('Snapshot') > 0:
+            console.log("Found project %s which is Summary project",project)
+            continue
+        block_height_key = f"{project_str}:blockHeight"
+        project_height = r.get(block_height_key)
+        project_height = project_height.decode('utf-8')
+        project_height = int(project_height)
+        if project_height > int(verified_height)+10:
+            console.log("difference in height for project %s is %s",project_str, (project_height - int(verified_height)))
+            count+=1
+            #projects[project] = int(verified_height)+4
+            projects[project]=project_height
+    #r.hset(verification_status_key, projects)
+    console.log("project count %s",len(projects))
+    all([r.hset(verification_status_key, k, v) for k, v in projects.items()])
+    console.log("updated project verification heights successfully for %s projects",count)
 
 
 if __name__ == '__main__':
