@@ -65,6 +65,7 @@ class ConsensusService(BaseModel):
     submission_window: int
     host: str
     port: str
+    keys_ttl:int=86400
 
 
 class SettingsConf(BaseModel):

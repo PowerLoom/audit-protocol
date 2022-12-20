@@ -33,7 +33,6 @@ class RedisConfig(BaseModel):
     port: int
     db: int
     password: Optional[str]
-    keys_ttl: int = 86400
 
 
 class RabbitMQQueueConfig(BaseModel):

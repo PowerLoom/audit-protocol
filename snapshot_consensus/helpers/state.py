@@ -38,7 +38,7 @@ async def set_submission_schedule(
             epoch_end=epoch_end
         ),
         value=SubmissionSchedule(begin=cur_ts, end=cur_ts+settings.consensus_service.submission_window).json(),
-        ex=settings.redis.keys_ttl
+        ex=settings.consensus_service.keys_ttl
     )
 
 
@@ -53,7 +53,7 @@ async def set_submission_accepted_peers(
     )
     await redis_conn.expire(
         get_project_epoch_specific_accepted_peers_key(project_id, epoch_end),
-        settings.redis.keys_ttl
+        settings.consensus_service.keys_ttl
     )
 
 
@@ -151,6 +151,6 @@ async def register_submission(
                 project_id=submission.projectID,
                 epoch_end=submission.epoch.end,
             ),
-            time=settings.redis.keys_ttl
+            time=settings.consensus_service.keys_ttl
         )
     return await check_submissions_consensus(submission, redis_conn)

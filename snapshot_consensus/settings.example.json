@@ -2,13 +2,13 @@
     "consensus_service": {
 		"submission_window": 60,
 		"host": "0.0.0.0",
-		"port": 9030
+		"port": 9030,
+		"keys_ttl": 86400
 	},
 	"redis": {
 		"host": "127.0.0.1",
 		"port": 6379,
 		"db": 0,
-		"password": null,
-		"keys_ttl": 86400
+		"password": null
 	}
 }
