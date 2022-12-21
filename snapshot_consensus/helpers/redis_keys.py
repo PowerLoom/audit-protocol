@@ -23,6 +23,7 @@ def get_project_epochs(project_id):
     # Using :centralizedConsensus:epochSubmissions to avoid processing of duplicate keys under projectID:project_id:epoch_end*]
     return "projectID:"+project_id+":[0-9]*:centralizedConsensus:epochSubmissions"
 
+
 def get_project_ids():
     # Using :centralizedConsensus:peers to avoid fetching duplicate keys under projectID:project_id:*
     return "projectID:*:centralizedConsensus:peers"

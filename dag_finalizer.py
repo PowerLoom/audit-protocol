@@ -532,7 +532,7 @@ class DAGFinalizationCallbackProcessor:
                             project_first_epoch_end_height = int(project_first_epoch_end_height)
                             # map missing tentative height to expected epochEndHeight
                             epochs_to_fetch = {
-                                k: k * project_epoch_size + project_first_epoch_end_height
+                                k: (k-1) * project_epoch_size + project_first_epoch_end_height
                                 for k in range(
                                     finalized_block_height_project+1, earliest_pending_dag_height_next_to_finalized
                                 )
