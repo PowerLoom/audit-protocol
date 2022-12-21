@@ -12,7 +12,7 @@ REDIS_CONN_CONF = redis_conn.REDIS_CONN_CONF
 
 
 ####### CHNAGE THIS ##########
-NAMESPACE = 'UNISWAPV2'
+NAMESPACE = 'UNISWAPV2-ph15-prod'
 ##############################
 
 

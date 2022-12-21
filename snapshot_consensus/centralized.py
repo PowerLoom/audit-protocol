@@ -110,6 +110,7 @@ async def submit_snapshot(
     consensus_status, finalized_cid = await register_submission(req_parsed, cur_ts, request.app.writer_redis_pool)
     response_obj.status = consensus_status
     response_obj.finalizedSnapshotCID = finalized_cid
+    response.body = response_obj
     return response_obj.dict()
 
 
@@ -143,7 +144,7 @@ async def check_submission_status(
         ).dict()
 
 
-@app.get('/epochStatus')
+@app.post('/epochStatus')
 async def epoch_status(
         request: Request,
         response: Response

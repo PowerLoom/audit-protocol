@@ -107,7 +107,6 @@ async def commit_payload(
         rest_logger.error('Got bad request: %s | Parsing error: %s', req_json, e, exc_info=True)
         return {'error': 'Invalid request'}
 
-
     project_id = req_parsed.projectId
     out = await helper_functions.check_project_exists(
         project_id=project_id, reader_redis_conn=request.app.reader_redis_pool
@@ -532,6 +531,7 @@ async def get_block(
 
     block = await retrieval_utils.retrieve_block_data(
         block_dag_cid=prev_dag_cid,
+        project_id=projectId,
         ipfs_read_client=request.app.ipfs_read_client,
         writer_redis_conn=writer_redis_conn,
         data_flag=0
@@ -633,6 +633,7 @@ async def get_block_data(
 
     payload = await retrieval_utils.retrieve_block_data(
         block_dag_cid=prev_dag_cid,
+        project_id=projectId,
         ipfs_read_client=request.app.ipfs_read_client,
         writer_redis_conn=writer_redis_conn,
         data_flag=2

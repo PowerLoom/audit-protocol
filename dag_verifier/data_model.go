@@ -21,6 +21,8 @@ type SummaryProjectState struct {
 
 type DagChainReport struct {
 	Namespace                   string                `json:"namespace"`
+	InstanceId                  string                `json:"instanceid"`
+	HostName                    string                `json:"hostname"`
 	Severity                    string                `json:"severity"`                               //HIGH,MEDIUM, LOW, CLEAR
 	ProjectsWithCacheIssueCount int                   `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
 	ProjectsTrackedCount        int                   `json:"projectsTrackedCount,omitempty"`
@@ -59,16 +61,10 @@ type DagPayload struct {
 }
 
 type DagPayloadData struct {
-	Contract string `json:"contract"`
-	/* Commenting out payload Data, to keep it generic.
-	Token0Reserves map[string]float64  `json:"token0Reserves"`
-	Token1Reserves map[string]float64 `json:"token1Reserves"`*/
 	ChainHeightRange struct {
 		Begin int64 `json:"begin"`
 		End   int64 `json:"end"`
 	} `json:"chainHeightRange"`
-	BroadcastID string  `json:"broadcast_id"`
-	Timestamp   float64 `json:"timestamp"`
 }
 
 type IPLDLink struct {

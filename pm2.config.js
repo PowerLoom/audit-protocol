@@ -30,7 +30,7 @@ module.exports = {
         NODE_ENV: NODE_ENV
       }
     },
-    {
+/*     {
       name   : "ap-diff-service",
       script : "python3 ./diff_calculation_service.py",
       cwd : CWD,
@@ -40,7 +40,7 @@ module.exports = {
       env: {
         NODE_ENV: NODE_ENV,
       }
-    },
+    }, */
     {
       name   : "ap-backend",
       script : "python3 ./gunicorn_main_launcher.py",
@@ -65,7 +65,7 @@ module.exports = {
       },
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
-    {
+/*     {
       name   : "ap-token-aggregator",
       script : "./uniswapTokenData",
       cwd : CWD+"token-aggregator",
@@ -85,7 +85,7 @@ module.exports = {
       env: {
         NODE_ENV: NODE_ENV
       }
-    },
+    }, */
     {
       name   : "ap-dag-verifier",
       script : "./dagChainVerifier",

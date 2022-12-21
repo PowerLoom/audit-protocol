@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/powerloom/goutils/filecache"
 	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
 	"github.com/powerloom/goutils/slackutils"
@@ -39,8 +42,8 @@ type DagVerifier struct {
 	lastNotifyTime                   int64
 }
 
-//TODO: Migrate to env or settings.
-const NAMESPACE string = "UNISWAPV2"
+// TODO: Migrate to env or settings.
+const NAMESPACE string = "UNISWAPV2-ph15-prod"
 const PAIR_TRADEVOLUME_PROJECTID string = "projectID:uniswap_pairContract_trade_volume_%s_%s"
 const PAIR_TOTALRESERVE_PROJECTID string = "projectID:uniswap_pairContract_pair_total_reserves_%s_%s"
 const REDIS_KEY_PROJECT_BLOCK_HEIGHT string = "%s:blockHeight"
@@ -142,11 +145,14 @@ func (verifier *DagVerifier) FetchStartIndex(projectId string) (int64, error) {
 		log.Info("Indexing has not started for projectId", projectId)
 		return 0, nil
 	}
-	//Fetch CID from IPFS and store the startHeight.
-	payload, err := ipfsClient.GetPayload(payloadCid, 3)
+	payload, err := verifier.GetPayloadFromCache(projectId, payloadCid)
 	if err != nil {
-		log.Errorf("Failed to fetch payloadCID %s from IPFS for project %s", payloadCid, projectId)
-		return 0, nil
+		//Fetch CID from IPFS and store the startHeight.
+		payload, err = ipfsClient.GetPayload(payloadCid, 3)
+		if err != nil {
+			log.Errorf("Failed to fetch payloadCID %s from IPFS for project %s", payloadCid, projectId)
+			return 0, nil
+		}
 	}
 	return payload.ChainHeightRange.Begin, nil
 }
@@ -305,6 +311,25 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 	return "0"
 }
 
+func (verifier *DagVerifier) GetPayloadFromCache(projectId string, payloadCid string) (DagPayloadData, error) {
+	var payload DagPayloadData
+	//Remove projectID prefix, for now hard-coding it
+	projectId = projectId[10:]
+	bytes, err := filecache.ReadFromCache(verifier.settings.PayloadCachePath, projectId, payloadCid)
+	if err != nil {
+		if !strings.Contains(err.Error(), "no such file or directory") {
+			log.Errorf("Failed to fetch payload with cid %s for project %s from cache due to error %+v", payloadCid, projectId, err)
+		}
+		return payload, err
+	}
+	err = json.Unmarshal(bytes, &payload)
+	if err != nil {
+		log.Error("Failed to Unmarshal Json Payload from IPFS, CID:", payloadCid, ", bytes:", bytes, ", error:", err)
+		return payload, err
+	}
+	return payload, nil
+}
+
 func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	//Fetch the DAGChain cached in redis and then corresponding payloads at chainHeight.
 	// For now only the Chain that is stored in redis is used as a reference to verify.
@@ -331,13 +356,16 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	}
 
 	for i := range dagChain {
-		payload, err := ipfsClient.GetPayload(dagChain[i].Payload.PayloadCid, 3)
+		payload, err := verifier.GetPayloadFromCache(projectId, dagChain[i].Payload.PayloadCid)
 		if err != nil {
-			//If we are unable to fetch a CID from IPFS, retry
-			log.Error("Failed to get PayloadCID from IPFS. Either cache is corrupt or there is an actual issue.CID:", dagChain[i].Payload.PayloadCid)
-			//TODO: Either cache is corrupt or there is an actual issue.
-			//Check and fix cache corruption by getting Dagchain from IPFS.
-			return err
+			payload, err = ipfsClient.GetPayload(dagChain[i].Payload.PayloadCid, 3)
+			if err != nil {
+				//If we are unable to fetch a CID from IPFS, retry
+				log.Error("Failed to get PayloadCID from IPFS. Either cache is corrupt or there is an actual issue.CID:", dagChain[i].Payload.PayloadCid)
+				//TODO: Either cache is corrupt or there is an actual issue.
+				//Check and fix cache corruption by getting Dagchain from IPFS.
+				return err
+			}
 		}
 		dagChain[i].Payload.Data = payload
 		//Fetch payload from IPFS and check gaps in chainHeight.\
@@ -398,7 +426,8 @@ func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps 
 func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	var dagSummary DagChainReport
 	dagSummary.Namespace = NAMESPACE
-
+	dagSummary.InstanceId = verifier.settings.InstanceId
+	dagSummary.HostName, _ = os.Hostname()
 	currentCycleDAGchainHeight := make(map[string]int64, len(verifier.projects))
 	var currentMinChainHeight int64
 	currentMinChainHeight, _ = strconv.ParseInt(verifier.lastVerifiedDagBlockHeights[verifier.projects[0]], 10, 64)

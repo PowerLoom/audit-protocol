@@ -24,6 +24,7 @@ import (
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
 
+	"github.com/powerloom/goutils/filecache"
 	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
@@ -312,8 +313,12 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 			return false
 		}
 	}
-
-	err := StorePayloadCidInRedis(payloadCommit)
+	err := filecache.StorePayloadToCache(settingsObj.PayloadCachePath, payloadCommit.ProjectId, payloadCommit.SnapshotCID, payloadCommit.Payload)
+	if err != nil {
+		log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
+			payloadCommit.ProjectId, payloadCommit.CommitId, err)
+	}
+	err = StorePayloadCidInRedis(payloadCommit)
 	if err != nil {
 		log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",
 			payloadCommit.ProjectId, payloadCommit.CommitId, err)
@@ -496,6 +501,25 @@ func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string, requestID str
 		}
 	}
 	return true
+}
+
+func ReadPayloadFromCache(projectID string, payloadCid string) (*PayloadData, error) {
+	var payload PayloadData
+	log.Debugf("Fetching payloadCid %s from local Cache", payloadCid)
+	bytes, err := filecache.ReadFromCache(settingsObj.PayloadCachePath+"/", projectID, payloadCid)
+	if err != nil {
+		log.Errorf("Failed to fetch payloadCid from local Cache, CID %s, due to error %+v ",
+			payloadCid, err)
+		return nil, err
+	}
+	err = json.Unmarshal(bytes, &payload)
+	if err != nil {
+		log.Errorf("Failed to Unmarshal Json Payload from local Cache, CID %s, bytes: %+v due to error %+v ",
+			payloadCid, bytes, err)
+		return nil, err
+	}
+	log.Debugf("Fetched Payload with CID %s from local cache: %+v", payloadCid, payload)
+	return &payload, nil
 }
 
 func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {

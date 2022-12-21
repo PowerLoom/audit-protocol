@@ -80,6 +80,7 @@ class ConsensusConfig(BaseModel):
     idle_conn_timeout: int
     finalization_wait_time_secs: int
 
+
 class Settings(BaseModel):
     instance_id: str
     host: str
@@ -89,26 +90,11 @@ class Settings(BaseModel):
     ipfs_url: str
     ipfs_reader_url: str
     rabbitmq: RabbitMQConfig
-    snapshot_interval: int
-    seed: str
     audit_contract: str
     contract_call_backend: str
-    powergate_client_addr: str
-    max_ipfs_blocks: int
-    max_pending_payload_commits: int
-    container_height: int
-    payload_commit_interval: int
-    pruning_service_interval: int  # TODO: this field will be deprecated and references should be removed
+    local_cache_path: str
     pruning: PruneSettings
-    retrieval_service_interval: int
-    deal_watcher_service_interval: int
-    api_key: str
-    backup_targets: list
-    unpin_mode: str
-    max_pending_events: int
-    max_payload_commits: int
     ipfs_timeout: int
-    span_expire_timeout: int
     aiohtttp_timeouts: Union[HTTPClientConnection, dict]
     webhook_listener: Union[WebhookListener, dict]
     redis: Union[RedisConfig, dict]
@@ -116,4 +102,5 @@ class Settings(BaseModel):
     contract_addresses: Union[ContractAddresses, dict]
     calculate_diff: bool
     rpc_url: str
+    use_consensus: bool = False
     consensus_config: ConsensusConfig

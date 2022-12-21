@@ -44,9 +44,11 @@ class SubmissionAcceptanceStatus(str, Enum):
     # if submission deadline has passed, all peers have not submitted and 2/3 not reached
     indeterminate = 'INDETERMINATE'
 
+
 class SubmissionStatus(str, Enum):
     within_schedule = 'WITHIN_SCHEDULE'
     delayed = 'DELAYED'
+
 
 class EpochConsensusStatus(str, Enum):
     consensus_achieved = 'CONSENSUS_ACHIEVED'
@@ -63,6 +65,7 @@ class ConsensusService(BaseModel):
     submission_window: int
     host: str
     port: str
+    keys_ttl:int=86400
 
 
 class NodeConfig(BaseModel):
@@ -104,6 +107,7 @@ class Epoch(BaseModel):
     sourcechainEndheight: int
     finalized: bool
 
+
 # Data model for a list of epoch data
 class EpochData(BaseModel):
     projectId: str
@@ -117,9 +121,9 @@ class Submission(BaseModel):
     submittedTS: int
     submissionStatus: SubmissionStatus
 
+
 class Message(BaseModel):
     message: str
-
     
 class EpochInfo(BaseModel):
     chainId: int
