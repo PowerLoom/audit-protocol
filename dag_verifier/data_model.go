@@ -59,16 +59,10 @@ type DagPayload struct {
 }
 
 type DagPayloadData struct {
-	Contract string `json:"contract"`
-	/* Commenting out payload Data, to keep it generic.
-	Token0Reserves map[string]float64  `json:"token0Reserves"`
-	Token1Reserves map[string]float64 `json:"token1Reserves"`*/
 	ChainHeightRange struct {
 		Begin int64 `json:"begin"`
 		End   int64 `json:"end"`
 	} `json:"chainHeightRange"`
-	BroadcastID string  `json:"broadcast_id"`
-	Timestamp   float64 `json:"timestamp"`
 }
 
 type IPLDLink struct {

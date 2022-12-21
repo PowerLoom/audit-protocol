@@ -147,8 +147,8 @@ async def v2_pairs_daily_stats_snapshotter(
 
             # fetch current and 24h old snapshot payload
             dag_block_latest, dag_block_24h = await asyncio.gather(
-                retrieve_payload_data(latest_pair_summary_timestamp_payload_cid, ipfs_read_client),
-                retrieve_payload_data(pair_snapshot_payload_cid_24h, ipfs_read_client),
+                retrieve_payload_data(latest_pair_summary_timestamp_payload_cid, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(), ipfs_read_client),
+                retrieve_payload_data(pair_snapshot_payload_cid_24h, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(), ipfs_read_client),
                 return_exceptions=True
             )
             # FIXME: should be a much cleaner way to load json from returned result
@@ -270,6 +270,10 @@ async def v2_pairs_daily_stats_snapshotter(
                     writer_redis_conn=redis_conn,
                     ipfs_read_client=ipfs_read_client
                 )
+                if block_status is None:
+                    logger.error("block_status is returned as None at height %s for project %s",
+                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id())
+                    break
                 if block_status.status < 3:
                     continue
                 logger.debug(

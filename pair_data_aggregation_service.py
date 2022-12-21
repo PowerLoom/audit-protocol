@@ -57,8 +57,7 @@ async def get_dag_blocks_in_range(
                 project_id=project_id,
                 block_height=i,
                 reader_redis_conn=reader_redis_conn,
-                ipfs_read_client=ipfs_read_client,
-                cache_size_unit=len(PAIR_CONTRACTS)
+                ipfs_read_client=ipfs_read_client
             )
         except Exception as e:
             logger.error("Error: can't get dag block with msg: %s |"
@@ -122,15 +121,13 @@ async def get_oldest_block_and_timestamp(
             project_id=project_id_trade_volume,
             block_height=volume_tail_marker_24h,
             reader_redis_conn=redis_conn,
-            ipfs_read_client=ipfs_read_client,
-            cache_size_unit=len(PAIR_CONTRACTS)
+            ipfs_read_client=ipfs_read_client
         ),
         get_dag_block_by_height(
             project_id=project_id_trade_volume,
             block_height=volume_tail_marker_7d,
             reader_redis_conn=redis_conn,
-            ipfs_read_client=ipfs_read_client,
-            cache_size_unit=len(PAIR_CONTRACTS)
+            ipfs_read_client=ipfs_read_client
         )
     )
 
@@ -309,8 +306,7 @@ async def calculate_pair_liquidity(
         project_id=project_id_token_reserve,
         block_height=liquidity_head_marker,
         reader_redis_conn=writer_redis_conn,
-        ipfs_read_client=ipfs_read_client,
-        cache_size_unit=len(PAIR_CONTRACTS)
+        ipfs_read_client=ipfs_read_client
     )
     pair_liquidity: PairLiquidity = PairLiquidity()
 
@@ -834,6 +830,10 @@ async def v2_pairs_data(
                     writer_redis_conn=redis_conn,
                     ipfs_read_client=ipfs_read_client
                 )
+                if block_status is None:
+                    logger.error("block_status is returned as None at height %s for project %s",
+                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id())
+                    break
                 if block_status.status < 3:
                     continue
                 logger.info(
