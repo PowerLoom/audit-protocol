@@ -5,6 +5,7 @@ if settings.use_consensus:
         get_project_registered_peers_set_key, get_epoch_submissions_htable_key
     )
     from snapshot_consensus.data_models import SubmissionDataStoreEntry, SnapshotSubmission
+    from snapshot_consensus.conf import settings as consensus_settings
 from utils.redis_conn import provide_redis_conn
 from eth_utils import keccak
 from uuid import uuid4
@@ -203,6 +204,12 @@ def register_submission(project_id, epoch_end, peer_id, snapshot_cid, redis_conn
 
 @provide_redis_conn
 def consensus_self_healing(redis_conn: redis.Redis):
+    consensus_service_redis_conn = redis.Redis(
+        host=consensus_settings.redis.host,
+        port=consensus_settings.redis.port,
+        db=consensus_settings.redis.db,
+        password=consensus_settings.redis.password
+    )
     snapshot_cid = 'bafkreig3c2m4geyf3sf5nsfvbbgyy6p7c7ufatpfg4s3zpc7koqi5phsvq'  # to be used so we have a valid CID
     project_id = 'consensusSimulationRun'
     # initial clear
@@ -211,7 +218,7 @@ def consensus_self_healing(redis_conn: redis.Redis):
         logger.debug('Cleaned last run project state key %s', k)
     # add accepted peers
     peers = ['peer1', 'peer2', 'peer3']
-    _ = redis_conn.sadd(
+    _ = consensus_service_redis_conn.sadd(
         get_project_registered_peers_set_key(project_id),
         *peers
     )
@@ -317,7 +324,7 @@ def consensus_self_healing(redis_conn: redis.Redis):
             epoch_end=expected_epoch_end_at_last_sent_block,
             peer_id=peer,
             snapshot_cid=snapshot_cid,
-            redis_conn=redis_conn
+            redis_conn=consensus_service_redis_conn
         )
         if _:
             logger.info(
@@ -365,3 +372,4 @@ def consensus_self_healing(redis_conn: redis.Redis):
 
 if __name__ == '__main__':
     standalone_self_healing()
+    consensus_self_healing()
