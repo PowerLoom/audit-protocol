@@ -27,3 +27,9 @@ def get_project_epochs(project_id):
 def get_project_ids():
     # Using :centralizedConsensus:peers to avoid fetching duplicate keys under projectID:project_id:*
     return "projectID:*:centralizedConsensus:peers"
+
+def get_epoch_generator_last_epoch():
+    return "epochGenerator:lastEpoch"
+
+def get_epoch_generator_epoch_history():
+    return "epochGenerator:epochHistory"

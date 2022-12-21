@@ -68,9 +68,33 @@ class ConsensusService(BaseModel):
     keys_ttl:int=86400
 
 
+class NodeConfig(BaseModel):
+    url: str
+
+class RPCConfig(BaseModel):
+    nodes: List[NodeConfig]
+    retry: int
+    request_timeout: int
+
+
+class EpochConfig(BaseModel):
+    height: int
+    head_offset: int
+    block_time: int
+    history_length: int
+
+
+class ChainConfig(BaseModel):
+    rpc: RPCConfig
+    chain_id: int
+    epoch: EpochConfig
+
+
 class SettingsConf(BaseModel):
     consensus_service: ConsensusService
     redis: RedisConfig
+    test_redis: Optional[RedisConfig]
+    chain: ChainConfig
 
 
 # Data model for a list of snapshotters
@@ -100,3 +124,8 @@ class Submission(BaseModel):
 
 class Message(BaseModel):
     message: str
+    
+class EpochInfo(BaseModel):
+    chainId: int
+    epochStartBlockHeight: int
+    epochEndBlockHeight: int

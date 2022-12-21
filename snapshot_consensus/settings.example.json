@@ -10,5 +10,32 @@
 		"port": 6379,
 		"db": 0,
 		"password": null
+	},
+	"test_redis": {
+		"host": "127.0.0.1",
+		"port": 6379,
+		"db": 1,
+		"password": null
+	},
+	"chain":{
+		"rpc": {
+			"nodes": [
+				{
+					"url": "***"
+				},
+				{
+					"url": "***"
+				}
+			],
+			"retry": 3,
+			"request_timeout": 5
+		},
+		"chain_id":1,
+		"epoch": {
+			"height": 10,
+			"head_offset": 2,
+			"block_time": 15,
+			"history_length": 1000
+		}
 	}
 }
