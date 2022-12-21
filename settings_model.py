@@ -90,7 +90,6 @@ class Settings(BaseModel):
     ipfs_url: str
     ipfs_reader_url: str
     rabbitmq: RabbitMQConfig
-    seed: str
     audit_contract: str
     contract_call_backend: str
     local_cache_path: str
