@@ -79,7 +79,10 @@ func PollConsensusForConfirmations() {
 				if timeNow > value.ConsensusSubmissionTs+settingsObj.ConsensusConfig.FinalizationWaiTime*1000000 {
 					log.Warnf("Finalization threshold crossed for %s project at epoch %d with snapshot %s at tentativeHeight %d.",
 						value.ProjectId, value.SourceChainDetails.EpochEndHeight, value.SnapshotCID, value.TentativeBlockHeight)
-					value.ConsensusSubmissionTs = timeNow
+					QueueLock.Lock()
+					delete(WaitQueueForConsensus, snapshotCID)
+					QueueLock.Unlock()
+					continue
 				}
 				ProcessPendingSnapshot(snapshotCID, value)
 			}
