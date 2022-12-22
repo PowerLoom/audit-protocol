@@ -178,7 +178,7 @@ func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRet
 			}
 			log.Debugf("Received 200 OK from consensus service for project %s with snapshotCID %s commitId %s ",
 				payload.ProjectId, payload.SnapshotCID, payload.CommitId)
-			log.Debugf("Snapshot status for snapshot %s at tentativeHeight %d for project %s is %d",
+			log.Debugf("Snapshot status for snapshot %s at tentativeHeight %d for project %s is %s",
 				payload.SnapshotCID, payload.TentativeBlockHeight, payload.ProjectId, resp.Status)
 
 			switch resp.Status {
