@@ -129,3 +129,9 @@ class EpochInfo(BaseModel):
     chainId: int
     epochStartBlockHeight: int
     epochEndBlockHeight: int
+
+class EpochDataPage(BaseModel):
+    total: int
+    next_page: Optional[str]
+    prev_page: Optional[str]
+    data: EpochData
