@@ -161,7 +161,7 @@ async def check_submission_status(
         ).dict()
 
 
-@app.get('/epochStatus')
+@app.post('/epochStatus')
 async def epoch_status(
         request: Request,
         response: Response
@@ -182,7 +182,7 @@ async def epoch_status(
     return SubmissionResponse(status=status, delayedSubmission=False, finalizedSnapshotCID=finalized_cid).dict()
 
 
-# List of projects tracked/registered '/metrics/projects' . 
+# List of projects tracked/registered '/metrics/projects' .
 # Response will be the list of projectIDs that are being tracked for consensus.
 @app.get("/metrics/projects", responses={404: {"model": Message}})
 async def get_projects(request: Request, response: Response):
@@ -197,7 +197,7 @@ async def get_projects(request: Request, response: Response):
     return projects
 
 
-# List of snapshotters registered for a project '/metrics/{projectid}/snapshotters'. 
+# List of snapshotters registered for a project '/metrics/{projectid}/snapshotters'.
 # Response will be the list of instance-IDs of the snapshotters that are participanting in consensus for this project.
 @app.get("/metrics/{project_id}/snapshotters", response_model=Snapshotters, responses={404: {"model": Message}})
 async def get_snapshotters(project_id: str, request: Request, response: Response):
@@ -222,7 +222,7 @@ async def bound_check_consensus(project_id:str, epoch_end:int, redis_pool:RedisP
     return consensus_status
 
 
-# List of epochs submitted per project '/metrics/{projectid}/epochs' . 
+# List of epochs submitted per project '/metrics/{projectid}/epochs' .
 # Response will be the list of epochs whose state is currently available in consensus service.
 @app.get("/metrics/{project_id}/epochs", response_model=EpochDataPage, responses={404: {"model": Message}})
 async def get_epochs(project_id: str, request: Request,
@@ -251,9 +251,9 @@ async def get_epochs(project_id: str, request: Request,
         if epoch_status[i][0] == SubmissionAcceptanceStatus.finalized:
             finalized = True
         epochs.append(Epoch(sourcechainEndheight=epoch_ends_data[i], finalized=finalized))
-    
+
     data = EpochData(projectId=project_id, epochs=epochs)
-    
+
     return {
      "total": len(epoch_ends),
      "next_page": None if page*limit >= len(epoch_ends) else f"/metrics/{project_id}/epochs?page={page+1}&limit={limit}",
@@ -261,11 +261,11 @@ async def get_epochs(project_id: str, request: Request,
      "data": data
     }
 
-# Submission details for an epoch '/metrics/{projectid}/{epoch}/submissionStatus' . 
-# This shall include whether consensus has been achieved along with final snapshotCID. 
+# Submission details for an epoch '/metrics/{projectid}/{epoch}/submissionStatus' .
+# This shall include whether consensus has been achieved along with final snapshotCID.
 # The details of snapshot submissions snapshotterID and submissionTime along with snapshot submitted.
 @app.get(
-    "/metrics/{project_id}/{epoch}/submissionStatus", 
+    "/metrics/{project_id}/{epoch}/submissionStatus",
     response_model=List[Submission], responses={404: {"model": Message}})
 async def get_submission_status(project_id: str, epoch: str, request: Request,
         response: Response):
@@ -285,7 +285,7 @@ async def get_submission_status(project_id: str, epoch: str, request: Request,
 
     if not submission_data:
         return JSONResponse(status_code=404, content={"message": f"Project with projectID {project_id} and epoch {epoch} not found"})
-    
+
     submissions = []
     for k, v in submission_data.items():
         k, v = k.decode("utf-8"), json.loads(v)
@@ -293,14 +293,14 @@ async def get_submission_status(project_id: str, epoch: str, request: Request,
             submission_status = SubmissionStatus.within_schedule
         else:
             submission_status = SubmissionStatus.delayed
-        
+
         submission = Submission(
             snapshotterInstanceID = k,
             submittedTS = v["submittedTS"],
             snapshotCID = v["snapshotCID"],
             submissionStatus = submission_status)
         submissions.append(submission)
-    
+
     return submissions
 
 
