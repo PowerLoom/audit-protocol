@@ -26,7 +26,7 @@ class AuditRecordTxEventData(BaseModel):
     apiKeyHash: str
     timestamp: float
     payloadCommitId: str
-    snapshotCid: str
+    snapshotCid: Optional[str]
     tentativeBlockHeight: int
     skipAnchorProof: bool = True
 
@@ -100,7 +100,7 @@ class DAGBlock(BaseModel):
     height: int
     prevCid: Optional[Dict[str, str]]
     prevRoot: Optional[str] = None
-    data: DAGBlockPayloadLinkedPath
+    data: Optional[DAGBlockPayloadLinkedPath]
     txHash: str
     timestamp: int
 
@@ -109,7 +109,7 @@ class DAGFinalizerCBEventData(BaseModel):
     apiKeyHash: str
     tentativeBlockHeight: int
     projectId: str
-    snapshotCid: str
+    snapshotCid: Optional[str]
     payloadCommitId: str
     timestamp: int
 

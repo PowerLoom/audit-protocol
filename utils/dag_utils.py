@@ -2,7 +2,7 @@ from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils import helper_functions
-from data_models import PendingTransaction, DAGBlock, DAGFinalizerCallback
+from data_models import PendingTransaction, DAGBlock, DAGFinalizerCallback, DAGBlockPayloadLinkedPath
 from tenacity import retry, wait_random_exponential, retry_if_exception_type, stop_after_attempt
 from typing import Tuple
 import aiohttp
@@ -266,14 +266,25 @@ async def create_dag_block(
         prev_root = last_dag_cid
         last_dag_cid = None
     """ Fill up the dag """
-    dag = DAGBlock(
-        height=tentative_block_height,
-        prevCid={'/': last_dag_cid} if last_dag_cid else None,
-        data={'cid': {'/': payload_cid}},
-        txHash=tx_hash,
-        timestamp=timestamp,
-        prevRoot=prev_root
-    )
+    if payload_cid:
+        dag = DAGBlock(
+            height=tentative_block_height,
+            prevCid={'/': last_dag_cid} if last_dag_cid else None,
+            # data={'cid': {'/': payload_cid}},
+            data=DAGBlockPayloadLinkedPath(cid={'/': payload_cid}),
+            txHash=tx_hash,
+            timestamp=timestamp,
+            prevRoot=prev_root
+        )
+    else:
+        dag = DAGBlock(
+            height=tentative_block_height,
+            prevCid={'/': last_dag_cid} if last_dag_cid else None,
+            data=None,
+            txHash=tx_hash,
+            timestamp=timestamp,
+            prevRoot=prev_root
+        )
 
     """ Convert dag structure to json and put it on ipfs dag """
     try:

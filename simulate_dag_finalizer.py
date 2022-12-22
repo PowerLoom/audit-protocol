@@ -2,7 +2,8 @@ from config import settings
 from data_models import DAGFinalizerCallback, DAGFinalizerCBEventData, AuditRecordTxEventData, PendingTransaction
 if settings.use_consensus:
     from snapshot_consensus.helpers.redis_keys import (
-        get_project_registered_peers_set_key, get_epoch_submissions_htable_key
+        get_project_registered_peers_set_key, get_epoch_submissions_htable_key,
+        get_project_epoch_specific_accepted_peers_key
     )
     from snapshot_consensus.data_models import SubmissionDataStoreEntry, SnapshotSubmission
     from snapshot_consensus.conf import settings as consensus_settings
@@ -180,6 +181,10 @@ def standalone_self_healing(redis_conn: redis.Redis):
 
 
 def register_submission(project_id, epoch_end, peer_id, snapshot_cid, redis_conn: redis.Redis):
+    redis_conn.copy(
+        get_project_registered_peers_set_key(project_id),
+        get_project_epoch_specific_accepted_peers_key(project_id, epoch_end)
+    )
     _ = redis_conn.hset(
         name=get_epoch_submissions_htable_key(
             project_id=project_id,
@@ -202,6 +207,39 @@ def register_submission(project_id, epoch_end, peer_id, snapshot_cid, redis_conn
     return _
 
 
+def remove_pending_entry_and_register_epoch_consensus(
+        project_id,
+        height,
+        project_epoch_size,
+        first_epoch_end_height,
+        peers: list,
+        snapshot_cid,
+        redis_conn: redis.Redis,
+        consensus_service_redis_conn: redis.Redis
+):
+    # remove pending tx entry at `last_sent_block`
+    redis_conn.zremrangebyscore(
+        redis_keys.get_pending_transactions_key(project_id),
+        min=height,
+        max=height
+    )
+    expected_epoch_end_at_last_sent_block = (height - 1) * project_epoch_size + first_epoch_end_height
+    # then, add consensus epoch at `height`
+    for peer in peers:
+        register_submission(
+            project_id=project_id,
+            epoch_end=expected_epoch_end_at_last_sent_block,
+            peer_id=peer,
+            snapshot_cid=snapshot_cid,
+            redis_conn=consensus_service_redis_conn
+        )
+
+        logger.info(
+            'Registered submission at height %s, epoch end %s for peer %s',
+            height, expected_epoch_end_at_last_sent_block, peer
+        )
+
+
 @provide_redis_conn
 def consensus_self_healing(redis_conn: redis.Redis):
     consensus_service_redis_conn = redis.Redis(
@@ -216,17 +254,16 @@ def consensus_self_healing(redis_conn: redis.Redis):
     for k in redis_conn.scan_iter(match='*consensusSimulationRun*', count=10):
         redis_conn.delete(k)
         logger.debug('Cleaned last run project state key %s', k)
+    for k in consensus_service_redis_conn.scan_iter(match='*consensusSimulationRun*', count=10):
+        redis_conn.delete(k)
+        logger.debug('Cleaned last run project state key %s', k)
     # add accepted peers
     peers = ['peer1', 'peer2', 'peer3']
-    _ = consensus_service_redis_conn.sadd(
+    consensus_service_redis_conn.sadd(
         get_project_registered_peers_set_key(project_id),
         *peers
     )
-    if _ == 3:
-        logger.debug('Set project %s accepted peers to %s', project_id, peers)
-    else:
-        logger.warning('Could not set project %s accepted peers to %s', project_id, peers)
-        return
+
     beginning_height = 1
     # set epoch size and first end height for project
     project_epoch_size = 10
@@ -310,35 +347,19 @@ def consensus_self_healing(redis_conn: redis.Redis):
             return
         logger.debug('Sleeping...')
         time.sleep(0.5)
-    # remove pending tx entry at `last_sent_block`
-    redis_conn.zremrangebyscore(
-        redis_keys.get_pending_transactions_key(project_id),
-        min=last_sent_block,
-        max=last_sent_block
-    )
-    expected_epoch_end_at_last_sent_block = (last_sent_block-1) * project_epoch_size + first_epoch_end_height
-    # then, add consensus epoch at `last_sent_block`
-    for peer in peers:
-        _ = register_submission(
-            project_id=project_id,
-            epoch_end=expected_epoch_end_at_last_sent_block,
-            peer_id=peer,
-            snapshot_cid=snapshot_cid,
-            redis_conn=consensus_service_redis_conn
+    for k in range(2):
+        remove_pending_entry_and_register_epoch_consensus(
+            project_id,
+            k,
+            project_epoch_size,
+            first_epoch_end_height,
+            peers,
+            snapshot_cid,
+            redis_conn,
+            consensus_service_redis_conn
         )
-        if _:
-            logger.info(
-                'Registered submission at height %s, epoch end for peer %s',
-                last_sent_block, expected_epoch_end_at_last_sent_block, peer
-            )
-        else:
-            logger.info(
-                'Could not register submission at height %s, epoch end for peer %s',
-                last_sent_block, expected_epoch_end_at_last_sent_block, peer
-            )
-            return
-    # resume sending callbacks from last sent block+1 to end
-    for i in range(last_sent_block + 1, beginning_height + num_blocks):
+    # resume sending callbacks from last sent block+2 to end
+    for i in range(last_sent_block + 2, beginning_height + num_blocks):
         finalization_cb = DAGFinalizerCallback(
             txHash=details[i].txHash,
             requestID=details[i].requestID,
@@ -371,5 +392,5 @@ def consensus_self_healing(redis_conn: redis.Redis):
 
 
 if __name__ == '__main__':
-    standalone_self_healing()
+    # standalone_self_healing()
     consensus_self_healing()

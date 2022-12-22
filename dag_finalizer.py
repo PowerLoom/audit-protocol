@@ -10,8 +10,10 @@ from functools import partial
 from aio_pika.pool import Pool
 from typing import Optional, Dict, List
 from urllib.parse import urljoin
-from data_models import PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, \
-    DAGFinalizerCBEventData
+from data_models import (
+    PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
+    AuditRecordTxEventData
+)
 from utils.dag_utils import IPFSDAGCreationException
 from redis import asyncio as aioredis
 from config import settings
@@ -51,8 +53,9 @@ def acquire_project_atomic_lock(fn):
                 return await fn(self, *args, **kwargs)
             except Exception as e:
                 self._logger.error(
-                    'Exception while processing callback for project ID %s: %s',
-                    kwarg_event_data.event_data.projectId, kwarg_event_data
+                    'Exception while processing callback for project ID %s: %s | %s',
+                    kwarg_event_data.event_data.projectId, kwarg_event_data, e,
+                    exc_info=True
                 )
             finally:
                 self._asyncio_lock_map[project_id].release()
@@ -520,6 +523,7 @@ class DAGFinalizationCallbackProcessor:
                                 '%s - %s for project %s | '
                                 'Finalized height: %s',
                                 finalized_block_height_project+1, earliest_pending_dag_height_next_to_finalized - 1,
+                                project_id,
                                 finalized_block_height_project
                             )
                             # 2. calculate epoch end heights to be fetched from consensus service corresponding to
@@ -544,8 +548,7 @@ class DAGFinalizationCallbackProcessor:
                                         epoch=EpochBase(begin=y - project_epoch_size + 1, end=y),
                                         projectID=project_id,
                                         instanceID=settings.instance_id
-                                    ).dict(),
-                                    general_task_id=x
+                                    ).dict()
                                     # useful for referencing back tentative height on response returned
                                 )
                                 for x, y in epochs_to_fetch.items()
@@ -555,104 +558,135 @@ class DAGFinalizationCallbackProcessor:
                                 *consensus_snapshots_fetch_tasks,
                                 return_exceptions=True
                             )
-                            # TODO: handle cases where consensus might not have been reached for certain epochs or
-                            #  never even submitted. Notes on the feature follow:
-                            #  For now, following solution to handle this scenario can be taken.
-                            #  Skip the missing height `h` and record it in
-                            #  projectState as a gap in data snapshotting. This DAG Chain will not have any DAG block
-                            #  at the height `h` and hence would link `h+1` DAG-Block to `h-1` i.e `prevCid(h+1) =
-                            #  Cid(h-1)`. handle this specific response for `/epochStatus` (as consensus service
-                            #  shall return 404) and still proceed with finalization of pending transactions and add
-                            #  them to the DAG Chain.
-                            mark_next_block_creation_as_skipped = 0
-                            for tentative_height, each_consensus_response in consensus_snapshots_response:
+                            # fill in pending tx entries according to consensus snapshot CID returned
+                            # or set data to null for the epochs where no consensus or submission were found
+                            tentative_height_to_cid_map = dict()
+                            for tentative_height, each_consensus_response in zip(
+                                    epochs_to_fetch.keys(), consensus_snapshots_response
+                            ):
+                                custom_logger.debug('tentative height: %s  consensus service response: %s', tentative_height, each_consensus_response)
                                 if isinstance(consensus_snapshots_response, Exception):
-                                    mark_next_block_creation_as_skipped += 1
                                     custom_logger.warning(
-                                        'Consensus Self Healing | Exception fetching snapshot from consensus service '
-                                        'against epoch end height %s, expected tentative height: %s | Blocks to be '
-                                        'skipped for assigning parent to next DAG block creation %s: %s',
+                                        'Consensus Self Healing | Project %s | Exception fetching snapshot from '
+                                        'consensus service against epoch end height %s, expected tentative height: %s ',
+                                        project_id,
                                         epochs_to_fetch[tentative_height],
                                         tentative_height,
-                                        mark_next_block_creation_as_skipped,
                                         consensus_snapshots_response
                                     )
+                                    tentative_height_to_cid_map[tentative_height] = None
                                     continue
                                 try:
                                     parsed_snapshot_response = SubmissionResponse.parse_obj(each_consensus_response)
                                 except Exception as e:
-                                    mark_next_block_creation_as_skipped += 1
                                     custom_logger.warning(
-                                        'Consensus Self Healing | Exception converting response to data model '
-                                        'against epoch end height %s, expected tentative height: %s | Blocks to be '
-                                        'skipped for assigning parent to next DAG block creation %s: %s',
+                                        'Consensus Self Healing | Project %s | Exception converting response to '
+                                        'data model against epoch end height %s, expected tentative height: %s | %s',
+                                        project_id,
                                         epochs_to_fetch[tentative_height],
                                         tentative_height,
                                         e,
                                         exc_info=True
                                     )
+                                    tentative_height_to_cid_map[tentative_height] = None
                                     continue
 
                                 custom_logger.info(
-                                    'Consensus Self Healing | Fetched snapshot CID %s from consensus service against '
-                                    'epoch end height %s, expected tentative height: %s',
+                                    'Consensus Self Healing | Project %s | Fetched snapshot CID %s from '
+                                    'consensus service against epoch end height %s, expected tentative height: %s',
+                                    project_id,
                                     parsed_snapshot_response.finalizedSnapshotCID, epochs_to_fetch[tentative_height],
                                     tentative_height
                                 )
+
                                 if parsed_snapshot_response.status == EpochConsensusStatus.consensus_achieved:
-                                    dummy_event_data = DAGFinalizerCBEventData(
-                                        apiKeyHash='0x' + '0' * 256,
-                                        tentativeBlockHeight=tentative_height,
-                                        projectId=project_id,
-                                        snapshotCid=parsed_snapshot_response.finalizedSnapshotCID,
-                                        # TODO: dummy payload commit ID or the formula used in commit_payload?
-                                        #       payload_commit_id =
-                                        #       '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
-                                        payloadCommitId='0x' + '0' * 256,
-                                        timestamp=int(time.time())
-                                    )
-                                    dag_finalization_cb = DAGFinalizerCallback(
-                                        txHash='0x' + '0' * 256,
-                                        requestID=str(uuid.UUID(int=0)),
-                                        event_data=dummy_event_data
-                                    )
-
-                                    await self._in_order_block_creation_and_state_update(
-                                        dag_finalizer_callback_obj=dag_finalization_cb,
-                                        # pass nothing here
-                                        post_finalization_pending_txs=list(),
-                                        parent_cid_height_diff=mark_next_block_creation_as_skipped,
-                                        custom_logger_obj=custom_logger,
-                                        reader_redis_conn=reader_redis_conn,
-                                        writer_redis_conn=writer_redis_conn,
-                                        aiohttp_client_session=self._aiohttp_client_session
-                                    )
-
-                                    custom_logger.info(
-                                        'Consensus Self Healing | Finished processing DAG block insertion at height %s '
-                                        'against epoch %s | Blocks skipped to assign parent: %s',
-                                        tentative_height,
-                                        epochs_to_fetch[tentative_height],
-                                        mark_next_block_creation_as_skipped
-                                    )
-                                    mark_next_block_creation_as_skipped = 0
+                                    tentative_height_to_cid_map[
+                                        tentative_height] = parsed_snapshot_response.finalizedSnapshotCID
                                 else:
-                                    mark_next_block_creation_as_skipped += 1
                                     custom_logger.warning(
-                                        'Consensus Self Healing | Consensus service reports inconsistent status '
-                                        'against epoch end height %s, expected tentative height: %s | Blocks to be '
-                                        'skipped for assigning parent to next DAG block creation %s: %s',
+                                        'Consensus Self Healing | Project %s| Consensus service reports inconsistent status '
+                                        'against epoch end height %s, expected tentative height: %s',
+                                        project_id,
                                         epochs_to_fetch[tentative_height],
                                         tentative_height,
-                                        mark_next_block_creation_as_skipped,
                                         parsed_snapshot_response
                                     )
+                                    tentative_height_to_cid_map[tentative_height] = None
+                            dummy_tx_hash = '0x' + '0' * 160
+                            dummy_api_hash = '0x' + '0' * 256
+                            dummy_payload_commit_id = '0x' + '0' * 256
+                            await writer_redis_conn.zadd(
+                                name=redis_keys.get_payload_cids_key(project_id),
+                                mapping={str(v): k for k, v in tentative_height_to_cid_map.items()}
+                            )
+                            for t, cid in tentative_height_to_cid_map.items():
+                                # add new pending tx entries against missing epochs
+                                pending_tx_entry_missing_epoch = PendingTransaction(
+                                    txHash=dummy_tx_hash,
+                                    requestID=str(uuid.uuid4()),
+                                    lastTouchedBlock=-1,
+                                    event_data=AuditRecordTxEventData(
+                                        txHash=dummy_tx_hash,
+                                        apiKeyHash=dummy_api_hash,
+                                        timestamp=int(time.time()),
+                                        payloadCommitId=dummy_payload_commit_id,
+                                        snapshotCid=cid,
+                                        tentativeBlockHeight=t,
+                                        skipAnchorProof=False,
+                                        projectId=project_id
+                                    )
+                                )
+                                await writer_redis_conn.zadd(
+                                    name=redis_keys.get_pending_transactions_key(project_id),
+                                    mapping={
+                                        pending_tx_entry_missing_epoch.json(): t
+                                    }
+                                )
+                                custom_logger.info(
+                                    'Consensus Self Healing| Project %s | Added pending tx entry at height %s '
+                                    'against epoch %s: %s',
+                                    project_id,
+                                    t,
+                                    epochs_to_fetch[t],
+                                    pending_tx_entry_missing_epoch
+                                )
+                            dummy_event_data = DAGFinalizerCBEventData(
+                                apiKeyHash='0x' + '0' * 256,
+                                tentativeBlockHeight=min(epochs_to_fetch.keys()),
+                                projectId=project_id,
+                                snapshotCid=tentative_height_to_cid_map[min(epochs_to_fetch.keys())],
+                                payloadCommitId='0x' + '0' * 256,
+                                timestamp=int(time.time())
+                            )
+                            dag_finalization_cb = DAGFinalizerCallback(
+                                txHash='0x' + '0' * 256,
+                                requestID=str(uuid.uuid4()),
+                                event_data=dummy_event_data
+                            )
+
+                            blocks_created = await self._in_order_block_creation_and_state_update(
+                                dag_finalizer_callback_obj=dag_finalization_cb,
+                                # pass nothing here
+                                post_finalization_pending_txs=list(),
+                                parent_cid_height_diff=1,
+                                custom_logger_obj=custom_logger,
+                                reader_redis_conn=reader_redis_conn,
+                                writer_redis_conn=writer_redis_conn,
+                                aiohttp_client_session=self._aiohttp_client_session
+                            )
+                            custom_logger.info(
+                                'Consensus Self Healing| Project %s | '
+                                'Finished processing self healing DAG block insertion beginning height %s | '
+                                'DAG blocks finalized in total: %s',
+                                finalized_block_height_project + 1, blocks_created
+                            )
                         else:
                             custom_logger.critical(
                                 'Standalone system | Missing pending tx entry at tentative height %s following '
-                                'finalized height %s',
+                                'finalized height %s for project %s',
                                 finalized_block_height_project + 1,
-                                finalized_block_height_project
+                                finalized_block_height_project,
+                                project_id
                             )
         elif tentative_block_height_event_data == finalized_block_height_project + 1:
             """
@@ -709,13 +743,13 @@ class DAGFinalizationCallbackProcessor:
         asyncio.ensure_future(self._payload_to_dag_processor_task(event_data))
         await message.ack()
 
-    async def _aiohttp_context_manager_wrap_call(self, general_task_id, url, json_body):
+    async def _aiohttp_context_manager_wrap_call(self, url, json_body):
         async with self._aiohttp_client_session.post(
             url=url,
             json=json_body
         ) as resp:
             r = await resp.json()
-            return general_task_id, r
+            return r
 
     async def main(self):
         ev_loop = asyncio.get_running_loop()
