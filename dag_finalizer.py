@@ -619,7 +619,7 @@ class DAGFinalizationCallbackProcessor:
                                 name=redis_keys.get_payload_cids_key(project_id),
                                 mapping={str(v): k for k, v in tentative_height_to_cid_map.items()}
                             )
-                            for t, cid in tentative_height_to_cid_map.items():
+                            for i, (t, cid) in enumerate(tentative_height_to_cid_map.items()):
                                 # add new pending tx entries against missing epochs
                                 pending_tx_entry_missing_epoch = PendingTransaction(
                                     txHash=dummy_tx_hash,
@@ -650,24 +650,31 @@ class DAGFinalizationCallbackProcessor:
                                     epochs_to_fetch[t],
                                     pending_tx_entry_missing_epoch
                                 )
+                                if i == 0:
+                                    first_pending_entry = pending_tx_entry_missing_epoch
                             dummy_event_data = DAGFinalizerCBEventData(
-                                apiKeyHash='0x' + '0' * 256,
+                                apiKeyHash=dummy_api_hash,
                                 tentativeBlockHeight=min(epochs_to_fetch.keys()),
                                 projectId=project_id,
                                 snapshotCid=tentative_height_to_cid_map[min(epochs_to_fetch.keys())],
-                                payloadCommitId='0x' + '0' * 256,
+                                payloadCommitId=dummy_payload_commit_id,
                                 timestamp=int(time.time())
                             )
                             dag_finalization_cb = DAGFinalizerCallback(
-                                txHash='0x' + '0' * 256,
-                                requestID=str(uuid.uuid4()),
+                                txHash=dummy_tx_hash,
+                                requestID=first_pending_entry.requestID,
                                 event_data=dummy_event_data
                             )
-
+                            post_pending_tx_entries = await reader_redis_conn.zrangebyscore(
+                                name=redis_keys.get_pending_transactions_key(project_id),
+                                min=min(epochs_to_fetch.keys()) + 1,
+                                max=float('+inf'),
+                                withscores=True
+                            )
                             blocks_created = await self._in_order_block_creation_and_state_update(
                                 dag_finalizer_callback_obj=dag_finalization_cb,
                                 # pass nothing here
-                                post_finalization_pending_txs=list(),
+                                post_finalization_pending_txs=post_pending_tx_entries,
                                 parent_cid_height_diff=1,
                                 custom_logger_obj=custom_logger,
                                 reader_redis_conn=reader_redis_conn,

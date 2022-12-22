@@ -347,14 +347,18 @@ def consensus_self_healing(redis_conn: redis.Redis):
             return
         logger.debug('Sleeping...')
         time.sleep(0.5)
+    snapshot_cids = [
+        'bafkreig3c2m4geyf3sf5nsfvbbgyy6p7c7ufatpfg4s3zpc7koqi5phsvq',
+        'bafkreia7okdbimgzc334hwhijyvelbh6hokrbw3plrrcgcsxrxr6zxwv4m'
+    ]
     for k in range(2):
         remove_pending_entry_and_register_epoch_consensus(
             project_id,
-            k,
+            last_sent_block+k,
             project_epoch_size,
             first_epoch_end_height,
             peers,
-            snapshot_cid,
+            snapshot_cids[k],
             redis_conn,
             consensus_service_redis_conn
         )

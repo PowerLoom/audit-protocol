@@ -288,13 +288,7 @@ async def create_dag_block(
 
     """ Convert dag structure to json and put it on ipfs dag """
     try:
-        future_dag = put_dag_block(dag.json(exclude_none=True), project_id, ipfs_write_client)
-        dag_cid = await asyncio.wait_for(
-            future_dag,
-            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
-            timeout=settings.webhook_listener.redis_lock_lifetime / 2 * 0.8
-        )
-
+        dag_cid = await put_dag_block(dag.json(exclude_none=True), project_id, ipfs_write_client)
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise IPFSDAGCreationException from e
