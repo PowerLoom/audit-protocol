@@ -678,7 +678,8 @@ class DAGFinalizationCallbackProcessor:
                                 'Consensus Self Healing| Project %s | '
                                 'Finished processing self healing DAG block insertion beginning height %s | '
                                 'DAG blocks finalized in total: %s',
-                                finalized_block_height_project + 1, blocks_created
+                                project_id, finalized_block_height_project + 1,
+                                blocks_created
                             )
                         else:
                             custom_logger.critical(
