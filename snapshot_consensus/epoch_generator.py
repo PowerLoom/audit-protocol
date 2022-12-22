@@ -186,7 +186,7 @@ class EpochGenerator(Process):
 
                         await self.writer_redis_pool.zadd(
                             name=get_epoch_generator_epoch_history(),
-                            mapping={json.dumps((epoch_block['begin'],epoch_block['end'])): int(time.time())}
+                            mapping={json.dumps({"begin":epoch_block['begin'],"end":epoch_block['end']}): int(time.time())}
                         )
 
                         epoch_generator_history_len = await self.writer_redis_pool.zcard(get_epoch_generator_epoch_history())
