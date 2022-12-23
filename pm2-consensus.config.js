@@ -25,7 +25,7 @@ module.exports = {
     },
     {
       name   : "off-chain-consensus",
-      script: `gunicorn -k uvicorn.workers.UvicornWorker snapshot_consensus.centralized:app --workers 4 -b ${settings.consensus_service.host}:${settings.consensus_service.port}`,
+      script: `gunicorn -k uvicorn.workers.UvicornWorker snapshot_consensus.centralized:app --workers 20 -b ${settings.consensus_service.host}:${settings.consensus_service.port}`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       env: {
