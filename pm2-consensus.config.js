@@ -1,4 +1,8 @@
 // this means if app restart {MAX_RESTART} times in 1 min then it stops
+
+const { readFileSync } = require('fs');
+const settings = JSON.parse(readFileSync('snapshot_consensus/settings.json'));
+
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const INTERPRETER = process.env.CONSENSUS_INTERPRETER || "python";
 const BEGIN_BLOCK = process.env.TICKER_BEGIN_BLOCK || "";
@@ -21,7 +25,7 @@ module.exports = {
     },
     {
       name   : "off-chain-consensus",
-      script : `${INTERPRETER} -m snapshot_consensus.centralized`,
+      script: `gunicorn -k uvicorn.workers.UvicornWorker snapshot_consensus.centralized:app --workers 4 -b ${settings.consensus_service.host}:${settings.consensus_service.port}`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       env: {

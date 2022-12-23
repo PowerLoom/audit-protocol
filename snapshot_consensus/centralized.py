@@ -331,11 +331,3 @@ async def get_current_epoch(request: Request,
         "epochStartBlockHeight": epoch_start_block_height,
         "epochEndBlockHeight": epoch_end_block_height
     }
-
-
-if __name__ == "__main__":
-    uvicorn.run(
-        app,
-        host=settings.consensus_service.host,
-        port=settings.consensus_service.port
-    )
