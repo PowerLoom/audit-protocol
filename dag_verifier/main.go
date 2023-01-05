@@ -4,29 +4,36 @@ import (
 	// "context"
 
 	"encoding/json"
-	"os"
+	"fmt"
+	"io"
+	"net/http"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/powerloom/goutils/logger"
 	"github.com/powerloom/goutils/settings"
+	"github.com/powerloom/goutils/slackutils"
 )
 
 var ipfsClient IpfsClient
-var pairContractAddresses []string
 
 func main() {
 	logger.InitLogger()
 	settingsObj := settings.ParseSettings("../settings.json")
-	var pairContractAddress string
-	if len(os.Args) == 3 {
-		pairContractAddress = os.Args[2]
-	}
-	PopulatePairContractList(pairContractAddress, "../static/cached_pair_addresses.json")
 	var dagVerifier DagVerifier
-	dagVerifier.Initialize(settingsObj, &pairContractAddresses)
+	dagVerifier.Initialize(settingsObj)
 	var wg sync.WaitGroup
+
+	http.HandleFunc("/reportIssue", IssueReportHandler)
+	port := settingsObj.DagVerifierSettings.IssueReporterPort
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Infof("Starting HTTP server on port %d in a go routine.", port)
+		http.ListenAndServe(fmt.Sprint(":", port), nil)
+	}()
+
 	//For now just using settings to determine this in case multiple namespaces are being run.
 	//In future dag verifier would also work with multiple namespaces, this can be removed once implemented.
 	if settingsObj.DagVerifierSettings.PruningVerification {
@@ -46,25 +53,25 @@ func main() {
 	}
 }
 
-func PopulatePairContractList(pairContractAddr string, pairContractListFile string) {
-	if pairContractAddr != "" {
-		log.Info("Skipping reading contract addresses from json.\nConsidering only passed pairContractaddress:", pairContractAddr)
-		pairContractAddresses = make([]string, 1)
-		pairContractAddresses[0] = pairContractAddr
+func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
+	log.Infof("Received block height confirm callback %+v : ", *req)
+	reqBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		log.Errorf("Failed to read request body")
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	var reqPayload IssueReport
 
-	log.Info("Reading contracts:", pairContractListFile)
-	data, err := os.ReadFile(pairContractListFile)
+	err = json.Unmarshal(reqBytes, &reqPayload)
 	if err != nil {
-		log.Error("Cannot read the file:", err)
-		panic(err)
+		log.Errorf("Error while parsing json body of issue report %s", err.Error())
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
-
-	log.Debug("Contracts json data is", string(data))
-	err = json.Unmarshal(data, &pairContractAddresses)
-	if err != nil {
-		log.Error("Cannot unmarshal the pair-contracts json ", err)
-		panic(err)
-	}
+	//Notify on slack and report to consensus layer
+	report, _ := json.MarshalIndent(reqPayload, "", "\t")
+	slackutils.NotifySlackWorkflow(string(report), reqPayload.Severity, reqPayload.Service)
+	//TODO: Notify consensus layer
+	w.WriteHeader(http.StatusOK)
 }
