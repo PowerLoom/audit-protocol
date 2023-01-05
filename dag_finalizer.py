@@ -3,7 +3,7 @@ from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, 
 from utils import redis_keys
 from utils import helper_functions
 from async_ipfshttpclient.main import AsyncIPFSClientSingleton, AsyncIPFSClient
-from aio_pika import ExchangeType, DeliveryMode, Message, IncomingMessage
+from aio_pika import DeliveryMode, Message, IncomingMessage
 from utils import dag_utils
 from utils.redis_conn import RedisPool
 from functools import partial
@@ -14,20 +14,20 @@ from data_models import (
     PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
     AuditRecordTxEventData
 )
-from utils.dag_utils import IPFSDAGCreationException
+from tenacity import retry, wait_random_exponential, stop_after_attempt, retry_if_exception_type
+from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
+import httpx._exceptions as httpx_exceptions
 from redis import asyncio as aioredis
 from config import settings
 if settings.use_consensus:
     from snapshot_consensus.data_models import EpochConsensusStatus, SubmissionResponse, SnapshotBase, EpochBase
 import resource
 import uvloop
-import aiohttp
 import logging
 import sys
 import uuid
 import time
 import json
-import os
 import asyncio
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -82,7 +82,7 @@ class DAGFinalizationCallbackProcessor:
     _aioredis_pool: RedisPool
     _writer_redis_pool: aioredis.Redis
     _reader_redis_pool: aioredis.Redis
-    _aiohttp_client_session: aiohttp.ClientSession
+    _httpx_client: AsyncClient
     _ipfs_singleton: AsyncIPFSClientSingleton
     _ipfs_writer_client: AsyncIPFSClient
     _ipfs_reader_client: AsyncIPFSClient
@@ -148,13 +148,12 @@ class DAGFinalizationCallbackProcessor:
     async def _in_order_block_creation_and_state_update(
             self,
             dag_finalizer_callback_obj: DAGFinalizerCallback,
-            post_finalization_pending_txs,  # pending tx entries from (current callback height+1)
-            # parent CID should be from event_height - parent_cid_height_diff, for eg event_height - 1
+            post_finalization_pending_txs,
             parent_cid_height_diff,
             custom_logger_obj,
             reader_redis_conn: aioredis.Redis,
             writer_redis_conn: aioredis.Redis,
-            aiohttp_client_session: aiohttp.ClientSession
+            _httpx_client: AsyncClient
     ):
         blocks_finalized = list()
         project_id = dag_finalizer_callback_obj.event_data.projectId
@@ -165,21 +164,16 @@ class DAGFinalizationCallbackProcessor:
             await self._identify_prune_target(project_id, top_level_tentative_height_cb)
             fetch_prev_cid_for_dag_block_creation = False
         dag_cid, dag_block = await dag_utils.create_dag_block_update_project_state(
-            tx_hash=dag_finalizer_callback_obj.txHash,
-            request_id=dag_finalizer_callback_obj.requestID,
+            tx_hash=dag_finalizer_callback_obj.txHash, request_id=dag_finalizer_callback_obj.requestID,
             project_id=dag_finalizer_callback_obj.event_data.projectId,
+            payload_commit_id=dag_finalizer_callback_obj.event_data.payloadCommitId,
             tentative_block_height_event_data=top_level_tentative_height_cb,
             snapshot_cid=dag_finalizer_callback_obj.event_data.snapshotCid,
-            timestamp=dag_finalizer_callback_obj.event_data.timestamp,
-            reader_redis_conn=reader_redis_conn,
+            timestamp=dag_finalizer_callback_obj.event_data.timestamp, reader_redis_conn=reader_redis_conn,
             writer_redis_conn=writer_redis_conn,
             fetch_prev_cid_for_dag_block_creation=fetch_prev_cid_for_dag_block_creation,
-            parent_cid_height_diff=parent_cid_height_diff,
-            ipfs_write_client=self._ipfs_writer_client,
-            custom_logger_obj=custom_logger_obj,
-            payload_commit_id=dag_finalizer_callback_obj.event_data.payloadCommitId,
-            aiohttp_client_session=aiohttp_client_session
-        )
+            parent_cid_height_diff=parent_cid_height_diff, ipfs_write_client=self._ipfs_writer_client,
+            httpx_client=_httpx_client, custom_logger_obj=custom_logger_obj)
         blocks_finalized.append(dag_block)
         all_qualified_dag_addition_txs = filter(
             lambda x: PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1,
@@ -201,21 +195,15 @@ class DAGFinalizationCallbackProcessor:
                 )
                 """ Create the dag block for this event """
                 dag_cid, dag_block = await dag_utils.create_dag_block_update_project_state(
-                    project_id=project_id,
-                    tx_hash=pending_tx_obj.event_data.txHash,
-                    snapshot_cid=pending_tx_obj.event_data.snapshotCid,
-                    timestamp=int(pending_tx_obj.event_data.timestamp),
-                    request_id=pending_tx_obj.requestID,
+                    tx_hash=pending_tx_obj.event_data.txHash, request_id=pending_tx_obj.requestID,
+                    project_id=project_id, payload_commit_id=pending_tx_obj.event_data.payloadCommitId,
                     tentative_block_height_event_data=_tt_block_height,
-                    custom_logger_obj=custom_logger_obj,
-                    reader_redis_conn=reader_redis_conn,
+                    snapshot_cid=pending_tx_obj.event_data.snapshotCid,
+                    timestamp=int(pending_tx_obj.event_data.timestamp), reader_redis_conn=reader_redis_conn,
                     writer_redis_conn=writer_redis_conn,
-                    ipfs_write_client=self._ipfs_writer_client,
                     fetch_prev_cid_for_dag_block_creation=pending_q_fetch_prev_cid_for_dag_block_creation,
-                    parent_cid_height_diff=parent_cid_height_diff,
-                    payload_commit_id=pending_tx_obj.event_data.payloadCommitId,
-                    aiohttp_client_session=aiohttp_client_session
-                )
+                    parent_cid_height_diff=parent_cid_height_diff, ipfs_write_client=self._ipfs_writer_client,
+                    httpx_client=_httpx_client, custom_logger_obj=custom_logger_obj)
                 cur_max_height_project = _tt_block_height
                 blocks_finalized.append(dag_block)
         return blocks_finalized
@@ -486,13 +474,9 @@ class DAGFinalizationCallbackProcessor:
                         )
                         blocks_created = await self._in_order_block_creation_and_state_update(
                             dag_finalizer_callback_obj=dag_finalization_cb,
-                            post_finalization_pending_txs=all_pending_tx_entries,
-                            parent_cid_height_diff=1,
-                            custom_logger_obj=custom_logger,
-                            reader_redis_conn=reader_redis_conn,
-                            writer_redis_conn=writer_redis_conn,
-                            aiohttp_client_session=self._aiohttp_client_session
-                        )
+                            post_finalization_pending_txs=all_pending_tx_entries, parent_cid_height_diff=1,
+                            custom_logger_obj=custom_logger, reader_redis_conn=reader_redis_conn,
+                            writer_redis_conn=writer_redis_conn, _httpx_client=self._httpx_client)
                         custom_logger.info(
                             'Finished processing self healing DAG block insertion at height %s | '
                             'DAG blocks finalized in total: %s',
@@ -513,8 +497,8 @@ class DAGFinalizationCallbackProcessor:
                             # 1. find missing DAG blocks at event_height > tentative heights > (finalized height + 1)
                             missing_epochs_diag_filter = list(filter(
                                 lambda x:
-                                PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1 and
-                                int(x[1]) > finalized_block_height_project + 1,
+                                    PendingTransaction.parse_raw(x[0]).lastTouchedBlock == -1 and
+                                    int(x[1]) > finalized_block_height_project + 1,
                                 pending_confirmation_callbacks_txs
                             ))
                             earliest_pending_dag_height_next_to_finalized = int(missing_epochs_diag_filter[0][1])
@@ -542,14 +526,13 @@ class DAGFinalizationCallbackProcessor:
                                 )
                             }
                             consensus_snapshots_fetch_tasks = [
-                                self._aiohttp_context_manager_wrap_call(
+                                self._httpx_wrap_call(
                                     url=urljoin(settings.consensus_config.service_url, '/epochStatus'),
                                     json_body=SnapshotBase(
                                         epoch=EpochBase(begin=y - project_epoch_size + 1, end=y),
                                         projectID=project_id,
                                         instanceID=settings.instance_id
                                     ).dict()
-                                    # useful for referencing back tentative height on response returned
                                 )
                                 for x, y in epochs_to_fetch.items()
                             ]
@@ -574,7 +557,7 @@ class DAGFinalizationCallbackProcessor:
                                         tentative_height,
                                         consensus_snapshots_response
                                     )
-                                    tentative_height_to_cid_map[tentative_height] = None
+                                    tentative_height_to_cid_map[tentative_height] = f'null_{epochs_to_fetch[tentative_height]}'
                                     continue
                                 try:
                                     parsed_snapshot_response = SubmissionResponse.parse_obj(each_consensus_response)
@@ -588,7 +571,7 @@ class DAGFinalizationCallbackProcessor:
                                         e,
                                         exc_info=True
                                     )
-                                    tentative_height_to_cid_map[tentative_height] = None
+                                    tentative_height_to_cid_map[tentative_height] = f'null_{epochs_to_fetch[tentative_height]}'
                                     continue
 
                                 custom_logger.info(
@@ -611,7 +594,7 @@ class DAGFinalizationCallbackProcessor:
                                         tentative_height,
                                         parsed_snapshot_response
                                     )
-                                    tentative_height_to_cid_map[tentative_height] = None
+                                    tentative_height_to_cid_map[tentative_height] = f'null_{epochs_to_fetch[tentative_height]}'
                             dummy_tx_hash = '0x' + '0' * 160
                             dummy_api_hash = '0x' + '0' * 256
                             dummy_payload_commit_id = '0x' + '0' * 256
@@ -673,14 +656,9 @@ class DAGFinalizationCallbackProcessor:
                             )
                             blocks_created = await self._in_order_block_creation_and_state_update(
                                 dag_finalizer_callback_obj=dag_finalization_cb,
-                                # pass nothing here
-                                post_finalization_pending_txs=post_pending_tx_entries,
-                                parent_cid_height_diff=1,
-                                custom_logger_obj=custom_logger,
-                                reader_redis_conn=reader_redis_conn,
-                                writer_redis_conn=writer_redis_conn,
-                                aiohttp_client_session=self._aiohttp_client_session
-                            )
+                                post_finalization_pending_txs=post_pending_tx_entries, parent_cid_height_diff=1,
+                                custom_logger_obj=custom_logger, reader_redis_conn=reader_redis_conn,
+                                writer_redis_conn=writer_redis_conn, _httpx_client=self._httpx_client)
                             custom_logger.info(
                                 'Consensus Self Healing| Project %s | '
                                 'Finished processing self healing DAG block insertion beginning height %s | '
@@ -729,17 +707,11 @@ class DAGFinalizationCallbackProcessor:
                 )
             else:
                 blocks_created = await self._in_order_block_creation_and_state_update(
-                    dag_finalizer_callback_obj=event_data,
-                    post_finalization_pending_txs=filter(
+                    dag_finalizer_callback_obj=event_data, post_finalization_pending_txs=filter(
                         lambda x: int(x[1]) > tentative_block_height_event_data,
                         all_pending_tx_entries
-                    ),
-                    parent_cid_height_diff=1,
-                    custom_logger_obj=custom_logger,
-                    reader_redis_conn=reader_redis_conn,
-                    writer_redis_conn=writer_redis_conn,
-                    aiohttp_client_session=self._aiohttp_client_session
-                )
+                    ), parent_cid_height_diff=1, custom_logger_obj=custom_logger, reader_redis_conn=reader_redis_conn,
+                    writer_redis_conn=writer_redis_conn, _httpx_client=self._httpx_client)
                 custom_logger.info(
                     'Finished processing in order DAG block insertion at height %s | '
                     'DAG blocks finalized in total: %s',
@@ -751,13 +723,19 @@ class DAGFinalizationCallbackProcessor:
         asyncio.ensure_future(self._payload_to_dag_processor_task(event_data))
         await message.ack()
 
-    async def _aiohttp_context_manager_wrap_call(self, url, json_body):
-        async with self._aiohttp_client_session.post(
+    @retry(
+        reraise=True, wait=wait_random_exponential(multiplier=1, max=20),
+        # Randomly wait up to 2^x * 1 seconds between each retry until the range reaches 60 seconds
+        # then randomly up to 20 seconds afterwards
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception_type(httpx_exceptions.TransportError) | retry_if_exception_type(json.JSONDecodeError)
+    )
+    async def _httpx_wrap_call(self, url, json_body):
+        resp = await self._httpx_client.post(
             url=url,
             json=json_body
-        ) as resp:
-            r = await resp.json()
-            return r
+        )
+        return resp.json()
 
     async def main(self):
         ev_loop = asyncio.get_running_loop()
@@ -770,12 +748,13 @@ class DAGFinalizationCallbackProcessor:
         await self._aioredis_pool.populate()
         self._writer_redis_pool = self._aioredis_pool.writer_redis_pool
         self._reader_redis_pool = self._aioredis_pool.reader_redis_pool
-        self._aiohttp_client_session: aiohttp.ClientSession = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(
-                sock_connect=settings.aiohtttp_timeouts.sock_connect,
-                sock_read=settings.aiohtttp_timeouts.sock_read,
-                connect=settings.aiohtttp_timeouts.connect
-            )
+        self._async_transport = AsyncHTTPTransport(
+            limits=Limits(max_connections=300, max_keepalive_connections=100, keepalive_expiry=30)
+        )
+        self._httpx_client = AsyncClient(
+            timeout=Timeout(timeout=5.0),
+            follow_redirects=False,
+            transport=self._async_transport
         )
         self._ipfs_singleton = AsyncIPFSClientSingleton()
         await self._ipfs_singleton.init_sessions()
@@ -792,6 +771,8 @@ class DAGFinalizationCallbackProcessor:
 
 
 if __name__ == '__main__':
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (settings.rlimit['file_descriptors'], hard))
     dag_finalization_cb_processor = DAGFinalizationCallbackProcessor()
     asyncio.ensure_future(dag_finalization_cb_processor.main())
     ev_loop = asyncio.get_event_loop()

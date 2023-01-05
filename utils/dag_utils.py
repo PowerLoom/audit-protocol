@@ -5,6 +5,7 @@ from utils import helper_functions
 from data_models import PendingTransaction, DAGBlock, DAGFinalizerCallback, DAGBlockPayloadLinkedPath
 from tenacity import retry, wait_random_exponential, retry_if_exception_type, stop_after_attempt
 from typing import Tuple
+from httpx import AsyncClient
 import aiohttp
 import async_timeout
 import asyncio
@@ -35,12 +36,12 @@ logger.addHandler(stdout_handler)
 logger.addHandler(stderr_handler)
 
 
-async def send_commit_callback(aiohttp_session: aiohttp.ClientSession, url, payload):
+async def send_commit_callback(httpx_session: AsyncClient, url, payload):
     if type(url) is bytes:
         url = url.decode('utf-8')
-    async with aiohttp_session.post(url=url, json=payload) as resp:
-        json_response = await resp.json()
-        return json_response
+    resp = await httpx_session.post(url=url, json=payload)
+    json_response = await resp.json()
+    return json_response
 
 
 async def update_pending_tx_block_touch(
@@ -135,23 +136,12 @@ async def get_payload(payload_cid: str, project_id:str, ipfs_read_client: AsyncI
 
 
 # TODO: exception handling around dag block creation failures
-async def create_dag_block_update_project_state(
-        tx_hash,
-        request_id,
-        project_id,
-        payload_commit_id,
-        tentative_block_height_event_data,
-        snapshot_cid,
-        timestamp,
-        reader_redis_conn,
-        writer_redis_conn,
-        fetch_prev_cid_for_dag_block_creation,
-        # parent CID should be from event_height - parent_cid_height_diff, for eg event_height - 1
-        parent_cid_height_diff,
-        ipfs_write_client,
-        aiohttp_client_session: aiohttp.ClientSession,
-        custom_logger_obj
-):
+async def create_dag_block_update_project_state(tx_hash, request_id, project_id, payload_commit_id,
+                                                tentative_block_height_event_data, snapshot_cid, timestamp,
+                                                reader_redis_conn, writer_redis_conn,
+                                                fetch_prev_cid_for_dag_block_creation, parent_cid_height_diff,
+                                                ipfs_write_client, httpx_client: AsyncClient,
+                                                custom_logger_obj):
     _dag_cid, dag_block = await create_dag_block(
         tx_hash=tx_hash,
         project_id=project_id,
@@ -223,15 +213,11 @@ async def create_dag_block_update_project_state(
     # retrieve callback URL for project ID
     cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
     if cb_url:
-        await send_commit_callback(
-            aiohttp_session=aiohttp_client_session,
-            url=cb_url,
-            payload={
-                'commitID': payload_commit_id,
-                'projectID': project_id,
-                'status': True
-            }
-        )
+        await send_commit_callback(httpx_session=httpx_client, url=cb_url, payload={
+            'commitID': payload_commit_id,
+            'projectID': project_id,
+            'status': True
+        })
     return _dag_cid, dag_block
 
 
