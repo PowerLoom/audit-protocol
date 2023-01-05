@@ -191,8 +191,8 @@ async def epoch_details(project_id: str, request: Request, response: Response, e
         epoch = int(await app.reader_redis_pool.get(get_epoch_generator_last_epoch()))
     
     epoch_release_time = await app.reader_redis_pool.zscore(
-        name=get_epoch_generator_epoch_history(),
-        mapping={json.dumps({"begin":epoch-settings.chain.epoch.height+1,"end":epoch}): int(time.time())}
+        get_epoch_generator_epoch_history(),
+        json.dumps({"begin":epoch-settings.chain.epoch.height+1,"end":epoch})
     )
     
     if not epoch_release_time:
@@ -326,7 +326,7 @@ async def get_epochs(project_id: str, request: Request,
 async def get_snapshotter_issues(snapshotter_id: str, request: Request,
         response: Response):
 
-    issues_with_scores = await request.app.reader_redis_pool.zrange(get_snapshotter_issues_reported_key(snapshotter_id), 0, -1, withscores=True)
+    issues_with_scores = await request.app.reader_redis_pool.zrevrange(get_snapshotter_issues_reported_key(snapshotter_id), 0, -1, withscores=True)
     issues = []
     for issue in issues_with_scores:
         issues.append(SnapshotterIssue(**json.loads(issue[0])))
