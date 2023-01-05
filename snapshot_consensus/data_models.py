@@ -54,6 +54,9 @@ class EpochConsensusStatus(str, Enum):
     consensus_achieved = 'CONSENSUS_ACHIEVED'
     no_consensus = 'NO_CONSENSUS'
 
+class EpochStatus(str, Enum):
+    in_progress = 'IN_PROGRESS'
+    finalized = 'FINALIZED'
 
 class SubmissionResponse(BaseModel):
     status: Union[SubmissionAcceptanceStatus, EpochConsensusStatus]
@@ -135,3 +138,35 @@ class EpochDataPage(BaseModel):
     next_page: Optional[str]
     prev_page: Optional[str]
     data: EpochData
+
+class EpochDetails(BaseModel):
+    epochEndHeight: int
+    releaseTime: int
+    status: EpochStatus
+    totalProjects: int
+    projectsFinalized: int
+
+
+class SnapshotterIssueSeverity(str, Enum):
+    high = 'HIGH'
+    medium = 'MEDIUM'
+    low = 'LOW'
+    cleared = 'CLEARED'
+
+class SnapshotterIssueType(str, Enum):
+    snapshotting_fallen_behind = 'SNAPSHOTTING_FALLEN_BEHIND'
+    missed_snapshot = 'MISSED_SNAPSHOT'
+    infra_issue = 'INFRA_ISSUE'
+    skip_epoch = 'SKIP_EPOCH'
+    dag_chain_stuck = 'DAG_CHAIN_STUCK'
+    pruning_failed = 'PRUNING_FAILED'
+
+class SnapshotterIssue(BaseModel):
+    instanceID: str
+    namespace: str
+    severity: SnapshotterIssueSeverity
+    issueType: SnapshotterIssueType
+    projectID: str
+    epochs: List[int]
+    timeOfReporting: int
+    noOfEpochsBehind: int

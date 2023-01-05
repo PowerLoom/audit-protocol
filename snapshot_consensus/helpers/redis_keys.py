@@ -11,6 +11,12 @@ def get_epoch_submission_schedule_key(project_id, epoch_end):
     return f'projectID:{project_id}:{epoch_end}:centralizedConsensus:submissionSchedule'
 
 
+def get_epoch_project_status_key(project_id, epoch_end):
+    return f':centralizedConsensus:{epoch_end}:{project_id}:epochStatus'
+
+def get_epoch_finalized_projects_key(epoch_end):
+    return f'centralizedConsensus:{epoch_end}:*:epochStatus'
+
 def get_project_registered_peers_set_key(project_id):
     return f'projectID:{project_id}:centralizedConsensus:peers'
 
@@ -33,3 +39,6 @@ def get_epoch_generator_last_epoch():
 
 def get_epoch_generator_epoch_history():
     return "epochGenerator:epochHistory"
+
+def get_snapshotter_issues_reported_key(snapshotter_id):
+    return f'snapshotterData:{snapshotter_id}:issuesReported'

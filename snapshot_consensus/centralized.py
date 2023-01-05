@@ -1,6 +1,7 @@
 from .data_models import (
     SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus, SnapshotBase,
-    EpochConsensusStatus, Snapshotters, Epoch, EpochData, EpochDataPage, Submission, SubmissionStatus, Message, EpochInfo
+    EpochConsensusStatus, Snapshotters, Epoch, EpochData, EpochDataPage, Submission, SubmissionStatus, Message, EpochInfo,
+    EpochStatus, EpochDetails, SnapshotterIssue
 )
 from typing import List, Optional
 from fastapi.responses import JSONResponse
@@ -125,6 +126,9 @@ async def submit_snapshot(
     else:
         response_obj = SubmissionResponse(status=SubmissionAcceptanceStatus.accepted, delayedSubmission=False)
     consensus_status, finalized_cid = await register_submission(req_parsed, cur_ts, request.app.writer_redis_pool)
+    # if consensus achieved, set the key
+    if finalized_cid:
+        await request.app.writer_redis_pool.set(name=get_epoch_project_status_key(req_parsed.projectId, req_parsed.epoch.end), value=EpochConsensusStatus.consensus_achieved)
     response_obj.status = consensus_status
     response_obj.finalizedSnapshotCID = finalized_cid
     response.body = response_obj
@@ -159,6 +163,62 @@ async def check_submission_status(
             ),
             finalizedSnapshotCID=finalized_cid
         ).dict()
+
+
+@app.post('/reportIssue')
+async def report_issue(
+        request: Request,
+        response: Response
+):
+    req_json = await request.json()
+    try:
+        req_parsed = SnapshotterIssue.parse_obj(req_json)
+    except ValidationError:
+        JSONResponse(status_code=400, content={"message": f"Validation Error, invalid Data."})
+
+    await request.app.writer_redis_pool.zadd(
+        name=get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.snapshotterID), 
+        mapping={json.dumps(req_parsed.dict()): int(time.time())})
+
+    return JSONResponse(status_code=200, content={"message": f"Reported Issue."})
+
+
+@app.get("/epochDetails", response_model=EpochDetails, responses={404: {"model": Message}})
+async def epoch_details(project_id: str, request: Request, response: Response, epoch: int = Query(default=0, gte=0)):
+    """
+    Returns a list of instance-IDs of snapshotters that are participating in consensus for the given project.
+    """
+    if epoch == 0:
+        epoch = await app.reader_redis_pool.get(get_epoch_generator_last_epoch())
+    
+    epoch_release_time = await self.reader_redis_pool.zmscore(
+        name=get_epoch_generator_epoch_history(),
+        mapping={json.dumps({"begin":epoch-settings.chain.epoch.height,"end":epoch}): int(time.time())}
+    )
+    
+    if not epoch_release_time:
+        return JSONResponse(status_code=404, content={"message": f"No epoch found with Epoch End Time {epoch}"})
+
+    if epoch_release_time + settings.consensus_service.submission_window < time.time():
+        epoch_status = EpochStatus.in_progress
+    else:
+        epoch_status = EpochStatus.finalized
+
+    project_keys = await request.app.reader_redis_pool.keys(
+        get_project_ids()
+    )
+    total_projects = len(project_keys)
+
+    projects_with_consensus = await request.app.reader_redis_pool.keys(get_epoch_finalized_projects_key(epoch))
+    total_projects_with_consensus = len(projects_with_consensus)
+
+    return EpochDetails(
+        epochEndHeight = epoch,
+        releaseTime = epoch_release_time,
+        status = epoch_status,
+        totalProjects = total_projects,
+        projectsFinalized = total_projects_with_consensus
+    )
 
 
 @app.post('/epochStatus')
@@ -260,6 +320,18 @@ async def get_epochs(project_id: str, request: Request,
      "prev_page": None if page == 1 else f"/metrics/{project_id}/epochs?page={page-1}&limit={limit}",
      "data": data
     }
+
+
+@app.get("/metrics/{snapshotter_id}/issues", response_model=List[SnapshotterIssue], responses={404: {"model": Message}})
+async def get_snapshotter_issues(snapshotter_id: str, request: Request,
+        response: Response):
+
+    issues_with_scores = await request.app.reader_redis_pool.zrevrange(get_snapshotter_issues_reported_key(snapshotter_id), 0, -1, withscores=True)
+    issues = []
+    for issue in issues_with_scores:
+        issues.append(SnapshotterIssue(issue=issue[0].decode('utf-8')))
+
+    return issues
 
 # Submission details for an epoch '/metrics/{projectid}/{epoch}/submissionStatus' .
 # This shall include whether consensus has been achieved along with final snapshotCID.
