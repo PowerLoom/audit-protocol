@@ -29,10 +29,6 @@
 					"queue_name_prefix":"audit-protocol-commit-payloads:",
 					"routing_key_prefix":"commit-payloads:"
 				},
-				"diff-requests":{
-					"queue_name_prefix":"audit-protocol-diff-requests:",
-					"routing_key_prefix":"diff-calculation:"
-				},
 				"dag-processing":{
 					"queue_name_prefix":"audit-protocol-dag-processing:",
 					"routing_key_prefix":"dag-processing:"
@@ -50,12 +46,12 @@
 		"WETH": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
-	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
+	"ipfs_url": "/ip4/127.0.0.1/tcp/5001",
 	"ipfs_rate_limit" :{
 		"req_per_sec": 100,
 		"burst": 100
 	},
-	"ipfs_reader_url":"/ip4/192.168.99.100/tcp/5001",
+	"ipfs_reader_url":"/ip4/127.0.0.1/tcp/5001",
 	"snapshot_interval": 4,
 	"contract_call_backend": "http://127.0.0.1:8888/writer",
 	"contract_rate_limit" :{
@@ -113,9 +109,6 @@
 		"redis_pool_size":20,
 		"run_interval_secs": 300,
 		"additional_projects_to_track_prefixes" :[
-			"uniswap_V2PairsSummarySnapshot",
-			"uniswap_V2TokensSummarySnapshot",
-			"uniswap_V2DailyStatsSnapshot"
 		],
 		"pruning_verification": false
 	},
@@ -149,8 +142,8 @@
 	"consensus_config":{
 		"service_url": "",
 		"rate_limit":{
-			"req_per_sec": 1,
-			"burst": 1
+			"req_per_sec": 5,
+			"burst": 5
 		},
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
