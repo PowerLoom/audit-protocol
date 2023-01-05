@@ -174,10 +174,10 @@ async def report_issue(
     try:
         req_parsed = SnapshotterIssue.parse_obj(req_json)
     except ValidationError:
-        JSONResponse(status_code=400, content={"message": f"Validation Error, invalid Data."})
+        return JSONResponse(status_code=400, content={"message": f"Validation Error, invalid Data."})
 
     await request.app.writer_redis_pool.zadd(
-        name=get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.snapshotterID), 
+        name=get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.instanceID), 
         mapping={json.dumps(req_parsed.dict()): int(time.time())})
 
     return JSONResponse(status_code=200, content={"message": f"Reported Issue."})
@@ -327,10 +327,10 @@ async def get_epochs(project_id: str, request: Request,
 async def get_snapshotter_issues(snapshotter_id: str, request: Request,
         response: Response):
 
-    issues_with_scores = await request.app.reader_redis_pool.zrevrange(get_snapshotter_issues_reported_key(snapshotter_id), 0, -1, withscores=True)
+    issues_with_scores = await request.app.reader_redis_pool.zrange(get_snapshotter_issues_reported_key(snapshotter_id), 0, -1, withscores=True)
     issues = []
     for issue in issues_with_scores:
-        issues.append(SnapshotterIssue(issue=issue[0].decode('utf-8')))
+        issues.append(SnapshotterIssue(**json.loads(issue=issue[0])))
 
     return issues
 
