@@ -99,6 +99,7 @@
 		}
 	},
 	"dag_verifier":{
+		"issue_reporter_port": 9030,
 		"slack_notify_URL":"",
 		"notify_suppress_time_secs":1800,
 		"concurrency": 10,

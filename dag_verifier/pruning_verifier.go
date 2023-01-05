@@ -224,7 +224,7 @@ func (verifier *PruningVerifier) AddPruningIssueReport(report *PruningIssueRepor
 	member.Score = float64(report.SegmentError.EndHeight)
 	reportStr, _ := json.Marshal(report)
 	member.Member = reportStr
-	key := fmt.Sprintf(REDIS_KEY_PRUNING_ISSUES, report.ProjectID)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_ISSUES, report.ProjectID)
 	i := 0
 	for ; i < 3; i++ {
 		res := verifier.redisClient.ZAddNX(ctx, key, &member)
