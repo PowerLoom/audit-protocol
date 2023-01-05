@@ -128,7 +128,7 @@ async def submit_snapshot(
     consensus_status, finalized_cid = await register_submission(req_parsed, cur_ts, request.app.writer_redis_pool)
     # if consensus achieved, set the key
     if finalized_cid:
-        await request.app.writer_redis_pool.set(name=get_epoch_project_status_key(req_parsed.projectId, req_parsed.epoch.end), value=EpochConsensusStatus.consensus_achieved)
+        await request.app.writer_redis_pool.set(name=get_epoch_project_status_key(req_parsed.projectID, req_parsed.epoch.end), value=EpochConsensusStatus.consensus_achieved)
     response_obj.status = consensus_status
     response_obj.finalizedSnapshotCID = finalized_cid
     response.body = response_obj
@@ -189,17 +189,18 @@ async def epoch_details(project_id: str, request: Request, response: Response, e
     Returns a list of instance-IDs of snapshotters that are participating in consensus for the given project.
     """
     if epoch == 0:
-        epoch = await app.reader_redis_pool.get(get_epoch_generator_last_epoch())
+        epoch = int(await app.reader_redis_pool.get(get_epoch_generator_last_epoch()))
     
-    epoch_release_time = await self.reader_redis_pool.zmscore(
+    epoch_release_time = await app.reader_redis_pool.zscore(
         name=get_epoch_generator_epoch_history(),
-        mapping={json.dumps({"begin":epoch-settings.chain.epoch.height,"end":epoch}): int(time.time())}
+        mapping={json.dumps({"begin":epoch-settings.chain.epoch.height+1,"end":epoch}): int(time.time())}
     )
     
     if not epoch_release_time:
         return JSONResponse(status_code=404, content={"message": f"No epoch found with Epoch End Time {epoch}"})
 
-    if epoch_release_time + settings.consensus_service.submission_window < time.time():
+    epoch_release_time = int(epoch_release_time)
+    if epoch_release_time + settings.consensus_service.submission_window > int(time.time()):
         epoch_status = EpochStatus.in_progress
     else:
         epoch_status = EpochStatus.finalized
