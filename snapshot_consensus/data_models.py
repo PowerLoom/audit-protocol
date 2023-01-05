@@ -167,6 +167,6 @@ class SnapshotterIssue(BaseModel):
     severity: SnapshotterIssueSeverity
     issueType: SnapshotterIssueType
     projectID: str
-    epochs: List[int]
+    epochs: Optional[List[int]]
     timeOfReporting: int
     noOfEpochsBehind: int

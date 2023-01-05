@@ -176,18 +176,17 @@ async def report_issue(
     except ValidationError:
         return JSONResponse(status_code=400, content={"message": f"Validation Error, invalid Data."})
 
+    # Updating time of reporting to avoid manual incorrect time manipulation
+    req_parsed.timeOfReporting= int(time.time())
     await request.app.writer_redis_pool.zadd(
         name=get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.instanceID), 
-        mapping={json.dumps(req_parsed.dict()): int(time.time())})
+        mapping={json.dumps(req_parsed.dict()): req_parsed.timeOfReporting})
 
     return JSONResponse(status_code=200, content={"message": f"Reported Issue."})
 
 
 @app.get("/epochDetails", response_model=EpochDetails, responses={404: {"model": Message}})
 async def epoch_details(project_id: str, request: Request, response: Response, epoch: int = Query(default=0, gte=0)):
-    """
-    Returns a list of instance-IDs of snapshotters that are participating in consensus for the given project.
-    """
     if epoch == 0:
         epoch = int(await app.reader_redis_pool.get(get_epoch_generator_last_epoch()))
     
@@ -330,7 +329,7 @@ async def get_snapshotter_issues(snapshotter_id: str, request: Request,
     issues_with_scores = await request.app.reader_redis_pool.zrange(get_snapshotter_issues_reported_key(snapshotter_id), 0, -1, withscores=True)
     issues = []
     for issue in issues_with_scores:
-        issues.append(SnapshotterIssue(**json.loads(issue=issue[0])))
+        issues.append(SnapshotterIssue(**json.loads(issue[0])))
 
     return issues
 
