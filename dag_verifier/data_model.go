@@ -20,7 +20,6 @@ type SummaryProjectState struct {
 }
 
 type DagChainReport struct {
-	Namespace                   string                `json:"namespace"`
 	InstanceId                  string                `json:"instanceid"`
 	HostName                    string                `json:"hostname"`
 	Severity                    string                `json:"severity"`                               //HIGH,MEDIUM, LOW, CLEAR
@@ -81,4 +80,15 @@ type DagChainBlock struct {
 	TxHash     string     `json:"txHash"`
 	Payload    DagPayload `json:"payload"`
 	CurrentCid string
+}
+
+type IssueReport struct {
+	Instanceid       string  `json:"instanceID"`
+	Namespace        string  `json:"namespace,omitempty"`
+	Severity         string  `json:"severity"`
+	IssueType        string  `json:"issueType"`
+	ProjectID        string  `json:"projectID"`
+	Epochs           []int64 `json:"epochs,omitempty"`
+	NoOfEpochsBehind int64   `json:"noOfEpochsBehind,omitempty"`
+	Service          string  `json:"service"`
 }

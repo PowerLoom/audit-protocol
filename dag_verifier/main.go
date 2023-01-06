@@ -3,32 +3,44 @@ package main
 import (
 	// "context"
 
+	"bytes"
 	"encoding/json"
-	"os"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"net/http"
 	"sync"
+	"time"
 
+	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/powerloom/goutils/logger"
+	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
+	"github.com/powerloom/goutils/slackutils"
 )
 
 var ipfsClient IpfsClient
-var pairContractAddresses []string
+var dagVerifier DagVerifier
+
+var settingsObj *settings.SettingsObj
 
 func main() {
 	logger.InitLogger()
-	settingsObj := settings.ParseSettings("../settings.json")
-	var pairContractAddress string
-	if len(os.Args) == 3 {
-		pairContractAddress = os.Args[2]
-	}
-	PopulatePairContractList(pairContractAddress, "../static/cached_pair_addresses.json")
-	var dagVerifier DagVerifier
-	dagVerifier.Initialize(settingsObj, &pairContractAddresses)
+	settingsObj = settings.ParseSettings("../settings.json")
+	dagVerifier.Initialize(settingsObj)
 	var wg sync.WaitGroup
-	//For now just using settings to determine this in case multiple namespaces are being run.
-	//In future dag verifier would also work with multiple namespaces, this can be removed once implemented.
+
+	http.HandleFunc("/reportIssue", IssueReportHandler)
+	port := settingsObj.DagVerifierSettings.IssueReporterPort
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Infof("Starting HTTP server on port %d in a go routine.", port)
+		http.ListenAndServe(fmt.Sprint(":", port), nil)
+	}()
+
 	if settingsObj.DagVerifierSettings.PruningVerification {
 		var pruningVerifier PruningVerifier
 		pruningVerifier.Init(settingsObj)
@@ -39,6 +51,7 @@ func main() {
 			pruningVerifier.Run()
 		}()
 	}
+
 	dagVerifier.Run()
 
 	if settingsObj.DagVerifierSettings.PruningVerification {
@@ -46,25 +59,86 @@ func main() {
 	}
 }
 
-func PopulatePairContractList(pairContractAddr string, pairContractListFile string) {
-	if pairContractAddr != "" {
-		log.Info("Skipping reading contract addresses from json.\nConsidering only passed pairContractaddress:", pairContractAddr)
-		pairContractAddresses = make([]string, 1)
-		pairContractAddresses[0] = pairContractAddr
+func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
+	log.Infof("Received issue report %+v : ", *req)
+	reqBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		log.Errorf("Failed to read request body")
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	var reqPayload IssueReport
 
-	log.Info("Reading contracts:", pairContractListFile)
-	data, err := os.ReadFile(pairContractListFile)
+	err = json.Unmarshal(reqBytes, &reqPayload)
 	if err != nil {
-		log.Error("Cannot read the file:", err)
-		panic(err)
+		log.Errorf("Error while parsing json body of issue report %s", err.Error())
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
+	if reqPayload.Service == "" {
+		reqPayload.Service = "monitoring"
+	}
+	reportJson, _ := json.Marshal(reqPayload)
+	//Record issues in redis
+	res := dagVerifier.redisClient.ZAdd(ctx, redisutils.REDIS_KEY_ISSUES_REPORTED, &redis.Z{Score: float64(time.Now().UnixMicro()),
+		Member: reportJson,
+	})
+	if res.Err() != nil {
+		log.Errorf("Failed to add issue to redis due to error %+v", res.Err())
+	}
+	go func() {
+		//Notify on slack and report to consensus layer
+		report, _ := json.MarshalIndent(reqPayload, "", "\t")
+		slackutils.NotifySlackWorkflow(string(report), reqPayload.Severity, reqPayload.Service)
+		// Notify consensus layer
+		ReportIssueToConsensus(&reqPayload)
+		//TODO: Have pruning logic for issues ZSet
 
-	log.Debug("Contracts json data is", string(data))
-	err = json.Unmarshal(data, &pairContractAddresses)
-	if err != nil {
-		log.Error("Cannot unmarshal the pair-contracts json ", err)
-		panic(err)
+	}()
+	w.WriteHeader(http.StatusOK)
+}
+
+func ReportIssueToConsensus(reqPayload *IssueReport) {
+	reqURL := settingsObj.ConsensusConfig.ServiceURL + "/reportIssue"
+	reqBytes, _ := json.Marshal(reqPayload)
+	for retryCount := 0; ; {
+		if retryCount == 3 {
+			log.Errorf("failed to send issueReport to consensus service after max-retry")
+			return
+		}
+		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(reqBytes))
+		if err != nil {
+			log.Fatalf("Failed to create new HTTP Req with URL %s due to error %+v",
+				reqURL, err)
+			return
+		}
+		req.Header.Add("accept", "application/json")
+		log.Debugf("Sending issue report %+v to consensus service URL ",
+			req, reqURL)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			retryCount++
+			log.Errorf("Failed to send request %+v towards consensus service URL %s due to error %+v.  Retrying %d",
+				req, reqURL, err, retryCount)
+			continue
+		}
+		defer res.Body.Close()
+		respBody, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			retryCount++
+			log.Errorf("Failed to read response body from consensus service with error %+v.",
+				err, retryCount)
+			break
+		}
+		if res.StatusCode == http.StatusOK {
+			log.Infof("Reported issue to consensus layer.")
+			break
+		} else {
+			retryCount++
+			log.Errorf("Received Error response %+v from consensus service with statusCode %d and status : %s ",
+				respBody, res.StatusCode, res.Status)
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
+			continue
+		}
 	}
 }

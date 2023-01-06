@@ -34,6 +34,7 @@ type PruningServiceSettings_ struct {
 }
 
 type _DagVerifierSettings_ struct {
+	IssueReporterPort            int           `json:"issue_reporter_port"`
 	SlackNotifyURL               string        `json:"slack_notify_URL"`
 	RunIntervalSecs              int           `json:"run_interval_secs"`
 	SuppressNotificationTimeSecs int64         `json:"suppress_notification_for_secs"`

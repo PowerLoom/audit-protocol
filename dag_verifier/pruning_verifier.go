@@ -224,7 +224,7 @@ func (verifier *PruningVerifier) AddPruningIssueReport(report *PruningIssueRepor
 	member.Score = float64(report.SegmentError.EndHeight)
 	reportStr, _ := json.Marshal(report)
 	member.Member = reportStr
-	key := fmt.Sprintf(REDIS_KEY_PRUNING_ISSUES, report.ProjectID)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_ISSUES, report.ProjectID)
 	i := 0
 	for ; i < 3; i++ {
 		res := verifier.redisClient.ZAddNX(ctx, key, &member)
@@ -318,7 +318,6 @@ func (verifier *PruningVerifier) VerifyDAGSegment(projectId string, segment *Pro
 			cid = dagBlock.PrevCid.LinkData
 			continue
 		}
-		//TODO: Add logic for out of order detection
 		if prevBlockChainEndHeight != 0 && payload.ChainHeightRange.Begin == prevBlockChainEndHeight+1 {
 			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
 			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
