@@ -174,3 +174,31 @@ class ProjectBlockHeightStatus(BaseModel):
     payload_cid: Optional[str] = None
     tx_hash: Optional[str] = None
     status: int = 1 #BLOCK_STATUS_SNAPSHOT_COMMIT_PENDING
+
+
+class SnapshotterIssueSeverity(str, Enum):
+    high = 'HIGH'
+    medium = 'MEDIUM'
+    low = 'LOW'
+    cleared = 'CLEARED'
+
+
+class SnapshotterIssueType(str, Enum):
+    snapshotting_fallen_behind = 'SNAPSHOTTING_FALLEN_BEHIND'
+    missed_snapshot = 'MISSED_SNAPSHOT'
+    infra_issue = 'INFRA_ISSUE'
+    skip_epoch = 'SKIP_EPOCH'
+    dag_chain_stuck = 'DAG_CHAIN_STUCK'
+    pruning_failed = 'PRUNING_FAILED'
+
+
+class SnapshotterIssue(BaseModel):
+    instanceID: str
+    namespace: Optional[str]
+    severity: SnapshotterIssueSeverity
+    issueType: str
+    projectID: str
+    epochs: Optional[List[int]]
+    timeOfReporting: int
+    noOfEpochsBehind: Optional[int]
+    extra: Optional[dict]

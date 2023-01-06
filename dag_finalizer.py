@@ -12,7 +12,7 @@ from typing import Optional, Dict, List
 from urllib.parse import urljoin
 from data_models import (
     PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
-    AuditRecordTxEventData
+    AuditRecordTxEventData, SnapshotterIssue, SnapshotterIssueSeverity
 )
 from tenacity import retry, wait_random_exponential, stop_after_attempt, retry_if_exception_type
 from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
@@ -664,6 +664,11 @@ class DAGFinalizationCallbackProcessor:
                                 project_id, finalized_block_height_project + 1,
                                 blocks_created
                             )
+                            await self._dispatch_healing_notifications(
+                                project_id,
+                                tentative_height_to_cid_map,
+                                epochs_to_fetch
+                            )
                         else:
                             custom_logger.critical(
                                 'Standalone system | Missing pending tx entry at tentative height %s following '
@@ -715,6 +720,36 @@ class DAGFinalizationCallbackProcessor:
                     'DAG blocks finalized in total: %s',
                     tentative_block_height_event_data, blocks_created
                 )
+
+    async def _dispatch_healing_notifications(self, project_id, tentative_height_cid_map, tentative_height_epoch_match):
+        null_assigned_epochs = list(map(
+            lambda x: tentative_height_epoch_match[x[0]],
+            filter(
+                lambda x: 'null' in x[1],
+                tentative_height_cid_map.items()
+            )
+        ))
+        cid_finalized_epochs = list(map(
+            lambda x: tentative_height_epoch_match[x[0]],
+            filter(
+                lambda x: 'null' not in x[1],
+                tentative_height_cid_map.items()
+            )
+        ))
+        tasks = [
+            self._httpx_client.post(
+                url=urljoin(f'http://{settings.host}:{settings.port}', '/reportIssue'),
+                json=SnapshotterIssue(
+                    instanceID=settings.instance_id,
+                    severity=SnapshotterIssueSeverity.medium if idx == 1 else SnapshotterIssueSeverity.high,
+                    issueType='MISSED_SNAPSHOT' if idx == 1 else 'SKIP_EPOCH',
+                    projectID=project_id,
+                    epochs=k,
+                    timeOfReporting=int(time.time())
+                ).dict()
+            ) for idx, k in enumerate([null_assigned_epochs, cid_finalized_epochs])
+        ]
+        await asyncio.gather(*tasks)
 
     async def _on_rabbitmq_message(self, message: IncomingMessage):
         event_data = DAGFinalizerCallback.parse_raw(message.body)
