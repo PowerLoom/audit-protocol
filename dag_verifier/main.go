@@ -60,7 +60,7 @@ func main() {
 }
 
 func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
-	log.Infof("Received block height confirm callback %+v : ", *req)
+	log.Infof("Received issue report %+v : ", *req)
 	reqBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		log.Errorf("Failed to read request body")
@@ -131,7 +131,7 @@ func ReportIssueToConsensus(reqPayload *IssueReport) {
 			break
 		}
 		if res.StatusCode == http.StatusOK {
-			log.Infof("Reported issue to consensus layer")
+			log.Infof("Reported issue to consensus layer.")
 			break
 		} else {
 			retryCount++
