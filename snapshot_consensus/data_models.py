@@ -153,19 +153,12 @@ class SnapshotterIssueSeverity(str, Enum):
     low = 'LOW'
     cleared = 'CLEARED'
 
-class SnapshotterIssueType(str, Enum):
-    snapshotting_fallen_behind = 'SNAPSHOTTING_FALLEN_BEHIND'
-    missed_snapshot = 'MISSED_SNAPSHOT'
-    infra_issue = 'INFRA_ISSUE'
-    skip_epoch = 'SKIP_EPOCH'
-    dag_chain_stuck = 'DAG_CHAIN_STUCK'
-    pruning_failed = 'PRUNING_FAILED'
 
 class SnapshotterIssue(BaseModel):
     instanceID: str
-    namespace: str
+    namespace: Optional[str]
     severity: SnapshotterIssueSeverity
-    issueType: SnapshotterIssueType
+    issueType: str
     projectID: str
     epochs: Optional[List[int]]
     timeOfReporting: Optional[int]
