@@ -3,7 +3,7 @@ from .data_models import (
     EpochConsensusStatus, Snapshotters, Epoch, EpochData, EpochDataPage, Submission, SubmissionStatus, Message, EpochInfo,
     EpochStatus, EpochDetails, SnapshotterIssue
 )
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from fastapi.responses import JSONResponse
 from .conf import settings
 from .helpers.state import submission_delayed, register_submission, check_consensus, check_submissions_consensus
@@ -21,22 +21,21 @@ import sys
 import json
 import redis
 import time
+import uuid
 import asyncio
 import uvicorn
+from loguru import logger
 
-formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
-stdout_handler = logging.StreamHandler(sys.stdout)
-stdout_handler.setLevel(logging.DEBUG)
-# stdout_handler.setFormatter(formatter)
+FORMAT = '{time:MMMM D, YYYY > HH:mm:ss!UTC} | {level} | {message}| {extra}'
 
-stderr_handler = logging.StreamHandler(sys.stderr)
-stderr_handler.setLevel(logging.ERROR)
-# stderr_handler.setFormatter(formatter)
-service_logger = logging.getLogger(__name__)
-service_logger.setLevel(logging.DEBUG)
-service_logger.addHandler(stdout_handler)
-service_logger.addHandler(stderr_handler)
+logger.remove(0)
+logger.add(sys.stdout, level='DEBUG', format=FORMAT)
+logger.add(sys.stderr, level='WARNING', format=FORMAT)
+logger.add(sys.stderr, level='ERROR', format=FORMAT)
+
+service_logger = logger.bind(service='consensus_service')
+
 
 def acquire_bounded_semaphore(fn):
     @wraps(fn)
@@ -69,6 +68,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+@app.middleware('http')
+async def request_middleware(request: Request, call_next: Any) -> Optional[Dict]:
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    with service_logger.contextualize(request_id=request_id):
+        service_logger.info('Request started')
+        try:
+            response = await call_next(request)
+
+        except Exception as ex:
+            service_logger.opt(exception=True).error(f'Request failed: {ex}')
+            
+            response = JSONResponse(
+                content={
+                    'info':
+                        {
+                            'success': False,
+                            'response': 'Internal Server Error',
+                        },
+                    'request_id': request_id,
+                }, status_code=500,
+            )
+
+        finally:
+            response.headers['X-Request-ID'] = request_id
+            service_logger.info('Request ended')
+            return response
 
 
 @app.on_event('startup')
@@ -111,10 +139,10 @@ async def submit_snapshot(
     try:
         req_parsed = SnapshotSubmission.parse_obj(req_json)
     except ValidationError:
-        service_logger.error('Bad request in submit snapshot: %s', req_json)
+        service_logger.error('Bad request in submit snapshot: {}', req_json)
         response.status_code = 400
         return {}
-    service_logger.debug('Snapshot for submission: %s', req_json)
+    service_logger.debug('Snapshot for submission: {}', req_json)
     # get last accepted epoch?
     if await submission_delayed(
         project_id=req_parsed.projectID,
@@ -252,7 +280,6 @@ async def get_projects(request: Request, response: Response):
     project_keys = await request.app.reader_redis_pool.keys(
         get_project_ids()
     )
-
     projects = [key.decode("utf-8").split(":")[1] for key in project_keys]
     return projects
 

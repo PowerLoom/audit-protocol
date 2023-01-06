@@ -12,10 +12,10 @@ def get_epoch_submission_schedule_key(project_id, epoch_end):
 
 
 def get_epoch_project_status_key(project_id, epoch_end):
-    return f':centralizedConsensus:{epoch_end}:{project_id}:epochStatus'
+    return f'projectID:{project_id}:centralizedConsensus:{epoch_end}:epochStatus'
 
 def get_epoch_finalized_projects_key(epoch_end):
-    return f'centralizedConsensus:{epoch_end}:*:epochStatus'
+    return f'projectID:*:centralizedConsensus:{epoch_end}:epochStatus'
 
 def get_project_registered_peers_set_key(project_id):
     return f'projectID:{project_id}:centralizedConsensus:peers'
