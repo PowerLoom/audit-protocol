@@ -285,7 +285,7 @@ func (verifier *DagVerifier) Run() {
 			verifier.FetchLastProjectIndexedStatusFromRedis()
 			verifier.FetchLastVerificationStatusFromRedis()
 			verifier.VerifyAllProjects() //Projects are pairContracts
-			verifier.SummarizeDAGIssuesAndNotifySlack()
+			verifier.SummarizeDAGIssuesAndNotify()
 			verifier.UpdateLastStatusToRedis()
 		} else {
 			log.Info("No projects to be verified. Have to check in next run.")
@@ -445,7 +445,7 @@ func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps 
 	//TODO: Need to prune older gaps.
 }
 
-func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
+func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 	var dagSummary DagChainReport
 	dagSummary.InstanceId = verifier.settings.InstanceId
 	dagSummary.HostName, _ = os.Hostname()
@@ -453,7 +453,6 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	var currentMinChainHeight int64
 	currentMinChainHeight, _ = strconv.ParseInt(verifier.lastVerifiedDagBlockHeights[verifier.projects[0]], 10, 64)
 	isDagchainStuckForAnyProject := 0
-	summaryProjectsMovingAheadAfterStuck := false
 	//Check if dag chain is stuck for any project.
 	for _, projectId := range verifier.projects {
 		var err error
@@ -464,53 +463,22 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 				projectId, verifier.lastVerifiedDagBlockHeights[projectId])
 			return
 		}
-		if currentCycleDAGchainHeight[projectId] < currentMinChainHeight {
-			currentMinChainHeight = currentCycleDAGchainHeight[projectId]
-		}
-		if verifier.previousCycleDagChainHeight[projectId] == currentCycleDAGchainHeight[projectId] {
-			verifier.noOfCyclesSinceChainStuck[projectId]++
-		} else {
-			verifier.noOfCyclesSinceChainStuck[projectId] = 0
-		}
-		if verifier.noOfCyclesSinceChainStuck[projectId] > 3 {
-			isDagchainStuckForAnyProject++
-			verifier.dagChainHasIssues = true
-			log.Infof("Dag chain is stuck for project %s at DAG height %d from past 3 cycles of run.",
-				projectId, currentCycleDAGchainHeight[projectId])
-		}
-	}
-	isDagchainStuckForSummaryProject := 0
-	for j := range verifier.SummaryProjects {
-		projectId := verifier.SummaryProjects[j]
-		currentDagHeight := verifier.GetProjectDAGBlockHeightFromRedis(projectId)
-		if currentDagHeight == "0" {
-			log.Debugf("Project's %s height is 0 and not moved ahead. Skipping check for stuck", projectId)
-			continue
-		}
-		if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
-			verifier.noOfCyclesSinceChainStuck[projectId]++
-			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
-				log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
-				isDagchainStuckForSummaryProject++
-				var summaryProject SummaryProjectState
-				summaryProject.ProjectHeight = currentDagHeight
-				summaryProject.ProjectId = projectId
-				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
-				dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
+		if currentCycleDAGchainHeight[projectId] != 0 {
+			if currentCycleDAGchainHeight[projectId] < currentMinChainHeight {
+				currentMinChainHeight = currentCycleDAGchainHeight[projectId]
 			}
-			summaryProjectsMovingAheadAfterStuck = false
-		} else {
-			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
-				summaryProjectsMovingAheadAfterStuck = true
-				var summaryProject SummaryProjectState
-				summaryProject.ProjectId = projectId
-				summaryProject.ProjectHeight = currentDagHeight
-				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
-				dagSummary.SummaryProjectsRecovered = append(dagSummary.SummaryProjectsRecovered, summaryProject)
+			if verifier.previousCycleDagChainHeight[projectId] == currentCycleDAGchainHeight[projectId] {
+				verifier.noOfCyclesSinceChainStuck[projectId]++
+			} else {
+				verifier.noOfCyclesSinceChainStuck[projectId] = 0
 			}
-			verifier.noOfCyclesSinceChainStuck[projectId] = 0
+			if verifier.noOfCyclesSinceChainStuck[projectId] > 3 {
+				isDagchainStuckForAnyProject++
+				verifier.dagChainHasIssues = true
+				log.Infof("Dag chain is stuck for project %s at DAG height %d from past 3 cycles of run.",
+					projectId, currentCycleDAGchainHeight[projectId])
+			}
 		}
-		verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
 	}
 
 	//Check if dagChain has issues for any project.
@@ -547,15 +515,13 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotifySlack() {
 	//TODO: Rough suppression logic, not very elegant.
 	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
 	//As of now the workaround is to restart dag-verifier once issues are resolved.
-	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 || isDagchainStuckForSummaryProject > 0 {
+	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
 		if time.Now().Unix()-verifier.lastNotifyTime > verifier.settings.DagVerifierSettings.SuppressNotificationTimeSecs {
 			verifier.NotifySlack(&dagSummary)
 			verifier.lastNotifyTime = time.Now().Unix()
 		}
 	}
-	if summaryProjectsMovingAheadAfterStuck {
-		verifier.NotifySlack(&dagSummary)
-	}
+
 	//Cleanup reported issues, because either they auto-recover or a manual recovery is needed.
 	verifier.dagChainHasIssues = false
 	verifier.dagChainIssues = make(map[string][]DagChainIssue)
@@ -699,14 +665,11 @@ RESTART_CID_COMP_LOOP:
 func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, []DagChainIssue) {
 	dagChain := *chain
 	log.Info("Verifying DAG for Issues. DAG chain length is:", len(dagChain))
-	//fmt.Printf("%+v\n", dagChain)
 	var prevDagBlockEnd, lastBlock, firstBlock, numGaps, numDuplicates int64
 	firstBlock = dagChain[0].Payload.Data.ChainHeightRange.End
 	lastBlock = dagChain[len(dagChain)-1].Payload.Data.ChainHeightRange.Begin
 	var dagIssues []DagChainIssue
 	for i := range dagChain {
-		//TODO: Add logic of out of order identification
-
 		//log.Debug("Processing dag block :", i, "nextDagBlockStart:", nextDagBlockStart)
 		if prevDagBlockEnd != 0 {
 			if dagChain[i].Height == dagChain[i-1].Height {

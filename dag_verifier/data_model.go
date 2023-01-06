@@ -84,12 +84,11 @@ type DagChainBlock struct {
 
 type IssueReport struct {
 	Instanceid       string  `json:"instanceid"`
-	Namespace        string  `json:"namespace"`
+	Namespace        string  `json:"namespace,omitempty"`
 	Severity         string  `json:"severity"`
 	IssueType        string  `json:"issueType"`
 	ProjectID        string  `json:"projectID"`
-	Epochs           []int64 `json:"epochs"`
-	TimeOfReporting  int64   `json:"timeOfReporting"`
+	Epochs           []int64 `json:"epochs,omitempty"`
 	NoOfEpochsBehind int64   `json:"noOfEpochsBehind,omitempty"`
 	Service          string  `json:"service"`
 }
