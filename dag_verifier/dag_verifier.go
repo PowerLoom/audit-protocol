@@ -332,8 +332,6 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 
 func (verifier *DagVerifier) GetPayloadFromCache(projectId string, payloadCid string) (DagPayloadData, error) {
 	var payload DagPayloadData
-	//Remove projectID prefix, for now hard-coding it
-	projectId = projectId[10:]
 	bytes, err := filecache.ReadFromCache(verifier.settings.PayloadCachePath, projectId, payloadCid)
 	if err != nil {
 		if !strings.Contains(err.Error(), "no such file or directory") {
