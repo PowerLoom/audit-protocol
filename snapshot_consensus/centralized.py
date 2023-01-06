@@ -45,7 +45,8 @@ def acquire_bounded_semaphore(fn):
         result = None
         try:
             result = await fn(*args, **kwargs)
-        except:
+        except Exception as e:
+            service_logger.opt(exception=True).error(f'Error in {fn.__name__}: {e}')
             pass
         finally:
             sem.release()
@@ -121,6 +122,7 @@ async def register_peer_against_project(
     try:
         req_parsed: PeerRegistrationRequest = PeerRegistrationRequest.parse_obj(req_json)
     except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in register peer: {}', req_json)
         response.status_code = 400
         return {}
     await request.app.writer_redis_pool.sadd(
@@ -139,7 +141,7 @@ async def submit_snapshot(
     try:
         req_parsed = SnapshotSubmission.parse_obj(req_json)
     except ValidationError:
-        service_logger.error('Bad request in submit snapshot: {}', req_json)
+        service_logger.opt(exception=True).error('Bad request in submit snapshot: {}', req_json)
         response.status_code = 400
         return {}
     service_logger.debug('Snapshot for submission: {}', req_json)
@@ -172,6 +174,7 @@ async def check_submission_status(
     try:
         req_parsed = SnapshotSubmission.parse_obj(req_json)
     except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in check submission status: {}', req_json)
         response.status_code = 400
         return {}
     status, finalized_cid = await check_submissions_consensus(
@@ -202,6 +205,7 @@ async def report_issue(
     try:
         req_parsed = SnapshotterIssue.parse_obj(req_json)
     except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in report issue: {}', req_json)
         return JSONResponse(status_code=400, content={"message": f"Validation Error, invalid Data."})
 
     # Updating time of reporting to avoid manual incorrect time manipulation
@@ -258,6 +262,7 @@ async def epoch_status(
     try:
         req_parsed = SnapshotBase.parse_obj(req_json)
     except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in epoch status: {}', req_json)
         response.status_code = 400
         return {}
     status, finalized_cid = await check_submissions_consensus(

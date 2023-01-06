@@ -168,5 +168,5 @@ class SnapshotterIssue(BaseModel):
     issueType: SnapshotterIssueType
     projectID: str
     epochs: Optional[List[int]]
-    timeOfReporting: int
-    noOfEpochsBehind: int
+    timeOfReporting: Optional[int]
+    noOfEpochsBehind: Optional[int]
