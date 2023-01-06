@@ -738,7 +738,7 @@ class DAGFinalizationCallbackProcessor:
         ))
         tasks = [
             self._httpx_client.post(
-                url=urljoin(f'http://{settings.host}:{settings.port}', '/reportIssue'),
+                url=urljoin(settings.consensus_config.service_url, '/reportIssue'),
                 json=SnapshotterIssue(
                     instanceID=settings.instance_id,
                     severity=SnapshotterIssueSeverity.medium if idx == 1 else SnapshotterIssueSeverity.high,
