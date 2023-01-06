@@ -83,7 +83,7 @@ type DagChainBlock struct {
 }
 
 type IssueReport struct {
-	Instanceid       string  `json:"instanceid"`
+	Instanceid       string  `json:"instanceID"`
 	Namespace        string  `json:"namespace,omitempty"`
 	Severity         string  `json:"severity"`
 	IssueType        string  `json:"issueType"`
