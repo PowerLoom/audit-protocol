@@ -35,3 +35,4 @@ const REDIS_KEY_DAG_VERIFICATION_STATUS string = "projects:dagVerificationStatus
 const REDIS_KEY_PROJECTS_INDEX_STATUS string = "projects:IndexStatus"
 const REDIS_KEY_PROJECT_DAG_CHAIN_GAPS string = "projectID:%s:dagChainGaps"
 const REDIS_KEY_PRUNING_ISSUES string = "%s:pruningIssues"
+const REDIS_KEY_ISSUES_REPORTED string = "monitoring:issueReports"

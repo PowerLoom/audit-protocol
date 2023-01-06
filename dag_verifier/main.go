@@ -3,25 +3,32 @@ package main
 import (
 	// "context"
 
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"sync"
+	"time"
 
+	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/powerloom/goutils/logger"
+	"github.com/powerloom/goutils/redisutils"
 	"github.com/powerloom/goutils/settings"
 	"github.com/powerloom/goutils/slackutils"
 )
 
 var ipfsClient IpfsClient
+var dagVerifier DagVerifier
+
+var settingsObj *settings.SettingsObj
 
 func main() {
 	logger.InitLogger()
-	settingsObj := settings.ParseSettings("../settings.json")
-	var dagVerifier DagVerifier
+	settingsObj = settings.ParseSettings("../settings.json")
 	dagVerifier.Initialize(settingsObj)
 	var wg sync.WaitGroup
 
@@ -34,8 +41,6 @@ func main() {
 		http.ListenAndServe(fmt.Sprint(":", port), nil)
 	}()
 
-	//For now just using settings to determine this in case multiple namespaces are being run.
-	//In future dag verifier would also work with multiple namespaces, this can be removed once implemented.
 	if settingsObj.DagVerifierSettings.PruningVerification {
 		var pruningVerifier PruningVerifier
 		pruningVerifier.Init(settingsObj)
@@ -46,6 +51,7 @@ func main() {
 			pruningVerifier.Run()
 		}()
 	}
+
 	dagVerifier.Run()
 
 	if settingsObj.DagVerifierSettings.PruningVerification {
@@ -69,9 +75,70 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	//Notify on slack and report to consensus layer
-	report, _ := json.MarshalIndent(reqPayload, "", "\t")
-	slackutils.NotifySlackWorkflow(string(report), reqPayload.Severity, reqPayload.Service)
-	//TODO: Notify consensus layer
+	if reqPayload.Service == "" {
+		reqPayload.Service = "monitoring"
+	}
+	reportJson, _ := json.Marshal(reqPayload)
+	//Record issues in redis
+	res := dagVerifier.redisClient.ZAdd(ctx, redisutils.REDIS_KEY_ISSUES_REPORTED, &redis.Z{Score: float64(time.Now().UnixMicro()),
+		Member: reportJson,
+	})
+	if res.Err() != nil {
+		log.Errorf("Failed to add issue to redis due to error %+v", res.Err())
+	}
+	go func() {
+		//Notify on slack and report to consensus layer
+		report, _ := json.MarshalIndent(reqPayload, "", "\t")
+		slackutils.NotifySlackWorkflow(string(report), reqPayload.Severity, reqPayload.Service)
+		// Notify consensus layer
+		ReportIssueToConsensus(&reqPayload)
+		//TODO: Have pruning logic for issues ZSet
+
+	}()
 	w.WriteHeader(http.StatusOK)
+}
+
+func ReportIssueToConsensus(reqPayload *IssueReport) {
+	reqURL := settingsObj.ConsensusConfig.ServiceURL + "/reportIssue"
+	reqBytes, _ := json.Marshal(reqPayload)
+	for retryCount := 0; ; {
+		if retryCount == 3 {
+			log.Errorf("failed to send issueReport to consensus service after max-retry")
+			return
+		}
+		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(reqBytes))
+		if err != nil {
+			log.Fatalf("Failed to create new HTTP Req with URL %s due to error %+v",
+				reqURL, err)
+			return
+		}
+		req.Header.Add("accept", "application/json")
+		log.Debugf("Sending issue report %+v to consensus service URL ",
+			req, reqURL)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			retryCount++
+			log.Errorf("Failed to send request %+v towards consensus service URL %s due to error %+v.  Retrying %d",
+				req, reqURL, err, retryCount)
+			continue
+		}
+		defer res.Body.Close()
+		respBody, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			retryCount++
+			log.Errorf("Failed to read response body from consensus service with error %+v.",
+				err, retryCount)
+			break
+		}
+		if res.StatusCode == http.StatusOK {
+			log.Infof("Reported issue to consensus layer")
+			break
+		} else {
+			retryCount++
+			log.Errorf("Received Error response %+v from consensus service with statusCode %d and status : %s ",
+				respBody, res.StatusCode, res.Status)
+			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
+			continue
+		}
+	}
 }

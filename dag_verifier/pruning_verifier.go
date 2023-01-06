@@ -318,7 +318,6 @@ func (verifier *PruningVerifier) VerifyDAGSegment(projectId string, segment *Pro
 			cid = dagBlock.PrevCid.LinkData
 			continue
 		}
-		//TODO: Add logic for out of order detection
 		if prevBlockChainEndHeight != 0 && payload.ChainHeightRange.Begin == prevBlockChainEndHeight+1 {
 			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
 			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
