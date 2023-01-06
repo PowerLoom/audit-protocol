@@ -88,8 +88,6 @@ class DAGFinalizationCallbackProcessor:
     _ipfs_reader_client: AsyncIPFSClient
 
     def __init__(self):
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        resource.setrlimit(resource.RLIMIT_NOFILE, (settings.rlimit['file_descriptors'], hard))
         self._q = get_rabbitmq_queue_name('dag-processing')
         self._rmq_routing = get_rabbitmq_routing_key('dag-processing')
         formatter = logging.Formatter(
