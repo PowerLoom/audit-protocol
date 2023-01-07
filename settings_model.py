@@ -55,26 +55,31 @@ class RabbitMQConfig(BaseModel):
     setup: RabbitMQSetupConfig
 
 
-class TableNames(BaseModel):
-    api_keys: str
-    accounting_records: str
-    retreivals_single: str
-    retreivals_bulk: str
+class BurstRateLimit(BaseModel):
+    req_per_sec: int
+    burst: int
+
+
+class DAGVerifierSettings(BaseModel):
+    issue_reporter_port: int
+    slack_notify_URL: str
+    notify_suppress_time_secs: int
+    concurrency: int
+    ipfs_rate_limit: BurstRateLimit
+    redis_pool_size: int
+    run_interval_secs: int
+    additional_projects_to_track_prefixes: list
+    pruning_verification: bool
 
 
 class PruneSettings(BaseModel):
     segment_size: int = 700
 
 
-class ConsensusConfigRateLimit(BaseModel):
-    req_per_sec: int
-    burst: int
-
-
 # TODO: move to consensus service module
 class ConsensusConfig(BaseModel):
     service_url: str
-    rate_limit: ConsensusConfigRateLimit
+    rate_limit: BurstRateLimit
     timeout_secs: int
     max_idle_conns: int
     idle_conn_timeout: int
@@ -92,6 +97,7 @@ class Settings(BaseModel):
     rabbitmq: RabbitMQConfig
     audit_contract: str
     contract_call_backend: str
+    dag_verifier: DAGVerifierSettings
     local_cache_path: str
     pruning: PruneSettings
     ipfs_timeout: int

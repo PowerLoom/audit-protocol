@@ -14,6 +14,7 @@ from data_models import (
     PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
     AuditRecordTxEventData, SnapshotterIssue, SnapshotterIssueSeverity
 )
+from itertools import filterfalse
 from tenacity import retry, wait_random_exponential, stop_after_attempt, retry_if_exception_type
 from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
 import httpx._exceptions as httpx_exceptions
@@ -721,24 +722,23 @@ class DAGFinalizationCallbackProcessor:
                     tentative_block_height_event_data, blocks_created
                 )
 
-    async def _dispatch_healing_notifications(self, project_id, tentative_height_cid_map, tentative_height_epoch_match):
-        null_assigned_epochs = list(map(
-            lambda x: tentative_height_epoch_match[x[0]],
-            filter(
-                lambda x: 'null' in x[1],
-                tentative_height_cid_map.items()
-            )
-        ))
-        cid_finalized_epochs = list(map(
-            lambda x: tentative_height_epoch_match[x[0]],
-            filter(
-                lambda x: 'null' not in x[1],
-                tentative_height_cid_map.items()
-            )
-        ))
+    async def _dispatch_healing_notifications(
+            self,
+            project_id: str,
+            tentative_height_cid_map: Dict[int, str],
+            tentative_height_epoch_match: Dict[int, int]
+    ):
+        null_assigned_epochs = list()
+        cid_finalized_epochs = list()
+        for k, v in tentative_height_cid_map.items():
+            if 'null' in v:
+                null_assigned_epochs.append(tentative_height_epoch_match[k])
+            else:
+                cid_finalized_epochs.append(tentative_height_epoch_match[k])
+
         tasks = [
             self._httpx_client.post(
-                url=urljoin(settings.consensus_config.service_url, '/reportIssue'),
+                url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
                 json=SnapshotterIssue(
                     instanceID=settings.instance_id,
                     severity=SnapshotterIssueSeverity.medium if idx == 1 else SnapshotterIssueSeverity.high,
