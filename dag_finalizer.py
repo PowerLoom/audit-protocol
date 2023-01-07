@@ -12,8 +12,9 @@ from typing import Optional, Dict, List
 from urllib.parse import urljoin
 from data_models import (
     PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
-    AuditRecordTxEventData
+    AuditRecordTxEventData, SnapshotterIssue, SnapshotterIssueSeverity
 )
+from itertools import filterfalse
 from tenacity import retry, wait_random_exponential, stop_after_attempt, retry_if_exception_type
 from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
 import httpx._exceptions as httpx_exceptions
@@ -88,8 +89,6 @@ class DAGFinalizationCallbackProcessor:
     _ipfs_reader_client: AsyncIPFSClient
 
     def __init__(self):
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        resource.setrlimit(resource.RLIMIT_NOFILE, (settings.rlimit['file_descriptors'], hard))
         self._q = get_rabbitmq_queue_name('dag-processing')
         self._rmq_routing = get_rabbitmq_routing_key('dag-processing')
         formatter = logging.Formatter(
@@ -666,6 +665,11 @@ class DAGFinalizationCallbackProcessor:
                                 project_id, finalized_block_height_project + 1,
                                 blocks_created
                             )
+                            await self._dispatch_healing_notifications(
+                                project_id,
+                                tentative_height_to_cid_map,
+                                epochs_to_fetch
+                            )
                         else:
                             custom_logger.critical(
                                 'Standalone system | Missing pending tx entry at tentative height %s following '
@@ -717,6 +721,35 @@ class DAGFinalizationCallbackProcessor:
                     'DAG blocks finalized in total: %s',
                     tentative_block_height_event_data, blocks_created
                 )
+
+    async def _dispatch_healing_notifications(
+            self,
+            project_id: str,
+            tentative_height_cid_map: Dict[int, str],
+            tentative_height_epoch_match: Dict[int, int]
+    ):
+        null_assigned_epochs = list()
+        cid_finalized_epochs = list()
+        for k, v in tentative_height_cid_map.items():
+            if 'null' in v:
+                null_assigned_epochs.append(tentative_height_epoch_match[k])
+            else:
+                cid_finalized_epochs.append(tentative_height_epoch_match[k])
+
+        tasks = [
+            self._httpx_client.post(
+                url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
+                json=SnapshotterIssue(
+                    instanceID=settings.instance_id,
+                    severity=SnapshotterIssueSeverity.medium if idx == 1 else SnapshotterIssueSeverity.high,
+                    issueType='MISSED_SNAPSHOT' if idx == 1 else 'SKIP_EPOCH',
+                    projectID=project_id,
+                    epochs=k,
+                    timeOfReporting=int(time.time())
+                ).dict()
+            ) for idx, k in enumerate([null_assigned_epochs, cid_finalized_epochs])
+        ]
+        await asyncio.gather(*tasks)
 
     async def _on_rabbitmq_message(self, message: IncomingMessage):
         event_data = DAGFinalizerCallback.parse_raw(message.body)
