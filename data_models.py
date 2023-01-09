@@ -204,11 +204,11 @@ class SnapshotterIssue(BaseModel):
     extra: Optional[dict]
 
 class PeerRegistrationRequest(BaseModel):
-    projectIDs: str
+    projectID: str
     instanceID: str
 
 class ProjectRegistrationRequest(BaseModel):
-    projectIDs: list[str]
+    projectIDs: List[str]
 
 
 class IndexingRegistrationData(BaseModel):
@@ -216,5 +216,5 @@ class IndexingRegistrationData(BaseModel):
     indexerConfig: Dict
 
 class ProjectRegistrationRequestForIndexing(BaseModel):
-    projects: list[IndexingRegistrationData]
+    projects: List[IndexingRegistrationData]
     namespace: str

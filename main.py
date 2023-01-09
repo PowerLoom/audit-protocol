@@ -25,7 +25,7 @@ from redis import asyncio as aioredis
 import redis
 import time
 import asyncio
-
+import httpx
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -651,13 +651,13 @@ async def register_projects(
 ):
     req_json = await request.json()
     try:
-        project_registration_request = ProjectRegistrationRequest(**req_json)
+        project_registration_request = ProjectRegistrationRequest.parse_obj(req_json)
     except ValidationError:        
         response.status_code = 400
         return {'error': 'Bad request'}
 
 
-    writer_redis_conn: aioredis.Redis = request.app.state.reader_write_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
 
     await writer_redis_conn.sadd(
         redis_keys.get_stored_project_ids_key(),
@@ -691,13 +691,13 @@ async def register_projects_for_indexing(
 ):
     req_json = await request.json()
     try:
-        indexing_data = ProjectRegistrationRequestForIndexing(**req_json)
+        indexing_data = ProjectRegistrationRequestForIndexing.parse_obj(req_json)
     except ValidationError:        
         response.status_code = 400
         return {'error': 'Bad request'}
 
 
-    writer_redis_conn: aioredis.Redis = request.app.state.reader_write_pool
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
 
     project_ids = dict()
     for project_indexer_data in indexing_data.projects:
