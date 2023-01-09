@@ -670,7 +670,7 @@ func CommitTokenSummaryPayload() error {
 	request.ProjectId = fmt.Sprintf(TOKENSUMMARY_PROJECTID, NAMESPACE)
 	request.Payload.TokensData = make([]*TokenData, len(tokenList))
 	request.Web3Storage = true //Always store TokenData snapshot in web3.storage.
-	request.SkipAnchorProof = false
+	request.SkipAnchorProof = true
 	var i int
 	for _, tokenData := range tokenList {
 		request.Payload.TokensData[i] = tokenData
