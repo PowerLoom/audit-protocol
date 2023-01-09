@@ -61,10 +61,10 @@ module.exports = {
       },
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
-/*     {
+    {
       name   : "ap-token-aggregator",
       script : "./uniswapTokenData",
-      cwd : CWD+"token-aggregator",
+      cwd : `${__dirname}/token-aggregator`,
       max_restarts: MAX_RESTART,
       env: {
         NODE_ENV: NODE_ENV,
@@ -74,14 +74,13 @@ module.exports = {
     {
       name   : "ap-proto-indexer",
       script : `${INTERPRETER} ${__dirname}/proto_sliding_window_cacher_service.py`,
-      cwd : CWD,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV
       }
-    }, */
+    },
     {
       name   : "ap-dag-verifier",
       script : "./dagChainVerifier",

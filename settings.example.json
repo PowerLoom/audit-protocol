@@ -110,6 +110,9 @@
 		"redis_pool_size":20,
 		"run_interval_secs": 300,
 		"additional_projects_to_track_prefixes" :[
+			"uniswap_V2PairsSummarySnapshot",
+			"uniswap_V2TokensSummarySnapshot",
+			"uniswap_V2DailyStatsSnapshot"
 		],
 		"pruning_verification": false
 	},

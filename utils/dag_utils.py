@@ -40,7 +40,7 @@ async def send_commit_callback(httpx_session: AsyncClient, url, payload):
     if type(url) is bytes:
         url = url.decode('utf-8')
     resp = await httpx_session.post(url=url, json=payload)
-    json_response = await resp.json()
+    json_response = resp.json()
     return json_response
 
 
