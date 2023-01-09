@@ -9,7 +9,7 @@ then
 	echo "Found maticvigil files"
 else
 	echo "Error: No mactivigil files found. Make sure you have settings.json and account_info.json in your $HOME/.maticvigil directory"
-	exit 1
+	#exit 1
 fi
 
 
