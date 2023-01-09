@@ -257,3 +257,6 @@ def get_uniswap_pair_cache_sliding_window_data(pair_address):
 
 def get_uniswap_projects_dag_verifier_status(current_namespace):
     return "projects:"+current_namespace+":dagVerificationStatus"
+
+def get_projects_registered_for_cache_indexing_key_with_namespace(namespace):
+    return f'cache:indexesRequested:{namespace}'
