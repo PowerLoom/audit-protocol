@@ -268,7 +268,7 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 	}
 	payloadCommit.TentativeBlockHeight = tentativeBlockHeight
 	var ipfsStatus bool
-	if payloadCommit.Web3Storage || settingsObj.Web3Storage.APIToken != "" {
+	if payloadCommit.Web3Storage && settingsObj.Web3Storage.APIToken != "" {
 		var wg sync.WaitGroup
 		var w3sStatus bool
 		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Uploading payload to web3.storage and IPFS.",
