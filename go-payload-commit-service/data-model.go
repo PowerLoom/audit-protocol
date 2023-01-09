@@ -41,6 +41,7 @@ type PayloadCommit struct {
 	Web3Storage           bool   `json:"web3Storage"`       //This flag indicates to store the payload in web3.storage instead of IPFS.
 	SkipAnchorProof       bool   `json:"skipAnchorProof"`
 	ConsensusSubmissionTs int64  `json:"-"`
+	IsSummaryProject      bool   `json:"-"`
 }
 
 type _ChainHeightRange_ struct {
