@@ -12,7 +12,8 @@ from utils import redis_keys
 from functools import partial
 from utils import retrieval_utils
 from utils.diffmap_utils import process_payloads_for_diff
-from data_models import PayloadCommit, PayloadCommitAPIRequest
+from data_models import PayloadCommit, PayloadCommitAPIRequest, PeerRegistrationRequest, ProjectRegistrationRequest, ProjectRegistrationRequestForIndexing
+from config import settings
 
 from pydantic import ValidationError
 from aio_pika import DeliveryMode, Message
@@ -24,7 +25,7 @@ from redis import asyncio as aioredis
 import redis
 import time
 import asyncio
-
+import httpx
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -641,3 +642,68 @@ async def get_block_data(
 
     """ Return the payload data """
     return {prev_dag_cid: payload}
+
+
+@app.post('/registerProjects')
+async def register_projects(
+        request: Request,
+        response: Response,
+):
+    req_json = await request.json()
+    try:
+        project_registration_request = ProjectRegistrationRequest.parse_obj(req_json)
+    except ValidationError:        
+        response.status_code = 400
+        return {'error': 'Bad request'}
+
+
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
+
+    await writer_redis_conn.sadd(
+        redis_keys.get_stored_project_ids_key(),
+        *project_registration_request.projectIDs
+    )
+
+    client = httpx.Client(limits=httpx.Limits(
+        max_connections=20, max_keepalive_connections=20
+    ))
+
+    failed_tasks = []
+    # Skip summary and stats projectIDs
+    projects_for_consensus = filter(lambda project_id: "Summary" not in project_id and "Stats" not in project_id, project_registration_request.projectIDs)
+    for project_id in projects_for_consensus:
+        r = client.post(
+            url=settings.consensus_config.service_url + "/registerProjectPeer",
+            json=PeerRegistrationRequest(projectID = project_id, instanceID = settings.instance_id).dict()
+        )
+        if r.status_code != 200:
+            failed_tasks.append(project_id)
+
+    if len(failed_tasks) > 0:
+        return {'error': f'Could not register all project peers, failed tasks: {failed_tasks}'}
+
+    return {'success': True}
+
+@app.post('/registerProjectsForIndexing')
+async def register_projects_for_indexing(
+        request: Request,
+        response: Response,
+):
+    req_json = await request.json()
+    try:
+        indexing_data = ProjectRegistrationRequestForIndexing.parse_obj(req_json)
+    except ValidationError:        
+        response.status_code = 400
+        return {'error': 'Bad request'}
+
+
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
+
+    project_ids = dict()
+    for project_indexer_data in indexing_data.projects:
+
+        project_ids.update({project_indexer_data.projectID: json.dumps(project_indexer_data.indexerConfig)})
+
+    await writer_redis_conn.hset(redis_keys.get_projects_registered_for_cache_indexing_key_with_namespace(indexing_data.namespace), mapping=project_ids)
+
+    return {'success': True}
