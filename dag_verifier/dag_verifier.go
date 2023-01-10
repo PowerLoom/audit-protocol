@@ -90,17 +90,19 @@ func (verifier *DagVerifier) PopulateProjects() {
 
 		for i := range res.Val() {
 			projectId := res.Val()[i]
-			skipAdd := false
-			//TODO: SummaryPRoject tracking to be added back by finding out from projectState
+			isSummaryProject := false
 			for j := range verifier.settings.DagVerifierSettings.SummaryProjectsToTrack {
 				if strings.Contains(projectId, verifier.settings.DagVerifierSettings.SummaryProjectsToTrack[j]) {
 					log.Infof("Removing summary Project %s from tracking", projectId)
-					skipAdd = true
+					isSummaryProject = true
 					break
 				}
 			}
-			if !skipAdd {
+			if !isSummaryProject {
 				verifier.projects = append(verifier.projects, projectId)
+			} else {
+				//TODO: SummaryProject tracking to be added back by finding out from projectState
+				verifier.SummaryProjects = append(verifier.SummaryProjects, projectId)
 			}
 		}
 		break
@@ -451,6 +453,8 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 	var currentMinChainHeight int64
 	currentMinChainHeight, _ = strconv.ParseInt(verifier.lastVerifiedDagBlockHeights[verifier.projects[0]], 10, 64)
 	isDagchainStuckForAnyProject := 0
+	summaryProjectsMovingAheadAfterStuck := false
+
 	//Check if dag chain is stuck for any project.
 	for _, projectId := range verifier.projects {
 		var err error
@@ -478,7 +482,39 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 			}
 		}
 	}
-
+	isDagchainStuckForSummaryProject := 0
+	for j := range verifier.SummaryProjects {
+		projectId := verifier.SummaryProjects[j]
+		currentDagHeight := verifier.GetProjectDAGBlockHeightFromRedis(projectId)
+		if currentDagHeight == "0" {
+			log.Debugf("Project's %s height is 0 and not moved ahead. Skipping check for stuck", projectId)
+			continue
+		}
+		if currentDagHeight == verifier.lastVerifiedDagBlockHeights[projectId] {
+			verifier.noOfCyclesSinceChainStuck[projectId]++
+			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+				log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
+				isDagchainStuckForSummaryProject++
+				var summaryProject SummaryProjectState
+				summaryProject.ProjectHeight = currentDagHeight
+				summaryProject.ProjectId = projectId
+				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
+				dagSummary.SummaryProjectsStuckDetails = append(dagSummary.SummaryProjectsStuckDetails, summaryProject)
+			}
+			summaryProjectsMovingAheadAfterStuck = false
+		} else {
+			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
+				summaryProjectsMovingAheadAfterStuck = true
+				var summaryProject SummaryProjectState
+				summaryProject.ProjectId = projectId
+				summaryProject.ProjectHeight = currentDagHeight
+				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
+				dagSummary.SummaryProjectsRecovered = append(dagSummary.SummaryProjectsRecovered, summaryProject)
+			}
+			verifier.noOfCyclesSinceChainStuck[projectId] = 0
+		}
+		verifier.lastVerifiedDagBlockHeights[projectId] = currentDagHeight
+	}
 	//Check if dagChain has issues for any project.
 	if verifier.dagChainHasIssues {
 		dagSummary.ProjectsTrackedCount = len(verifier.projects)
@@ -513,13 +549,15 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 	//TODO: Rough suppression logic, not very elegant.
 	//Better to have a method to clear this notificationTime manually via SIGUR or some other means once problem is addressed.
 	//As of now the workaround is to restart dag-verifier once issues are resolved.
-	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 {
+	if verifier.dagChainHasIssues || isDagchainStuckForAnyProject > 0 || isDagchainStuckForSummaryProject > 0 {
 		if time.Now().Unix()-verifier.lastNotifyTime > verifier.settings.DagVerifierSettings.SuppressNotificationTimeSecs {
 			verifier.NotifySlack(&dagSummary)
 			verifier.lastNotifyTime = time.Now().Unix()
 		}
 	}
-
+	if summaryProjectsMovingAheadAfterStuck {
+		verifier.NotifySlack(&dagSummary)
+	}
 	//Cleanup reported issues, because either they auto-recover or a manual recovery is needed.
 	verifier.dagChainHasIssues = false
 	verifier.dagChainIssues = make(map[string][]DagChainIssue)
