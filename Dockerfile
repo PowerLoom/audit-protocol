@@ -29,7 +29,6 @@ COPY token-aggregator/go.sum .
 RUN go mod download
 RUN pip3 install supervisor
 RUN apt-get install -y python-is-python3
-EXPOSE 5001
 COPY . .
 COPY docker/ma.conf /etc/supervisord.conf
 CMD chmod +x docker/run_services.sh
