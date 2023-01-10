@@ -158,7 +158,8 @@ async def submit_snapshot(
     consensus_status, finalized_cid = await register_submission(req_parsed, cur_ts, request.app.writer_redis_pool)
     # if consensus achieved, set the key
     if finalized_cid:
-        await request.app.writer_redis_pool.set(name=get_epoch_project_status_key(req_parsed.projectID, req_parsed.epoch.end), value=EpochConsensusStatus.consensus_achieved)
+        await request.app.writer_redis_pool.sadd(get_project_finalized_epochs_key(req_parsed.projectID), req_parsed.epoch.end)
+
     response_obj.status = consensus_status
     response_obj.finalizedSnapshotCID = finalized_cid
     response.body = response_obj
@@ -223,7 +224,7 @@ async def report_issue(
 
 
 @app.get("/epochDetails", response_model=EpochDetails, responses={404: {"model": Message}})
-async def epoch_details(project_id: str, request: Request, response: Response, epoch: int = Query(default=0, gte=0)):
+async def epoch_details(request: Request, response: Response, epoch: int = Query(default=0, gte=0)):
     if epoch == 0:
         epoch = int(await app.reader_redis_pool.get(get_epoch_generator_last_epoch()))
     
@@ -236,25 +237,29 @@ async def epoch_details(project_id: str, request: Request, response: Response, e
         return JSONResponse(status_code=404, content={"message": f"No epoch found with Epoch End Time {epoch}"})
 
     epoch_release_time = int(epoch_release_time)
-    if epoch_release_time + settings.consensus_service.submission_window > int(time.time()):
-        epoch_status = EpochStatus.in_progress
-    else:
-        epoch_status = EpochStatus.finalized
 
-    project_keys = await request.app.reader_redis_pool.keys(
-        get_project_ids()
-    )
+    project_keys = []
+    finalized_projects_count = 0
+    projectID_pattern = "projectID:*:centralizedConsensus:peers"
+    async for project_id in request.app.reader_redis_pool.scan_iter(match=projectID_pattern):
+        project_id = project_id.decode("utf-8").split(":")[1]
+        project_keys.append(project_id)
+        if await request.app.reader_redis_pool.sismember(get_project_finalized_epochs_key(project_id), epoch):
+            finalized_projects_count += 1
+
     total_projects = len(project_keys)
 
-    projects_with_consensus = await request.app.reader_redis_pool.keys(get_epoch_finalized_projects_key(epoch))
-    total_projects_with_consensus = len(projects_with_consensus)
+    if finalized_projects_count == total_projects:
+        epoch_status = EpochStatus.finalized
+    else:
+        epoch_status = EpochStatus.in_progress
 
     return EpochDetails(
         epochEndHeight = epoch,
         releaseTime = epoch_release_time,
         status = epoch_status,
         totalProjects = total_projects,
-        projectsFinalized = total_projects_with_consensus
+        projectsFinalized = finalized_projects_count
     )
 
 
@@ -287,10 +292,12 @@ async def get_projects(request: Request, response: Response):
     """
     Returns a list of project IDs that are being tracked for consensus.
     """
-    project_keys = await request.app.reader_redis_pool.keys(
-        get_project_ids()
-    )
-    projects = [key.decode("utf-8").split(":")[1] for key in project_keys]
+    projects = []
+
+    projectID_pattern = "projectID:*:centralizedConsensus:peers"
+    async for project_id in request.app.reader_redis_pool.scan_iter(match=projectID_pattern, count=100):
+        projects.append(project_id.decode("utf-8").split(":")[1])
+
     return projects
 
 
@@ -327,9 +334,11 @@ async def get_epochs(project_id: str, request: Request,
     """
     Returns a list of epochs whose state is currently available in the consensus service for the given project.
     """
-    epoch_keys = await request.app.reader_redis_pool.keys(
-        get_project_epochs(project_id)
-    )
+    epoch_keys = []
+    epoch_pattern = f"projectID:{project_id}:[0-9]*:centralizedConsensus:epochSubmissions"
+    async for epoch_key in request.app.reader_redis_pool.scan_iter(match=epoch_pattern, count=500):
+        epoch_keys.append(epoch_key)
+
     if not epoch_keys:
         return JSONResponse(status_code=404, content={"message": f"No epochs found for project {project_id}. Either project is not valid or was just added."})
 
