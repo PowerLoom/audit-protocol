@@ -214,6 +214,11 @@ async def report_issue(
         name=get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.instanceID), 
         mapping={json.dumps(req_parsed.dict()): req_parsed.timeOfReporting})
 
+    # pruning expired items
+    request.app.writer_redis_pool.zremrangebyscore(
+        get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.instanceID), 0, int(time.time()) - (7*24*60*60)
+        )
+
     return JSONResponse(status_code=200, content={"message": f"Reported Issue."})
 
 
