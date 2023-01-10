@@ -142,6 +142,12 @@ async def create_dag_block_update_project_state(tx_hash, request_id, project_id,
                                                 fetch_prev_cid_for_dag_block_creation, parent_cid_height_diff,
                                                 ipfs_write_client, httpx_client: AsyncClient,
                                                 custom_logger_obj):
+    # Safely assuming this check will work as snapshotCID shall not start with null unless we are trying to create an empty dag block.
+    # Need to be refined to come up with a more elegant way to represent empty dag-block.
+    if snapshot_cid.startswith('null'):
+        logger.info("Creating an DAG block with null payload for project %s !!!!",
+                    project_id)
+        snapshot_cid=""
     _dag_cid, dag_block = await create_dag_block(
         tx_hash=tx_hash,
         project_id=project_id,
