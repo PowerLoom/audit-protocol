@@ -1,8 +1,9 @@
 from .data_models import (
     SnapshotSubmission, SubmissionResponse, PeerRegistrationRequest, SubmissionAcceptanceStatus, SnapshotBase,
-    EpochConsensusStatus, Snapshotters, Epoch, EpochData, EpochDataPage, Submission, SubmissionStatus, Message, EpochInfo
+    EpochConsensusStatus, Snapshotters, Epoch, EpochData, EpochDataPage, Submission, SubmissionStatus, Message, EpochInfo,
+    EpochStatus, EpochDetails, SnapshotterIssue
 )
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from fastapi.responses import JSONResponse
 from .conf import settings
 from .helpers.state import submission_delayed, register_submission, check_consensus, check_submissions_consensus
@@ -20,22 +21,21 @@ import sys
 import json
 import redis
 import time
+import uuid
 import asyncio
 import uvicorn
+from loguru import logger
 
-formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
-stdout_handler = logging.StreamHandler(sys.stdout)
-stdout_handler.setLevel(logging.DEBUG)
-# stdout_handler.setFormatter(formatter)
+FORMAT = '{time:MMMM D, YYYY > HH:mm:ss!UTC} | {level} | {message}| {extra}'
 
-stderr_handler = logging.StreamHandler(sys.stderr)
-stderr_handler.setLevel(logging.ERROR)
-# stderr_handler.setFormatter(formatter)
-service_logger = logging.getLogger(__name__)
-service_logger.setLevel(logging.DEBUG)
-service_logger.addHandler(stdout_handler)
-service_logger.addHandler(stderr_handler)
+logger.remove(0)
+logger.add(sys.stdout, level='DEBUG', format=FORMAT)
+logger.add(sys.stderr, level='WARNING', format=FORMAT)
+logger.add(sys.stderr, level='ERROR', format=FORMAT)
+
+service_logger = logger.bind(service='consensus_service')
+
 
 def acquire_bounded_semaphore(fn):
     @wraps(fn)
@@ -45,7 +45,8 @@ def acquire_bounded_semaphore(fn):
         result = None
         try:
             result = await fn(*args, **kwargs)
-        except:
+        except Exception as e:
+            service_logger.opt(exception=True).error(f'Error in {fn.__name__}: {e}')
             pass
         finally:
             sem.release()
@@ -68,6 +69,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+@app.middleware('http')
+async def request_middleware(request: Request, call_next: Any) -> Optional[Dict]:
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    with service_logger.contextualize(request_id=request_id):
+        service_logger.info('Request started')
+        try:
+            response = await call_next(request)
+
+        except Exception as ex:
+            service_logger.opt(exception=True).error(f'Request failed: {ex}')
+            
+            response = JSONResponse(
+                content={
+                    'info':
+                        {
+                            'success': False,
+                            'response': 'Internal Server Error',
+                        },
+                    'request_id': request_id,
+                }, status_code=500,
+            )
+
+        finally:
+            response.headers['X-Request-ID'] = request_id
+            service_logger.info('Request ended')
+            return response
 
 
 @app.on_event('startup')
@@ -92,6 +122,7 @@ async def register_peer_against_project(
     try:
         req_parsed: PeerRegistrationRequest = PeerRegistrationRequest.parse_obj(req_json)
     except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in register peer: {}', req_json)
         response.status_code = 400
         return {}
     await request.app.writer_redis_pool.sadd(
@@ -110,10 +141,10 @@ async def submit_snapshot(
     try:
         req_parsed = SnapshotSubmission.parse_obj(req_json)
     except ValidationError:
-        service_logger.error('Bad request in submit snapshot: %s', req_json)
+        service_logger.opt(exception=True).error('Bad request in submit snapshot: {}', req_json)
         response.status_code = 400
         return {}
-    service_logger.debug('Snapshot for submission: %s', req_json)
+    service_logger.debug('Snapshot for submission: {}', req_json)
     # get last accepted epoch?
     if await submission_delayed(
         project_id=req_parsed.projectID,
@@ -125,6 +156,10 @@ async def submit_snapshot(
     else:
         response_obj = SubmissionResponse(status=SubmissionAcceptanceStatus.accepted, delayedSubmission=False)
     consensus_status, finalized_cid = await register_submission(req_parsed, cur_ts, request.app.writer_redis_pool)
+    # if consensus achieved, set the key
+    if finalized_cid:
+        await request.app.writer_redis_pool.sadd(get_project_finalized_epochs_key(req_parsed.projectID), req_parsed.epoch.end)
+
     response_obj.status = consensus_status
     response_obj.finalizedSnapshotCID = finalized_cid
     response.body = response_obj
@@ -140,6 +175,7 @@ async def check_submission_status(
     try:
         req_parsed = SnapshotSubmission.parse_obj(req_json)
     except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in check submission status: {}', req_json)
         response.status_code = 400
         return {}
     status, finalized_cid = await check_submissions_consensus(
@@ -161,6 +197,72 @@ async def check_submission_status(
         ).dict()
 
 
+@app.post('/reportIssue')
+async def report_issue(
+        request: Request,
+        response: Response
+):
+    req_json = await request.json()
+    try:
+        req_parsed = SnapshotterIssue.parse_obj(req_json)
+    except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in report issue: {}', req_json)
+        return JSONResponse(status_code=400, content={"message": f"Validation Error, invalid Data."})
+
+    # Updating time of reporting to avoid manual incorrect time manipulation
+    req_parsed.timeOfReporting= int(time.time())
+    await request.app.writer_redis_pool.zadd(
+        name=get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.instanceID), 
+        mapping={json.dumps(req_parsed.dict()): req_parsed.timeOfReporting})
+
+    # pruning expired items
+    request.app.writer_redis_pool.zremrangebyscore(
+        get_snapshotter_issues_reported_key(snapshotter_id=req_parsed.instanceID), 0, int(time.time()) - (7*24*60*60)
+        )
+
+    return JSONResponse(status_code=200, content={"message": f"Reported Issue."})
+
+
+@app.get("/epochDetails", response_model=EpochDetails, responses={404: {"model": Message}})
+async def epoch_details(request: Request, response: Response, epoch: int = Query(default=0, gte=0)):
+    if epoch == 0:
+        epoch = int(await app.reader_redis_pool.get(get_epoch_generator_last_epoch()))
+    
+    epoch_release_time = await app.reader_redis_pool.zscore(
+        get_epoch_generator_epoch_history(),
+        json.dumps({"begin":epoch-settings.chain.epoch.height+1,"end":epoch})
+    )
+    
+    if not epoch_release_time:
+        return JSONResponse(status_code=404, content={"message": f"No epoch found with Epoch End Time {epoch}"})
+
+    epoch_release_time = int(epoch_release_time)
+
+    project_keys = []
+    finalized_projects_count = 0
+    projectID_pattern = "projectID:*:centralizedConsensus:peers"
+    async for project_id in request.app.reader_redis_pool.scan_iter(match=projectID_pattern):
+        project_id = project_id.decode("utf-8").split(":")[1]
+        project_keys.append(project_id)
+        if await request.app.reader_redis_pool.sismember(get_project_finalized_epochs_key(project_id), epoch):
+            finalized_projects_count += 1
+
+    total_projects = len(project_keys)
+
+    if finalized_projects_count == total_projects:
+        epoch_status = EpochStatus.finalized
+    else:
+        epoch_status = EpochStatus.in_progress
+
+    return EpochDetails(
+        epochEndHeight = epoch,
+        releaseTime = epoch_release_time,
+        status = epoch_status,
+        totalProjects = total_projects,
+        projectsFinalized = finalized_projects_count
+    )
+
+
 @app.post('/epochStatus')
 async def epoch_status(
         request: Request,
@@ -170,6 +272,7 @@ async def epoch_status(
     try:
         req_parsed = SnapshotBase.parse_obj(req_json)
     except ValidationError:
+        service_logger.opt(exception=True).error('Bad request in epoch status: {}', req_json)
         response.status_code = 400
         return {}
     status, finalized_cid = await check_submissions_consensus(
@@ -189,11 +292,12 @@ async def get_projects(request: Request, response: Response):
     """
     Returns a list of project IDs that are being tracked for consensus.
     """
-    project_keys = await request.app.reader_redis_pool.keys(
-        get_project_ids()
-    )
+    projects = []
 
-    projects = [key.decode("utf-8").split(":")[1] for key in project_keys]
+    projectID_pattern = "projectID:*:centralizedConsensus:peers"
+    async for project_id in request.app.reader_redis_pool.scan_iter(match=projectID_pattern, count=100):
+        projects.append(project_id.decode("utf-8").split(":")[1])
+
     return projects
 
 
@@ -230,9 +334,11 @@ async def get_epochs(project_id: str, request: Request,
     """
     Returns a list of epochs whose state is currently available in the consensus service for the given project.
     """
-    epoch_keys = await request.app.reader_redis_pool.keys(
-        get_project_epochs(project_id)
-    )
+    epoch_keys = []
+    epoch_pattern = f"projectID:{project_id}:[0-9]*:centralizedConsensus:epochSubmissions"
+    async for epoch_key in request.app.reader_redis_pool.scan_iter(match=epoch_pattern, count=500):
+        epoch_keys.append(epoch_key)
+
     if not epoch_keys:
         return JSONResponse(status_code=404, content={"message": f"No epochs found for project {project_id}. Either project is not valid or was just added."})
 
@@ -260,6 +366,18 @@ async def get_epochs(project_id: str, request: Request,
      "prev_page": None if page == 1 else f"/metrics/{project_id}/epochs?page={page-1}&limit={limit}",
      "data": data
     }
+
+
+@app.get("/metrics/{snapshotter_id}/issues", response_model=List[SnapshotterIssue], responses={404: {"model": Message}})
+async def get_snapshotter_issues(snapshotter_id: str, request: Request,
+        response: Response):
+
+    issues_with_scores = await request.app.reader_redis_pool.zrevrange(get_snapshotter_issues_reported_key(snapshotter_id), 0, -1, withscores=True)
+    issues = []
+    for issue in issues_with_scores:
+        issues.append(SnapshotterIssue(**json.loads(issue[0])))
+
+    return issues
 
 # Submission details for an epoch '/metrics/{projectid}/{epoch}/submissionStatus' .
 # This shall include whether consensus has been achieved along with final snapshotCID.
