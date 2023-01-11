@@ -743,7 +743,7 @@ class DAGFinalizationCallbackProcessor:
                     json=SnapshotterIssue(
                         instanceID=settings.instance_id,
                         severity=SnapshotterIssueSeverity.high,
-                        issueType='MISSED_SNAPSHOT',
+                        issueType='SKIP_EPOCH',
                         projectID=project_id,
                         epochs=null_assigned_epochs,
                         timeOfReporting=int(time.time()),
@@ -758,7 +758,7 @@ class DAGFinalizationCallbackProcessor:
                     json=SnapshotterIssue(
                         instanceID=settings.instance_id,
                         severity=SnapshotterIssueSeverity.medium,
-                        issueType='SKIP_EPOCH',
+                        issueType='MISSED_SNAPSHOT',
                         projectID=project_id,
                         epochs=cid_finalized_epochs,
                         timeOfReporting=int(time.time()),
