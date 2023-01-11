@@ -258,6 +258,8 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 		}
 		tentativeBlockHeight = lastTentativeBlockHeight + 1
 		updateTentativeBlockHeightState = true
+		//TODO: For now taking this shortcut..but this should ideally be derived from projectState.
+		payloadCommit.IsSummaryProject = true
 	} else {
 		tentativeBlockHeight = AssignTentativeHeight(payloadCommit)
 		if tentativeBlockHeight == 0 {
@@ -266,7 +268,7 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 	}
 	payloadCommit.TentativeBlockHeight = tentativeBlockHeight
 	var ipfsStatus bool
-	if payloadCommit.Web3Storage {
+	if payloadCommit.Web3Storage && settingsObj.Web3Storage.APIToken != "" {
 		var wg sync.WaitGroup
 		var w3sStatus bool
 		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Uploading payload to web3.storage and IPFS.",
@@ -458,8 +460,9 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
 			return true
 		}
-		//Wait for consensus
-		if settingsObj.UseConsensus && !payloadCommit.Resubmitted {
+		//Wait for consensus.
+		//Skip consensus in case of summmaryProject until aggregation logic is fixed.
+		if settingsObj.UseConsensus && !payloadCommit.IsSummaryProject && !payloadCommit.Resubmitted {
 			//In case of resubmission, no need to go for consensus again.
 			//TODO: Move this queue to redis
 			status, err := SubmitSnapshotForConsensus(&payloadCommit)

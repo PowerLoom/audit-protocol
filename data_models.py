@@ -202,3 +202,19 @@ class SnapshotterIssue(BaseModel):
     timeOfReporting: int
     noOfEpochsBehind: Optional[int]
     extra: Optional[dict]
+
+class PeerRegistrationRequest(BaseModel):
+    projectID: str
+    instanceID: str
+
+class ProjectRegistrationRequest(BaseModel):
+    projectIDs: List[str]
+
+
+class IndexingRegistrationData(BaseModel):
+    projectID: str
+    indexerConfig: Dict
+
+class ProjectRegistrationRequestForIndexing(BaseModel):
+    projects: List[IndexingRegistrationData]
+    namespace: str

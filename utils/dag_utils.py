@@ -40,7 +40,7 @@ async def send_commit_callback(httpx_session: AsyncClient, url, payload):
     if type(url) is bytes:
         url = url.decode('utf-8')
     resp = await httpx_session.post(url=url, json=payload)
-    json_response = await resp.json()
+    json_response = resp.json()
     return json_response
 
 
@@ -109,8 +109,6 @@ async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPF
                     e_obj = ex
         except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
             e_obj = err
-
-
         if e_obj or cm.expired:
             return {}
     else:
@@ -142,6 +140,12 @@ async def create_dag_block_update_project_state(tx_hash, request_id, project_id,
                                                 fetch_prev_cid_for_dag_block_creation, parent_cid_height_diff,
                                                 ipfs_write_client, httpx_client: AsyncClient,
                                                 custom_logger_obj):
+    # Safely assuming this check will work as snapshotCID shall not start with null unless we are trying to create an empty dag block.
+    # Need to be refined to come up with a more elegant way to represent empty dag-block.
+    if snapshot_cid.startswith('null'):
+        logger.info("Creating an DAG block with null payload for project %s !!!!",
+                    project_id)
+        snapshot_cid=""
     _dag_cid, dag_block = await create_dag_block(
         tx_hash=tx_hash,
         project_id=project_id,

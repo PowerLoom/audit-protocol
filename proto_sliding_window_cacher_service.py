@@ -63,7 +63,10 @@ async def find_tail(
         redis_conn: aioredis.Redis,
         ipfs_read_client: AsyncIPFSClient
 ):
-    sliding_cacher_logger.debug(f"Seeking tail starting for projectId: {project_id}:{time_period_ts}")
+    sliding_cacher_logger.debug("Seeking tail starting for projectId: %s:%d",
+                                project_id,
+                                time_period_ts
+    )
 
     current_height = tail
     head_block = await retrieval_utils.get_dag_block_by_height(
@@ -74,18 +77,28 @@ async def find_tail(
     )
     present_ts = head_block['data']['payload']['timestamp']
     while current_height < head:
-        dag_block = await retrieval_utils.get_dag_block_by_height(
-            project_id=project_id,
-            block_height=current_height,
-            reader_redis_conn=redis_conn,
-            ipfs_read_client=ipfs_read_client
-        )
-        if dag_block and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
-            sliding_cacher_logger.debug(f"Found tail after traversing {abs(current_height - tail)} blocks for projectId: {project_id}:{time_period_ts}")
-            return current_height
+        try:
+            dag_block = await retrieval_utils.get_dag_block_by_height(
+                project_id=project_id,
+                block_height=current_height,
+                reader_redis_conn=redis_conn,
+                ipfs_read_client=ipfs_read_client
+            )
+            if dag_block and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
+                sliding_cacher_logger.debug("Found tail after traversing %s blocks for projectId: %s:%d",
+                                            abs(current_height - tail),
+                                            project_id,
+                                            time_period_ts
+                )
+                return current_height
+        except Exception as err:
+            sliding_cacher_logger.error("Exception while fetching dag_block at height %s for projectId: %s. Error:%s",
+            current_height,
+            project_id,
+            err, exc_info=True)
         current_height += 1
 
-    sliding_cacher_logger.error(f"Could not find tail for projectId:{project_id}")
+    sliding_cacher_logger.error("Could not find tail for projectId:%s", project_id)
     return None
 
 

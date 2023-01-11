@@ -229,7 +229,7 @@ async def v2_pairs_daily_stats_snapshotter(
                     project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
                     report_payload=summarized_payload,
                     session=async_httpx_client,
-                    skipAnchorProof=False
+                    skipAnchorProof=True
                 )
             except Exception as exc:
                 logger.error(

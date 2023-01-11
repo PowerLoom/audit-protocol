@@ -209,7 +209,11 @@ async def retrieve_block_data(
         return block
     payload = dict()
     """ Get the payload Data """
-    payload_data = await retrieve_payload_data(block['data']['cid']['/'], project_id)
+    payload_data = await retrieve_payload_data(
+                    payload_cid=block['data']['cid']['/'],
+                    project_id=project_id,
+                    ipfs_read_client=ipfs_read_client
+    )
 
     payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
@@ -267,7 +271,8 @@ async def retrieve_payload_data(
         payload_cid,project_id)
         # Get the payload Data from ipfs
         _payload_data = await ipfs_read_client.cat(payload_cid)
-        payload_data = _payload_data.decode('utf-8')
+        if not isinstance(_payload_data,str):
+            payload_data = _payload_data.decode('utf-8')
 
     return payload_data
 
