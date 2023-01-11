@@ -1,10 +1,10 @@
 {
 	"instance_id":"e0abd3df-8821-4522-a9bf-3c4c4689e61f",
-	"host": "127.0.0.1",
+	"host": "0.0.0.0",
 	"port": 9000,
 	"keepalive_secs": 600,
 	"webhook_listener": {
-		"host": "127.0.0.1",
+		"host": "0.0.0.0",
 		"port": 9002,
 		"validate_header_sig": false,
 		"keepalive_secs": 600,
@@ -141,7 +141,7 @@
 	},
 	"use_consensus": true,
 	"consensus_config":{
-		"service_url": "",
+		"service_url": "https://phase15-consensus.powerloom.io",
 		"rate_limit":{
 			"req_per_sec": 5,
 			"burst": 5
