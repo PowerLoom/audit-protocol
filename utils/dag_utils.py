@@ -109,8 +109,6 @@ async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPF
                     e_obj = ex
         except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
             e_obj = err
-
-
         if e_obj or cm.expired:
             return {}
     else:
