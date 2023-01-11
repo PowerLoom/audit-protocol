@@ -680,6 +680,7 @@ async def register_projects(
             failed_tasks.append(project_id)
 
     if len(failed_tasks) > 0:
+        response.status_code = 500
         return {'error': f'Could not register all project peers, failed tasks: {failed_tasks}'}
 
     return {'success': True}
