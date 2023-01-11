@@ -20,19 +20,21 @@ echo 'waiting for services...';
 
 sleep 10;
 
+./update_namespace.sh
+
 ./build.sh
 
 python init_rabbitmq.py
 
-echo 'waiting to register projects...';
+#echo 'waiting to register projects...';
 
-sleep 10;
+#sleep 10;
 
-echo 'registering projects...';
+#echo 'registering projects...';
 
-python cli_cmd.py updatestoredprojectids docker-UNISWAPV2-ph15-prod
+#python cli_cmd.py updatestoredprojectids docker-UNISWAPV2-ph15-prod
 
-python register_pair_projects_for_indexing.py
+#python register_pair_projects_for_indexing.py
 
 echo 'starting pm2...';
 
