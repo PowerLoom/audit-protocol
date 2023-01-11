@@ -746,7 +746,8 @@ class DAGFinalizationCallbackProcessor:
                         issueType='MISSED_SNAPSHOT',
                         projectID=project_id,
                         epochs=null_assigned_epochs,
-                        timeOfReporting=int(time.time())
+                        timeOfReporting=int(time.time()),
+                        serviceName='DAGFinalizer'
                     ).dict()
                 )
             )
@@ -760,7 +761,8 @@ class DAGFinalizationCallbackProcessor:
                         issueType='SKIP_EPOCH',
                         projectID=project_id,
                         epochs=cid_finalized_epochs,
-                        timeOfReporting=int(time.time())
+                        timeOfReporting=int(time.time()),
+                        serviceName='DAGFinalizer'
                     ).dict()
                 )
             )
