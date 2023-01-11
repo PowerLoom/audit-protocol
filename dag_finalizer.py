@@ -735,20 +735,35 @@ class DAGFinalizationCallbackProcessor:
                 null_assigned_epochs.append(tentative_height_epoch_match[k])
             else:
                 cid_finalized_epochs.append(tentative_height_epoch_match[k])
-
-        tasks = [
-            self._httpx_client.post(
-                url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
-                json=SnapshotterIssue(
-                    instanceID=settings.instance_id,
-                    severity=SnapshotterIssueSeverity.medium if idx == 1 else SnapshotterIssueSeverity.high,
-                    issueType='MISSED_SNAPSHOT' if idx == 1 else 'SKIP_EPOCH',
-                    projectID=project_id,
-                    epochs=k,
-                    timeOfReporting=int(time.time())
-                ).dict()
-            ) for idx, k in enumerate([null_assigned_epochs, cid_finalized_epochs])
-        ]
+        tasks = list()
+        if null_assigned_epochs:
+            tasks.append(
+                self._httpx_client.post(
+                    url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
+                    json=SnapshotterIssue(
+                        instanceID=settings.instance_id,
+                        severity=SnapshotterIssueSeverity.high,
+                        issueType='MISSED_SNAPSHOT',
+                        projectID=project_id,
+                        epochs=null_assigned_epochs,
+                        timeOfReporting=int(time.time())
+                    ).dict()
+                )
+            )
+        if cid_finalized_epochs:
+            tasks.append(
+                self._httpx_client.post(
+                    url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
+                    json=SnapshotterIssue(
+                        instanceID=settings.instance_id,
+                        severity=SnapshotterIssueSeverity.medium,
+                        issueType='SKIP_EPOCH',
+                        projectID=project_id,
+                        epochs=cid_finalized_epochs,
+                        timeOfReporting=int(time.time())
+                    ).dict()
+                )
+            )
         await asyncio.gather(*tasks)
 
     async def _on_rabbitmq_message(self, message: IncomingMessage):
