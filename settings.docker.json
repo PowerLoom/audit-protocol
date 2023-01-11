@@ -46,12 +46,12 @@
 		"WETH": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
-	"ipfs_url": "/ip4/host.docker.internal/tcp/5001",
+	"ipfs_url": "/dns/host.docker.internal/tcp/5001",
 	"ipfs_rate_limit" :{
 		"req_per_sec": 100,
 		"burst": 100
 	},
-	"ipfs_reader_url":"/ip4/host.docker.internal/tcp/5001",
+	"ipfs_reader_url":"/dns/host.docker.internal/tcp/5001",
 	"snapshot_interval": 4,
 	"contract_call_backend": "http://127.0.0.1:8888/writer",
 	"contract_rate_limit" :{
