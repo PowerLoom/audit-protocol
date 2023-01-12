@@ -594,9 +594,16 @@ class DAGFinalizationCallbackProcessor:
                                         parsed_snapshot_response
                                     )
                                     tentative_height_to_cid_map[tentative_height] = f'null_{epochs_to_fetch[tentative_height]}'
+                                    # Remove any existing payloadCid entry from Zset
+                                    await writer_redis_conn.zremrangebyscore(
+                                        name=redis_keys.get_payload_cids_key(project_id),
+                                        min=tentative_height,
+                                        max=tentative_height
+                                    )
                             dummy_tx_hash = '0x' + '0' * 160
                             dummy_api_hash = '0x' + '0' * 256
                             dummy_payload_commit_id = '0x' + '0' * 256
+
                             await writer_redis_conn.zadd(
                                 name=redis_keys.get_payload_cids_key(project_id),
                                 mapping={str(v): k for k, v in tentative_height_to_cid_map.items()}
@@ -735,20 +742,37 @@ class DAGFinalizationCallbackProcessor:
                 null_assigned_epochs.append(tentative_height_epoch_match[k])
             else:
                 cid_finalized_epochs.append(tentative_height_epoch_match[k])
-
-        tasks = [
-            self._httpx_client.post(
-                url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
-                json=SnapshotterIssue(
-                    instanceID=settings.instance_id,
-                    severity=SnapshotterIssueSeverity.medium if idx == 1 else SnapshotterIssueSeverity.high,
-                    issueType='MISSED_SNAPSHOT' if idx == 1 else 'SKIP_EPOCH',
-                    projectID=project_id,
-                    epochs=k,
-                    timeOfReporting=int(time.time())
-                ).dict()
-            ) for idx, k in enumerate([null_assigned_epochs, cid_finalized_epochs])
-        ]
+        tasks = list()
+        if null_assigned_epochs:
+            tasks.append(
+                self._httpx_client.post(
+                    url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
+                    json=SnapshotterIssue(
+                        instanceID=settings.instance_id,
+                        severity=SnapshotterIssueSeverity.high,
+                        issueType='SKIP_EPOCH',
+                        projectID=project_id,
+                        epochs=null_assigned_epochs,
+                        timeOfReporting=int(time.time()),
+                        serviceName='DAGFinalizer'
+                    ).dict()
+                )
+            )
+        if cid_finalized_epochs:
+            tasks.append(
+                self._httpx_client.post(
+                    url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
+                    json=SnapshotterIssue(
+                        instanceID=settings.instance_id,
+                        severity=SnapshotterIssueSeverity.medium,
+                        issueType='MISSED_SNAPSHOT',
+                        projectID=project_id,
+                        epochs=cid_finalized_epochs,
+                        timeOfReporting=int(time.time()),
+                        serviceName='DAGFinalizer'
+                    ).dict()
+                )
+            )
         await asyncio.gather(*tasks)
 
     async def _on_rabbitmq_message(self, message: IncomingMessage):
