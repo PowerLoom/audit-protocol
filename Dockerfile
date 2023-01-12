@@ -8,6 +8,7 @@ RUN npm install pm2 -g
 RUN pm2 ls
 EXPOSE 9000
 EXPOSE 9002
+EXPOSE 9030
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt
 ENV GO111MODULE=on
@@ -32,4 +33,5 @@ RUN apt-get install -y python-is-python3
 COPY . .
 COPY docker/ma.conf /etc/supervisord.conf
 CMD chmod +x docker/run_services.sh
+CMD chmod +x snapshotter-autofill.sh
 #CMD ./run_services.sh
