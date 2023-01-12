@@ -594,9 +594,16 @@ class DAGFinalizationCallbackProcessor:
                                         parsed_snapshot_response
                                     )
                                     tentative_height_to_cid_map[tentative_height] = f'null_{epochs_to_fetch[tentative_height]}'
+                                    # Remove any existing payloadCid entry from Zset
+                                    await writer_redis_conn.zremrangebyscore(
+                                        name=redis_keys.get_payload_cids_key(project_id),
+                                        min=tentative_height,
+                                        max=tentative_height
+                                    )
                             dummy_tx_hash = '0x' + '0' * 160
                             dummy_api_hash = '0x' + '0' * 256
                             dummy_payload_commit_id = '0x' + '0' * 256
+
                             await writer_redis_conn.zadd(
                                 name=redis_keys.get_payload_cids_key(project_id),
                                 mapping={str(v): k for k, v in tentative_height_to_cid_map.items()}
