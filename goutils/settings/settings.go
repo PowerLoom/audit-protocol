@@ -136,6 +136,7 @@ type SettingsObj struct {
 	PayloadCachePath        string                   `json:"local_cache_path"`
 	TokenAggregatorSettings TokenAggregatorSettings_ `json:"token_aggregator"`
 	SkipSummaryProjectProof bool                     `json:"skip_summary_projects_anchor_proof"`
+	PoolerNamespace         string                   `json:"pooler_namespace"`
 }
 
 type ConsensusConfig_ struct {

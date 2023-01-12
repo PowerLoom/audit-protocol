@@ -20,8 +20,6 @@ echo 'waiting for services...';
 
 sleep 10;
 
-./update_namespace.sh
-
 ./build.sh
 
 python init_rabbitmq.py

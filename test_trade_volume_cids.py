@@ -64,7 +64,7 @@ def read_json_file(directory:str, file_name: str):
         json_data = json.loads(f_.read())
     return json_data
 
-        
+
 async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
     ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
     await ipfs_client.init_session()
@@ -80,7 +80,12 @@ async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
     latestDagCid = trade_volume_cids['latest_dag_cid']
     latestDagData = await get_dag_cid_output(latestDagCid, ipfs_client)
     lastestPayloadData = await get_payload_cid_output(latestDagData['data']['cid']['/'], ipfs_client)
-    pair_tokens_data = await redis_read_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(Web3.toChecksumAddress(lastestPayloadData['contract'])))
+    pair_tokens_data = await redis_read_conn.hgetall(
+        redis_keys.get_uniswap_pair_contract_tokens_data(
+            Web3.toChecksumAddress(lastestPayloadData['contract']),
+            settings.pooler_namespace
+            )
+        )
     token0_symbol = pair_tokens_data[b"token0_symbol"].decode('utf-8') if pair_tokens_data else "Token0"
     token1_symbol = pair_tokens_data[b"token1_symbol"].decode('utf-8') if pair_tokens_data else "Token1"
 
@@ -104,10 +109,10 @@ async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
 
         ts = int(round(datetime.now().timestamp())) - payloadData["timestamp"]
         table.add_row(
-            f"{payloadData['chainHeightRange']['begin']} - {payloadData['chainHeightRange']['end']}", 
-            str(len(payloadData["recent_logs"])), 
-            str(round(payloadData["token0TradeVolume"], 2)), 
-            str(round(payloadData["token1TradeVolume"], 2)), 
+            f"{payloadData['chainHeightRange']['begin']} - {payloadData['chainHeightRange']['end']}",
+            str(len(payloadData["recent_logs"])),
+            str(round(payloadData["token0TradeVolume"], 2)),
+            str(round(payloadData["token1TradeVolume"], 2)),
             str(round(payloadData["totalTrade"], 2)),
             pretty_relative_time(ts)
         )
@@ -130,7 +135,7 @@ async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
 
         dag_cid = dagBlockData['prevCid']["/"]
         dag_block_count += 1
-    
+
     console.print("\n")
     console.print(table)
     console.print("\n")
@@ -142,21 +147,21 @@ async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
 
     if storeLogsInFile:
         write_json_file('./', storeLogsInFile, raw_event_logs)
-    
+
 
 
 if __name__ == "__main__":
 
     # This script recalculate trade volume in 7d or 24h dag block range,
-    # using IPFS dag block data (this won't call rpc again) 
+    # using IPFS dag block data (this won't call rpc again)
     # this require internal cid of v2-pair contract
-    
+
     #################### CHANGE BELOW ARGUMENTS ######################
     cid = 'bafkreibzpt3bnt6hux4vydor3xrqljx5vvw27gh3bo2zylhm6lvjdjhsk4'
-    timePeriod = '7d' # e.g.: 24h, 7d 
+    timePeriod = '7d' # e.g.: 24h, 7d
     storeLogsInFile = 'trade_volume_test.json' # e.g.: None, '<file_name>.json'
     ##################################################################
-    
+
     tasks = asyncio.gather(
         verify_trade_volume_cids(cid, timePeriod, storeLogsInFile)
     )

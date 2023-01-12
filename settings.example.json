@@ -158,5 +158,6 @@
 		"port": 8000,
 		"run_interval_secs": 60
 	},
-	"skip_summary_projects_anchor_proof":true
+	"skip_summary_projects_anchor_proof":true,
+	"pooler_namespace":""
 }

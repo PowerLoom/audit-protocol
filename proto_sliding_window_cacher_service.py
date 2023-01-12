@@ -231,7 +231,9 @@ async def build_primary_indexes(ipfs_read_client):
     await aioredis_pool.populate()
     writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     # project ID -> {"series": ['24h', '7d']}
-    registered_projects = await writer_redis_conn.hgetall('cache:indexesRequested')
+    registered_projects = await writer_redis_conn.hgetall(
+        redis_keys.get_projects_registered_for_cache_indexing_key_with_namespace(settings.pooler_namespace)
+        )
     sliding_cacher_logger.debug('Got %d registered projects for indexing', len(registered_projects))
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
