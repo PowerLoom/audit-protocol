@@ -135,6 +135,7 @@ type SettingsObj struct {
 	InstanceId              string                   `json:"instance_id"`
 	PayloadCachePath        string                   `json:"local_cache_path"`
 	TokenAggregatorSettings TokenAggregatorSettings_ `json:"token_aggregator"`
+	SkipSummaryProjectProof bool                     `json:"skip_summary_projects_anchor_proof"`
 }
 
 type ConsensusConfig_ struct {

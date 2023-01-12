@@ -34,11 +34,12 @@ func main() {
 
 	http.HandleFunc("/reportIssue", IssueReportHandler)
 	port := settingsObj.DagVerifierSettings.IssueReporterPort
+	host := settingsObj.Host
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		log.Infof("Starting HTTP server on port %d in a go routine.", port)
-		http.ListenAndServe(fmt.Sprint(":", port), nil)
+		http.ListenAndServe(fmt.Sprintf("%s:%d", host, port), nil)
 	}()
 
 	if settingsObj.DagVerifierSettings.PruningVerification {
@@ -92,8 +93,10 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 		slackutils.NotifySlackWorkflow(string(report), reqPayload.Severity, reqPayload.Service)
 		// Notify consensus layer
 		ReportIssueToConsensus(&reqPayload)
-		//TODO: Have pruning logic for issues ZSet
 
+		//Prune issues older than 7 days
+		pruneTillTime := time.Now().Add(-7 * 24 * 60 * 60 * time.Second).UnixMicro()
+		dagVerifier.redisClient.ZRemRangeByScore(ctx, redisutils.REDIS_KEY_ISSUES_REPORTED, "0", fmt.Sprintf("%d", pruneTillTime))
 	}()
 	w.WriteHeader(http.StatusOK)
 }

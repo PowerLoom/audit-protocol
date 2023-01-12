@@ -18,6 +18,7 @@ import logging.config
 import sys
 import os
 import cardinality
+from config import settings
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -797,7 +798,7 @@ async def v2_pairs_data(
                         project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
                         report_payload=summarized_payload,
                         session=async_httpx_client,
-                        skipAnchorProof=True
+                        skipAnchorProof=settings.skip_summary_projects_proof
                     )
                 except Exception as exc:
                     logger.error(

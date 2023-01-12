@@ -682,7 +682,7 @@ RESTART_CID_COMP_LOOP:
 				return dagChain, fmt.Errorf("CRITICAL:Inconsistency between DAG Chain and Payloads stored in redis for Project:%s", projectId)
 			}
 			dagChain[i].Payload.PayloadCid = fmt.Sprintf("%v", res[i].Member)
-			if dagChain[i].Payload.PayloadCid == "None" {
+			if strings.HasPrefix(dagChain[i].Payload.PayloadCid, "null") {
 				//Case where DAG Chain is self-healed because no consensus was achieved.
 				//Remove the DAG entry so that it would be reported as gap in chain.
 				log.Warnf("Empty payload found in redis cache at DAGChain Height %d for Project %s. Consensus has not been achieved at this blockHeight",

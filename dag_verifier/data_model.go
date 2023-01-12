@@ -90,5 +90,5 @@ type IssueReport struct {
 	ProjectID        string  `json:"projectID"`
 	Epochs           []int64 `json:"epochs,omitempty"`
 	NoOfEpochsBehind int64   `json:"noOfEpochsBehind,omitempty"`
-	Service          string  `json:"service"`
+	Service          string  `json:"serviceName"`
 }

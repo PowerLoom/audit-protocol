@@ -670,7 +670,7 @@ func CommitTokenSummaryPayload() error {
 	request.ProjectId = fmt.Sprintf(TOKENSUMMARY_PROJECTID, NAMESPACE)
 	request.Payload.TokensData = make([]*TokenData, len(tokenList))
 	request.Web3Storage = true //Always store TokenData snapshot in web3.storage.
-	request.SkipAnchorProof = true
+	request.SkipAnchorProof = settingsObj.SkipSummaryProjectProof
 	var i int
 	for _, tokenData := range tokenList {
 		request.Payload.TokensData[i] = tokenData
@@ -803,7 +803,7 @@ func WaitAndFetchBlockHeightStatus(projectID string, blockHeight int64, retries 
 
 func FetchPairsSummaryLatestBlockHeight() int64 {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PAIRS_SUMMARY_SNAPSHOTS_ZSET, NAMESPACE)
-	log.Debug("Fetching latest available PairSummarySnapshot Blockheight from %s", key)
+	log.Debugf("Fetching latest available PairSummarySnapshot Blockheight from %s", key)
 
 	for retryCount := 0; retryCount < 3; retryCount++ {
 		res := redisClient.ZRangeWithScores(ctx, key, -1, -1)
