@@ -110,3 +110,4 @@ class Settings(BaseModel):
     rpc_url: str
     use_consensus: bool = False
     consensus_config: ConsensusConfig
+    skip_summary_projects_anchor_proof: bool=False

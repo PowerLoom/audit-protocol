@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging.config
 import sys
+from config import settings
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -229,7 +230,7 @@ async def v2_pairs_daily_stats_snapshotter(
                     project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
                     report_payload=summarized_payload,
                     session=async_httpx_client,
-                    skipAnchorProof=True
+                    skipAnchorProof=settings.skip_summary_projects_anchor_proof
                 )
             except Exception as exc:
                 logger.error(

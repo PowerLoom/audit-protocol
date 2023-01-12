@@ -38,6 +38,9 @@ func InitSlackWorkFlowClient(url string) {
 func NotifySlackWorkflow(reportData string, severity string, service string) error {
 
 	reqURL := slackNotifyURL
+	if reqURL == "" {
+		return nil
+	}
 	var slackReq SlackNotifyReq
 
 	slackReq.Data = reportData
