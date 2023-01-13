@@ -220,3 +220,34 @@ class IndexingRegistrationData(BaseModel):
 class ProjectRegistrationRequestForIndexing(BaseModel):
     projects: List[IndexingRegistrationData]
     namespace: str
+
+
+class EpochConsensusStatus(str, Enum):
+    consensus_achieved = 'CONSENSUS_ACHIEVED'
+    no_consensus = 'NO_CONSENSUS'
+
+
+class SubmissionResponse(BaseModel):
+    status: Union[SubmissionAcceptanceStatus, EpochConsensusStatus]
+    delayedSubmission: bool
+    finalizedSnapshotCID: Optional[str] = None
+
+
+class EpochBase(BaseModel):
+    begin: int
+    end: int
+
+
+class SnapshotBase(BaseModel):
+    epoch: EpochBase
+    projectID: str
+    instanceID: str
+
+
+class SnapshotSubmission(SnapshotBase):
+    snapshotCID: str
+
+
+class SubmissionDataStoreEntry(BaseModel):
+    snapshotCID: str
+    submittedTS: int

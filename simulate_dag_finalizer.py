@@ -1,12 +1,7 @@
 from config import settings
 from data_models import DAGFinalizerCallback, DAGFinalizerCBEventData, AuditRecordTxEventData, PendingTransaction
 if settings.use_consensus:
-    from snapshot_consensus.helpers.redis_keys import (
-        get_project_registered_peers_set_key, get_epoch_submissions_htable_key,
-        get_project_epoch_specific_accepted_peers_key
-    )
-    from snapshot_consensus.data_models import SubmissionDataStoreEntry, SnapshotSubmission
-    from snapshot_consensus.conf import settings as consensus_settings
+    from data_models import SubmissionDataStoreEntry, SnapshotSubmission
 from utils.redis_conn import provide_redis_conn
 from eth_utils import keccak
 from uuid import uuid4
@@ -36,6 +31,23 @@ logger.addHandler(stderr_handler)
 logger.debug("Initialized logger")
 
 coloredlogs.install(level="DEBUG", logger=logger, stream=sys.stdout)
+
+
+# Redis keys
+def get_project_registered_peers_set_key(project_id):
+    return f'projectID:{project_id}:centralizedConsensus:peers'
+
+
+def get_epoch_submissions_htable_key(project_id, epoch_end):
+    """
+    projectid_epoch_submissions_htable -> instance ID - > JSON {snapshotCID:,  submittedTS:}
+    }
+    """
+    return f'projectID:{project_id}:{epoch_end}:centralizedConsensus:epochSubmissions'
+
+
+def get_project_epoch_specific_accepted_peers_key(project_id, epoch_end):
+    return f'projectID:{project_id}:{epoch_end}:centralizedConsensus:acceptedPeers'
 
 
 @provide_redis_conn
@@ -214,8 +226,7 @@ def remove_pending_entry_and_register_epoch_consensus(
         first_epoch_end_height,
         peers: list,
         snapshot_cid,
-        redis_conn: redis.Redis,
-        consensus_service_redis_conn: redis.Redis
+        redis_conn: redis.Redis
 ):
     # remove pending tx entry at `last_sent_block`
     redis_conn.zremrangebyscore(
@@ -231,7 +242,7 @@ def remove_pending_entry_and_register_epoch_consensus(
             epoch_end=expected_epoch_end_at_last_sent_block,
             peer_id=peer,
             snapshot_cid=snapshot_cid,
-            redis_conn=consensus_service_redis_conn
+            redis_conn=redis_conn
         )
 
         logger.info(
@@ -242,24 +253,19 @@ def remove_pending_entry_and_register_epoch_consensus(
 
 @provide_redis_conn
 def consensus_self_healing(redis_conn: redis.Redis):
-    consensus_service_redis_conn = redis.Redis(
-        host=consensus_settings.redis.host,
-        port=consensus_settings.redis.port,
-        db=consensus_settings.redis.db,
-        password=consensus_settings.redis.password
-    )
+    
     snapshot_cid = 'bafkreig3c2m4geyf3sf5nsfvbbgyy6p7c7ufatpfg4s3zpc7koqi5phsvq'  # to be used so we have a valid CID
     project_id = 'consensusSimulationRun'
     # initial clear
     for k in redis_conn.scan_iter(match='*consensusSimulationRun*', count=10):
         redis_conn.delete(k)
         logger.debug('Cleaned last run project state key %s', k)
-    for k in consensus_service_redis_conn.scan_iter(match='*consensusSimulationRun*', count=10):
+    for k in redis_conn.scan_iter(match='*consensusSimulationRun*', count=10):
         redis_conn.delete(k)
         logger.debug('Cleaned last run project state key %s', k)
     # add accepted peers
     peers = ['peer1', 'peer2', 'peer3']
-    consensus_service_redis_conn.sadd(
+    redis_conn.sadd(
         get_project_registered_peers_set_key(project_id),
         *peers
     )
@@ -359,8 +365,7 @@ def consensus_self_healing(redis_conn: redis.Redis):
             first_epoch_end_height,
             peers,
             snapshot_cids[k],
-            redis_conn,
-            consensus_service_redis_conn
+            redis_conn
         )
     # resume sending callbacks from last sent block+2 to end
     for i in range(last_sent_block + 2, beginning_height + num_blocks):
