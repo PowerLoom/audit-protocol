@@ -2,7 +2,7 @@ from config import settings
 from utils.redis_conn import provide_redis_conn
 import redis
 
-NAMESPACE = 'UNISWAPV2-prod-1'
+NAMESPACE = settings.pooler_namespace
 
 
 @provide_redis_conn
