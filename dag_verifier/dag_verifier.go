@@ -689,9 +689,12 @@ RESTART_CID_COMP_LOOP:
 					dagChain[i].Height, projectId)
 				copy(dagChain[i:], dagChain[i+1:])
 				dagChain = dagChain[:len(dagChain)-1]
+				copy(res[i:], res[i+1:])
+				res = res[:len(res)-1]
+				goto RESTART_CID_COMP_LOOP
 			}
 		} else {
-			log.Debugf("DAGChain for project %s is little behind payloadCids chainHeight.", projectId, len(dagChain))
+			log.Debugf("DAGChain height is %d for project %s is little behind payloadCids chainHeight %d.", len(dagChain), projectId, len(res))
 			return nil, errors.New("chain construction seems to be in progress. Have to retry next time")
 		}
 	}
