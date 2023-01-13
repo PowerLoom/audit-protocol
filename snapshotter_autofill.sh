@@ -24,7 +24,7 @@ echo "Got WEB3_STORAGE_TOKEN: ${WEB3_STORAGE_TOKEN}"
 
 cp settings.example.json settings.json
 
-export namespace=docker2-UNISWAPV2-ph15-prod
+export namespace=docker-UNISWAPV2-ph15-prod
 export consensus_url=https://phase15-consensus.powerloom.io
 
 echo $namespace
