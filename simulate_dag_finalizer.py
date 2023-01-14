@@ -260,9 +260,6 @@ def consensus_self_healing(redis_conn: redis.Redis):
     for k in redis_conn.scan_iter(match='*consensusSimulationRun*', count=10):
         redis_conn.delete(k)
         logger.debug('Cleaned last run project state key %s', k)
-    for k in redis_conn.scan_iter(match='*consensusSimulationRun*', count=10):
-        redis_conn.delete(k)
-        logger.debug('Cleaned last run project state key %s', k)
     # add accepted peers
     peers = ['peer1', 'peer2', 'peer3']
     redis_conn.sadd(
