@@ -8,9 +8,11 @@ services:
     expose:
       - 9000
       - 9002
+      - 9030
     ports:
       - 9000:9000
       - 9002:9002
+      - 9030:9030
 
     depends_on:
       - "redis"

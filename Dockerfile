@@ -1,20 +1,17 @@
-FROM ubuntu:22.04
+FROM golang:alpine
 
-# Update the package list and install the required dependencies
-RUN apt-get update -y && apt-get install -y python3-pip git curl golang-go nodejs npm python-is-python3
+ENV GO111MODULE=on
 
-# Copy the application's dependencies files
-COPY requirements.txt .
+# Install python/pip
+ENV PYTHONUNBUFFERED=1
+RUN apk add --update --no-cache python3 && ln -sf python3 /usr/bin/python
+RUN python3 -m ensurepip
+RUN pip3 install --no-cache --upgrade pip setuptools
+
+RUN apk update && apk add --no-cache ethtool nodejs npm bash gcc musl-dev libc-dev python3-dev libffi-dev vim nano
 
 RUN npm install pm2 -g
 
-# Install the Python dependencies
-RUN pip3 install -r requirements.txt
-
-# Set the environment variable for Go modules
-ENV GO111MODULE=on
-
-# Set the working directory to the Go source code
 WORKDIR /go/src/github.com/powerloom/goutils
 
 # Copy the Go module files and download the dependencies
@@ -29,20 +26,18 @@ RUN go mod download
 COPY token-aggregator/go.mod token-aggregator/go.sum ./
 RUN go mod download
 
-# Install supervisor
-RUN pip3 install supervisor
+WORKDIR /src
+# Copy the application's dependencies files
+COPY requirements.txt .
+RUN pip3 install -r requirements.txt
 
-# Copy the rest of the application's files
+EXPOSE 9000
+EXPOSE 9002
+EXPOSE 9030
+# # Install supervisor
+RUN pip3 install supervisor
+COPY docker/ma.conf /etc/supervisord.conf
+
 COPY . .
 
-# Use environment variables for ports
-ENV PORT_1 9000
-ENV PORT_2 9002
-ENV PORT_3 9030
-
-# Expose the ports that the application will listen on
-EXPOSE $PORT_1 $PORT_2 $PORT_3
-
-COPY docker/ma.conf /etc/supervisord.conf
 RUN chmod +x docker/run_services.sh snapshotter_autofill.sh
-
