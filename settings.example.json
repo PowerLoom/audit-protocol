@@ -58,7 +58,7 @@
 		"req_per_sec": 50,
 		"burst": 50
 	},
-	"retry_count": 10,
+	"retry_count": 3,
 	"retry_interval_secs":5,
 	"http_client_timeout_secs": 10,
 	"redis": {
