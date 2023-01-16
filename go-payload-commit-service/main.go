@@ -50,8 +50,6 @@ var web3StorageClientRateLimiter *rate.Limiter
 var ipfsClientRateLimiter *rate.Limiter
 var txClientRateLimiter *rate.Limiter
 
-var SKIP_SNAPSHOT_VALIDATION_ERR_STR = "skip validation"
-
 var commonTxReqParams CommonTxRequestParams
 
 type retryType int64
@@ -231,7 +229,7 @@ func GetFirstEpochDetails(payloadCommit *PayloadCommit) (int, int) {
 	epochSize := FetchProjectEpochSize(payloadCommit.ProjectId)
 	firstEpochEndHeight := 0
 	if epochSize == 0 {
-		epochSize := payloadCommit.SourceChainDetails.EpochEndHeight - payloadCommit.SourceChainDetails.EpochStartHeight + 1
+		epochSize = payloadCommit.SourceChainDetails.EpochEndHeight - payloadCommit.SourceChainDetails.EpochStartHeight + 1
 		status := SetProjectEpochSize(payloadCommit.ProjectId, epochSize)
 		if !status {
 			return 0, 0
@@ -423,7 +421,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.ProjectId, payloadCommit.CommitId)
 		}
 		if !ProcessUnCommittedSnapshot(&payloadCommit) {
-			return false
+			return true
 		}
 	} else {
 		if payloadCommit.SnapshotCID == "" && payloadCommit.Payload == nil {
@@ -477,7 +475,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 					log.Fatalf("Snapshot is not accepted for project %s due to error %+v", payloadCommit.ProjectId, err)
 					return true
 				}
-				return false
+				return true
 			}
 		}
 	}
@@ -595,20 +593,6 @@ func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) 
 			log.Errorf("Found more than 1 payload CIDS at height %d for project %s which means project state is messed up due to an issue that has occured while previous snapshot processing, considering the first one so that current snapshot processing can proceed",
 				startScore, projectId)
 			payloadCid = fmt.Sprintf("%v", res[0].Member)
-		} else {
-			log.Errorf("Could not find a payloadCid at height %s for project %s. Trying with lower height.", startScore, projectId)
-			prevHeight, err := strconv.Atoi(startScore)
-			if err != nil {
-				log.Errorf("CRITICAL! Height passed in startScore is not int, hence failed to convert due to error %+v", err)
-				return "", err
-			}
-			startScore = strconv.Itoa(prevHeight - 1)
-			if prevHeight < 2 { //Safety check
-				log.Errorf("Could not find any payloadCid at min height.Continuing with current snapshot processing in this case.")
-				return "", errors.New(SKIP_SNAPSHOT_VALIDATION_ERR_STR)
-			}
-			i++
-			continue
 		}
 		break
 	}
@@ -623,7 +607,7 @@ func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error)
 		if err != nil {
 			if i >= retryCount {
 				log.Errorf("Failed to fetch Payload with CID %s from IPFS even after max retries due to error %+v.", payloadCid, err)
-				return &payload, errors.New(SKIP_SNAPSHOT_VALIDATION_ERR_STR)
+				return &payload, err
 			}
 			log.Warnf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
 			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
@@ -1105,11 +1089,7 @@ func InitTxManagerClient() {
 		Transport: &t,
 	}
 
-	commonTxReqParams.Contract = strings.ToLower(settingsObj.AuditContract)
 	commonTxReqParams.Method = "commitRecord"
-	commonTxReqParams.NetworkId = 137
-	commonTxReqParams.HackerMan = false
-	commonTxReqParams.IgnoreGasEstimate = false
 
 	//Default values
 	tps := rate.Limit(50) //50 TPS
