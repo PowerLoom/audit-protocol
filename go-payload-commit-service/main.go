@@ -456,14 +456,6 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	} else {
 		requestID = uuid.New().String()
 		payloadCommit.RequestID = requestID
-		var status bool
-		txHash, status = GenerateTokenHash(&payloadCommit)
-		payloadCommit.ApiKeyHash = txHash
-		if !status {
-			log.Errorf("Irrecoverable error occurred for project %s and commitId %s with tentativeBlockHeight %d and hence ignoring snapshot for processing.",
-				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-			return true
-		}
 		//Wait for consensus.
 		//Skip consensus in case of summmaryProject until aggregation logic is fixed.
 		if settingsObj.UseConsensus && !payloadCommit.IsSummaryProject && !payloadCommit.Resubmitted {
