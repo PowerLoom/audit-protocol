@@ -23,7 +23,8 @@ services:
     #  - "ipfs"
       - "redis"
       - "rabbitmq"
-
+    volumes:
+      - local_cache:/home/ubuntu/local_cache/
     command:
       bash -c "docker/run_services.sh &&
       supervisord -n -c /etc/supervisord.conf -l log_test"
@@ -54,6 +55,8 @@ services:
     ports:
       - 5672:5672
       - 15672:15672
+volumes:
+  local_cache:
 
   #ipfs:
   #  image: private-ipfs-node
