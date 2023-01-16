@@ -21,7 +21,7 @@ import httpx._exceptions as httpx_exceptions
 from redis import asyncio as aioredis
 from config import settings
 if settings.use_consensus:
-    from snapshot_consensus.data_models import EpochConsensusStatus, SubmissionResponse, SnapshotBase, EpochBase
+    from data_models import EpochConsensusStatus, SubmissionResponse, SnapshotBase, EpochBase
 import resource
 import uvloop
 import logging
