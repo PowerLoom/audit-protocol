@@ -86,20 +86,8 @@ func (conn *Conn) StartConsumer(
 		log.Infof("Processing messages on go-routine %v\n", i)
 		go func() {
 			for msg := range msgs {
-				// if the handler returns true then ACK, else NACK
-				// the message back into the rabbitmq for
-				// another round of processing
-				if handler(msg) {
-					err := msg.Ack(false)
-					if err != nil {
-						log.Fatalf("CRITICAL! Ack failed for message %+v with error %+v", msg, err)
-					}
-				} else {
-					err := msg.Nack(false, true)
-					if err != nil {
-						log.Fatalf("CRITICAL!Ack failed for message %+v with error %+v", msg, err)
-					}
-				}
+				msg.Ack(false)
+				handler(msg)
 			}
 			log.Infof("RabbitMq consumer closed.")
 		}()

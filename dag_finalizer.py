@@ -587,7 +587,7 @@ class DAGFinalizationCallbackProcessor:
                                 else:
                                     custom_logger.warning(
                                         'Consensus Self Healing | Project %s| Consensus service reports inconsistent status '
-                                        'against epoch end height %s, expected tentative height: %s',
+                                        'against epoch end height %s, expected tentative height: %s. Snapshot response is %s',
                                         project_id,
                                         epochs_to_fetch[tentative_height],
                                         tentative_height,

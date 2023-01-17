@@ -58,13 +58,8 @@ type Snapshot struct {
 }
 
 type CommonTxRequestParams struct {
-	Contract          string          `json:"contract"`
-	Method            string          `json:"method"`
-	Params            json.RawMessage `json:"params"`
-	NetworkId         int             `json:"networkid"`
-	Proxy             string          `json:"proxy"` //Review type
-	HackerMan         bool            `json:"hackerman"`
-	IgnoreGasEstimate bool            `json:"ignoreGasEstimate"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
 }
 
 type AuditContractCommitParams struct {
