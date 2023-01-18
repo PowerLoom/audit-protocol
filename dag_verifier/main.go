@@ -68,32 +68,30 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	var reqPayload IssueReport
 
-	err = json.Unmarshal(reqBytes, &reqPayload)
-	if err != nil {
-		log.Errorf("Error while parsing json body of issue report %s", err.Error())
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	if reqPayload.Service == "" {
-		reqPayload.Service = "monitoring"
-	}
-	reportJson, _ := json.Marshal(reqPayload)
 	//Record issues in redis
 	res := dagVerifier.redisClient.ZAdd(ctx, redisutils.REDIS_KEY_ISSUES_REPORTED, &redis.Z{Score: float64(time.Now().UnixMicro()),
-		Member: reportJson,
+		Member: reqBytes,
 	})
 	if res.Err() != nil {
 		log.Errorf("Failed to add issue to redis due to error %+v", res.Err())
 	}
 	go func() {
+
+		// Notify consensus layer
+		ReportIssueToConsensus(reqBytes)
+
+		var reqPayload IssueReport
+
+		err = json.Unmarshal(reqBytes, &reqPayload)
+		if err != nil {
+			log.Errorf("Error while parsing json body of issue report %s", err.Error())
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		//Notify on slack and report to consensus layer
 		report, _ := json.MarshalIndent(reqPayload, "", "\t")
 		slackutils.NotifySlackWorkflow(string(report), reqPayload.Severity, reqPayload.Service)
-		// Notify consensus layer
-		ReportIssueToConsensus(&reqPayload)
-
 		//Prune issues older than 7 days
 		pruneTillTime := time.Now().Add(-7 * 24 * 60 * 60 * time.Second).UnixMicro()
 		dagVerifier.redisClient.ZRemRangeByScore(ctx, redisutils.REDIS_KEY_ISSUES_REPORTED, "0", fmt.Sprintf("%d", pruneTillTime))
@@ -101,9 +99,8 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func ReportIssueToConsensus(reqPayload *IssueReport) {
+func ReportIssueToConsensus(reqBytes []byte) {
 	reqURL := settingsObj.ConsensusConfig.ServiceURL + "/reportIssue"
-	reqBytes, _ := json.Marshal(reqPayload)
 	for retryCount := 0; ; {
 		if retryCount == 3 {
 			log.Errorf("failed to send issueReport to consensus service after max-retry")
@@ -116,7 +113,7 @@ func ReportIssueToConsensus(reqPayload *IssueReport) {
 			return
 		}
 		req.Header.Add("accept", "application/json")
-		log.Debugf("Sending issue report %+v to consensus service URL ",
+		log.Debugf("Sending issue report %+v to consensus service URL %s",
 			req, reqURL)
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
