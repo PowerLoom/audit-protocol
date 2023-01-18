@@ -205,7 +205,8 @@ async def retrieve_block_data(
     #     retrieval_utils_logger.debug(r)
 
     block = await get_dag_block(block_dag_cid, project_id, ipfs_read_client=ipfs_read_client)
-    if data_flag == 0:
+    # handle case of no dag_block or null payload in dag_block
+    if data_flag == 0 or block is None or 'data' not in block:
         return block
     payload = dict()
     """ Get the payload Data """
@@ -214,8 +215,9 @@ async def retrieve_block_data(
                     project_id=project_id,
                     ipfs_read_client=ipfs_read_client
     )
-
-    payload_data = json.loads(payload_data)
+    # handle case of null payload in dag_block
+    if payload_data:
+        payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
 
