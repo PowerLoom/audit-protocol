@@ -259,7 +259,7 @@ async def build_primary_indexes(ipfs_read_client):
     if len(res_exceptions) == len(project_id_to_register_series):
         sliding_cacher_logger.debug('block-height for all projects has not been intialized yet, sleeping till next cycle')
         return
-    elif len(res_exceptions) > 0:
+    if len(res_exceptions) > 0:
         sliding_cacher_logger.warning('Can\'t find projects max height for some projects, sleeping till next cycle | error_objs: %s', res_exceptions)
         return
 
@@ -316,13 +316,19 @@ async def periodic_retrieval():
     await aioredis_pool.populate()
     redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     while True:
-        await build_primary_indexes(ipfs_read_client=ipfs_read_client)
-        await asyncio.gather(
-            v2_pairs_data(async_httpx_client, ipfs_write_client, ipfs_read_client),
-            v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
-            asyncio.sleep(90)
-        )
-        sliding_cacher_logger.debug('Finished a cycle of indexing...')
+        try:
+            await build_primary_indexes(ipfs_read_client=ipfs_read_client)
+            await asyncio.gather(
+                v2_pairs_data(async_httpx_client, ipfs_write_client, ipfs_read_client),
+                v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
+                asyncio.sleep(90)
+            )
+            sliding_cacher_logger.debug('Finished a cycle of indexing...')
+        except Exception as err:
+            sliding_cacher_logger.error("Exception occured in indexing and aggregation cycle %s",
+            err,
+            exc_info=True)
+            continue
 
 
 def verifier_crash_cb(fut: asyncio.Future):

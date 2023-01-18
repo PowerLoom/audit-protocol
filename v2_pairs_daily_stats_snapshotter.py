@@ -157,6 +157,10 @@ async def v2_pairs_daily_stats_snapshotter(
                     ipfs_read_client),
                 return_exceptions=True
             )
+            # handle case of null payload in dag_block
+            if dag_block_latest is None or dag_block_24h is None:
+                logger.error("Error pairs daily stats snapshotter can't retrieve required pair summary snapshot for calculations")
+                return
             # FIXME: should be a much cleaner way to load json from returned result
             dag_block_latest = json.loads(dag_block_latest).get("data", None) if \
                 not isinstance(dag_block_latest, BaseException) else None

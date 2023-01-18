@@ -59,6 +59,9 @@ async def get_dag_blocks_in_range(
                 reader_redis_conn=reader_redis_conn,
                 ipfs_read_client=ipfs_read_client
             )
+            # handle case of null payloads in dag_blocks
+            if 'data' not in dag_block:
+                dag_block = {}
         except Exception as e:
             logger.error("Error: can't get dag block with msg: %s |"
                          "projectId:%s, block_height:%s",
