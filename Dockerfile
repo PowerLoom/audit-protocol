@@ -34,10 +34,7 @@ RUN pip3 install -r requirements.txt
 EXPOSE 9000
 EXPOSE 9002
 EXPOSE 9030
-# # Install supervisor
-RUN pip3 install supervisor
-COPY docker/ma.conf /etc/supervisord.conf
 
 COPY . .
 
-RUN chmod +x docker/run_services.sh snapshotter_autofill.sh
+RUN chmod +x init_processes.sh snapshotter_autofill.sh
