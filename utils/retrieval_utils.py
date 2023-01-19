@@ -275,6 +275,8 @@ async def retrieve_payload_data(
         _payload_data = await ipfs_read_client.cat(payload_cid)
         if not isinstance(_payload_data,str):
             payload_data = _payload_data.decode('utf-8')
+        else:
+            payload_data = _payload_data
 
     return payload_data
 
