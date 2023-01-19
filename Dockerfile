@@ -31,6 +31,8 @@ WORKDIR /src
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt
 
+RUN pm2 install pm2-logrotate && pm2 set pm2-logrotate:compress true && pm2 set pm2-logrotate:retain 7
+
 EXPOSE 9000
 EXPOSE 9002
 EXPOSE 9030
