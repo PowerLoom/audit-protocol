@@ -74,7 +74,7 @@ async def v2_pairs_daily_stats_snapshotter(
     try:
         # latest snapshot of v2 pair summary
         latest_pair_summary_snapshot = await redis_conn.zrevrange(
-            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(settings.pooler_namespace),
             start=0,
             end=0,
             withscores=True
@@ -89,7 +89,7 @@ async def v2_pairs_daily_stats_snapshotter(
 
         # latest snapshot of v2 pair daily stats
         pair_daily_stats_latest_snapshot = await redis_conn.zrevrange(
-            name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+            name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(settings.pooler_namespace),
             start=0,
             end=0,
             withscores=True
@@ -103,7 +103,7 @@ async def v2_pairs_daily_stats_snapshotter(
         # if current hieght of pair snapshot is greater than height of pair daily stats
         if latest_pair_summary_block_height > pair_daily_stats_latest_block_height:
             latest_pair_summary_timestamp = await redis_conn.zscore(
-                name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
                 value=latest_pair_summary_payload_cid
             )
             if not latest_pair_summary_timestamp:
@@ -118,7 +118,7 @@ async def v2_pairs_daily_stats_snapshotter(
             # evaluate 24h old timestamp
             pair_summary_timestamp_24h = latest_pair_summary_timestamp - 60 * 60 * 24
             list_of_zset_entries = await redis_conn.zrangebyscore(
-                name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
                 min=pair_summary_timestamp_24h - 60 * 30,  # 24h_timestap - 30min
                 max=pair_summary_timestamp_24h + 60 * 30,  # 24h_timestap + 30min
                 withscores=True
@@ -133,7 +133,7 @@ async def v2_pairs_daily_stats_snapshotter(
                 logger.debug(
                     "Pairs summary snapshots don't have enough data to get 24h old entry, so taking oldest available entry")
                 last_entry_of_summary_snapshot = await redis_conn.zrange(
-                    name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                    name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
                     start=0,
                     end=0,
                     withscores=True
@@ -147,10 +147,20 @@ async def v2_pairs_daily_stats_snapshotter(
 
             # fetch current and 24h old snapshot payload
             dag_block_latest, dag_block_24h = await asyncio.gather(
-                retrieve_payload_data(latest_pair_summary_timestamp_payload_cid, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(), ipfs_read_client),
-                retrieve_payload_data(pair_snapshot_payload_cid_24h, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(), ipfs_read_client),
+                retrieve_payload_data(
+                    latest_pair_summary_timestamp_payload_cid,
+                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
+                    ipfs_read_client),
+                retrieve_payload_data(
+                    pair_snapshot_payload_cid_24h,
+                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
+                    ipfs_read_client),
                 return_exceptions=True
             )
+            # handle case of null payload in dag_block
+            if dag_block_latest is None or dag_block_24h is None:
+                logger.error("Error pairs daily stats snapshotter can't retrieve required pair summary snapshot for calculations")
+                return
             # FIXME: should be a much cleaner way to load json from returned result
             dag_block_latest = json.loads(dag_block_latest).get("data", None) if \
                 not isinstance(dag_block_latest, BaseException) else None
@@ -220,14 +230,14 @@ async def v2_pairs_daily_stats_snapshotter(
         if daily_stats_contracts:
             summarized_payload = {'data': daily_stats_contracts}
             tentative_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
-                project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id()
+                project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(settings.pooler_namespace)
             ))
             tentative_audit_project_block_height  = int(tentative_audit_project_block_height) if tentative_audit_project_block_height else 0
             logger.debug('Sending pairs daily stats payload to audit protocol')
             # send to audit protocol for snapshot to be committed
             try:
                 response = await helper_functions.commit_payload(
-                    project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                    project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(settings.pooler_namespace),
                     report_payload=summarized_payload,
                     session=async_httpx_client,
                     skipAnchorProof=settings.skip_summary_projects_anchor_proof
@@ -263,7 +273,7 @@ async def v2_pairs_daily_stats_snapshotter(
                 await asyncio.sleep(10)
 
                 block_status = await retrieve_block_status(
-                    project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(),
+                    project_id=redis_keys.get_uniswap_pairs_v2_daily_snapshot_project_id(settings.pooler_namespace),
                     project_block_height=0,
                     block_height=updated_audit_project_block_height,
                     reader_redis_conn=redis_conn,
@@ -272,7 +282,7 @@ async def v2_pairs_daily_stats_snapshotter(
                 )
                 if block_status is None:
                     logger.error("block_status is returned as None at height %s for project %s",
-                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id())
+                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace))
                     break
                 if block_status.status < 3:
                     continue
@@ -291,10 +301,13 @@ async def v2_pairs_daily_stats_snapshotter(
                 # store in snapshots zset
                 await asyncio.gather(
                     redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(settings.pooler_namespace),
                         mapping={snapshot_zset_entry.json(): common_blockheight_reached}),
                     redis_conn.set(
-                        name=redis_keys.get_uniswap_pair_daily_stats_payload_at_blockheight(common_blockheight_reached),
+                        name=redis_keys.get_uniswap_pair_daily_stats_payload_at_blockheight(
+                            common_blockheight_reached,
+                            settings.pooler_namespace
+                        ),
                         value=json.dumps(summarized_payload),
                         ex=1800  # TTL of 30 minutes?
                     )
@@ -302,11 +315,11 @@ async def v2_pairs_daily_stats_snapshotter(
 
                 # prune zset
                 block_height_zset_len = await redis_conn.zcard(
-                    name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset())
+                    name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(settings.pooler_namespace))
 
                 if block_height_zset_len > 20:
                     _ = await redis_conn.zremrangebyrank(
-                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(),
+                        name=redis_keys.get_uniswap_pair_daily_stats_snapshot_zset(settings.pooler_namespace),
                         min=0,
                         max=-1 * (block_height_zset_len - 20) + 1
                     )

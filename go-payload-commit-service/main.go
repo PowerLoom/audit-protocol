@@ -50,8 +50,6 @@ var web3StorageClientRateLimiter *rate.Limiter
 var ipfsClientRateLimiter *rate.Limiter
 var txClientRateLimiter *rate.Limiter
 
-var SKIP_SNAPSHOT_VALIDATION_ERR_STR = "skip validation"
-
 var commonTxReqParams CommonTxRequestParams
 
 type retryType int64
@@ -155,7 +153,7 @@ func main() {
 	if settingsObj.UseConsensus {
 		wg.Add(1)
 		InitConsensusClient()
-		WaitQueueForConsensus = make(map[string]*PayloadCommit, 100) //TODO Make this queueSize configurable
+		WaitQueueForConsensus = make(map[string]*PayloadCommit, 100)
 		go func() {
 			defer wg.Done()
 			PollConsensusForConfirmations()
@@ -199,7 +197,11 @@ func InitRabbitmqConsumer() {
 	rmqQueueName := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.QueueNamePrefix + settingsObj.InstanceId
 	rmqRoutingKey := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + settingsObj.InstanceId
 
-	err = rmqConnection.StartConsumer(rmqQueueName, rmqExchangeName, rmqRoutingKey, RabbitmqMsgHandler, settingsObj.PayloadCommitConcurrency)
+	err = rmqConnection.StartConsumer(rmqQueueName,
+		rmqExchangeName,
+		rmqRoutingKey,
+		RabbitmqMsgHandler,
+		settingsObj.PayloadCommitConcurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -227,7 +229,7 @@ func GetFirstEpochDetails(payloadCommit *PayloadCommit) (int, int) {
 	epochSize := FetchProjectEpochSize(payloadCommit.ProjectId)
 	firstEpochEndHeight := 0
 	if epochSize == 0 {
-		epochSize := payloadCommit.SourceChainDetails.EpochEndHeight - payloadCommit.SourceChainDetails.EpochStartHeight + 1
+		epochSize = payloadCommit.SourceChainDetails.EpochEndHeight - payloadCommit.SourceChainDetails.EpochStartHeight + 1
 		status := SetProjectEpochSize(payloadCommit.ProjectId, epochSize)
 		if !status {
 			return 0, 0
@@ -419,7 +421,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.ProjectId, payloadCommit.CommitId)
 		}
 		if !ProcessUnCommittedSnapshot(&payloadCommit) {
-			return false
+			return true
 		}
 	} else {
 		if payloadCommit.SnapshotCID == "" && payloadCommit.Payload == nil {
@@ -427,7 +429,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 			return true
 		} else {
-			//TODO: What if payload is present and snapshotCID is empty?? Currently there is no scenario where this can happen, but need to handle in future.
+			//What if payload is present and snapshotCID is empty?? Currently there is no scenario where this can happen, but need to handle in future.
 			//This would require soem kind of reorg of DAGChain if required as this is a resubmission of payload already submitted.
 			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq.",
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
@@ -439,7 +441,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	if !payloadCommit.SkipAnchorProof {
 		requestID, txHash, retryType = PrepareAndSubmitTxnToChain(&payloadCommit)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
-			//TODO: Not retrying further..need to think of project recovery from this point.
+			//Not retrying further, expecting sel-healing to take care of recovery
 			log.Warnf("MAX Retries reached while trying to invoke tx-manager for project %s and commitId %s with tentativeBlockHeight %d.",
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further.")
 			requestID = ""
@@ -452,29 +454,28 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	} else {
 		requestID = uuid.New().String()
 		payloadCommit.RequestID = requestID
-		var status bool
-		txHash, status = GenerateTokenHash(&payloadCommit)
-		payloadCommit.ApiKeyHash = txHash
-		if !status {
-			log.Errorf("Irrecoverable error occurred for project %s and commitId %s with tentativeBlockHeight %d and hence ignoring snapshot for processing.",
-				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-			return true
-		}
 		//Wait for consensus.
 		//Skip consensus in case of summmaryProject until aggregation logic is fixed.
 		if settingsObj.UseConsensus && !payloadCommit.IsSummaryProject && !payloadCommit.Resubmitted {
 			//In case of resubmission, no need to go for consensus again.
-			//TODO: Move this queue to redis
+			//Not storing this queue to redis, because in a worst-case scenario
+			//if the process crashes and we loose this state information, self-healing shall take care of it.
 			status, err := SubmitSnapshotForConsensus(&payloadCommit)
 			if status == SNAPSHOT_CONSENSUS_STATUS_ACCEPTED {
 				QueueLock.Lock()
 				WaitQueueForConsensus[payloadCommit.ProjectId] = &payloadCommit
 				QueueLock.Unlock()
-				//TODO: Notify polling go-routine
+				return true
+			} else if status == "" { //This check is added as protection, ideally this condition should not be hit.
+				log.Fatalf("Snapshot is not accepted for project %s due to error %+v", payloadCommit.ProjectId, err)
 				return true
 			}
 			if err != nil {
-				return false
+				if status == "" {
+					log.Fatalf("Snapshot is not accepted for project %s due to error %+v", payloadCommit.ProjectId, err)
+					return true
+				}
+				return true
 			}
 		}
 	}
@@ -486,7 +487,7 @@ func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string, requestID str
 	/*Add to redis pendingTransactions*/
 	err := AddToPendingTxnsInRedis(payloadCommit, requestID, txHash)
 	if err != nil {
-		//TODO: Not retrying further..need to think of project recovery from this point.
+		//Not retrying further..expecting self-healing to take care.
 		log.Errorf("Unable to add transaction to PendingTxns after max retries for project %s and commitId %s with tentativeBlockHeight %d.",
 			payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
 		return true
@@ -495,7 +496,7 @@ func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string, requestID str
 		//Notify DAG finalizer service as we are skipping proof anchor on chain.
 		retryType := InvokeDAGFinalizerCallback(payloadCommit, requestID)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
-			//TODO: Not retrying further..need to think of project recovery from this point.
+			//Not retrying further..expecting self-healing to take care.
 			log.Warnf("MAX Retries reached while trying to invoke DAG finalizer for project %s and commitId %s with tentativeBlockHeight %d.",
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
 			return true
@@ -592,20 +593,6 @@ func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) 
 			log.Errorf("Found more than 1 payload CIDS at height %d for project %s which means project state is messed up due to an issue that has occured while previous snapshot processing, considering the first one so that current snapshot processing can proceed",
 				startScore, projectId)
 			payloadCid = fmt.Sprintf("%v", res[0].Member)
-		} else {
-			log.Errorf("Could not find a payloadCid at height %s for project %s. Trying with lower height.", startScore, projectId)
-			prevHeight, err := strconv.Atoi(startScore)
-			if err != nil {
-				log.Errorf("CRITICAL! Height passed in startScore is not int, hence failed to convert due to error %+v", err)
-				return "", err
-			}
-			startScore = strconv.Itoa(prevHeight - 1)
-			if prevHeight < 2 { //Safety check
-				log.Errorf("Could not find any payloadCid at min height.Continuing with current snapshot processing in this case.")
-				return "", errors.New(SKIP_SNAPSHOT_VALIDATION_ERR_STR)
-			}
-			i++
-			continue
 		}
 		break
 	}
@@ -620,7 +607,7 @@ func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error)
 		if err != nil {
 			if i >= retryCount {
 				log.Errorf("Failed to fetch Payload with CID %s from IPFS even after max retries due to error %+v.", payloadCid, err)
-				return &payload, errors.New(SKIP_SNAPSHOT_VALIDATION_ERR_STR)
+				return &payload, err
 			}
 			log.Warnf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
 			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
@@ -1102,11 +1089,7 @@ func InitTxManagerClient() {
 		Transport: &t,
 	}
 
-	commonTxReqParams.Contract = strings.ToLower(settingsObj.AuditContract)
 	commonTxReqParams.Method = "commitRecord"
-	commonTxReqParams.NetworkId = 137
-	commonTxReqParams.HackerMan = false
-	commonTxReqParams.IgnoreGasEstimate = false
 
 	//Default values
 	tps := rate.Limit(50) //50 TPS

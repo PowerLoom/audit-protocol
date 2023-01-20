@@ -4,13 +4,6 @@ import json
 
 
 class ContractAddresses(BaseModel):
-    iuniswap_v2_factory: str
-    iuniswap_v2_router: str
-    iuniswap_v2_pair: str
-    USDT: str
-    DAI: str
-    USDC: str
-    WETH: str
     MAKER: str
 
 
@@ -95,13 +88,11 @@ class Settings(BaseModel):
     ipfs_url: str
     ipfs_reader_url: str
     rabbitmq: RabbitMQConfig
-    audit_contract: str
     contract_call_backend: str
     dag_verifier: DAGVerifierSettings
     local_cache_path: str
     pruning: PruneSettings
     ipfs_timeout: int
-    aiohtttp_timeouts: Union[HTTPClientConnection, dict]
     webhook_listener: Union[WebhookListener, dict]
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
@@ -111,3 +102,4 @@ class Settings(BaseModel):
     use_consensus: bool = False
     consensus_config: ConsensusConfig
     skip_summary_projects_anchor_proof: bool=False
+    pooler_namespace: str

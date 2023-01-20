@@ -200,6 +200,11 @@ func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRet
 			}
 			return resp.Status, nil
 		} else {
+			if res.StatusCode == http.StatusForbidden ||
+				res.StatusCode == http.StatusUnauthorized ||
+				res.StatusCode == http.StatusBadRequest {
+				return "", errors.New("not authorized to submit to consensus - check if the instance-ID/UUID is registered with consensus service")
+			}
 			retryCount++
 			log.Errorf("Received Error response %+v from consensus service for project %s at tentativeHeight %d with commitId %s with statusCode %d and status : %s ",
 				respBody, payload.ProjectId, payload.TentativeBlockHeight, payload.CommitId, res.StatusCode, res.Status)

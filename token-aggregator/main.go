@@ -33,8 +33,6 @@ var auditProtocolBaseURL string
 var tokenPairTokenMapping map[string]TokenDataRefs
 var snapshotCallbackProjectLocks map[string]*sync.Mutex
 
-const NAMESPACE string = "UNISWAPV2"
-
 type TokenDataRefs struct {
 	token0Ref *TokenData
 	token1Ref *TokenData
@@ -131,9 +129,9 @@ func BlockHeightConfirmCallback(w http.ResponseWriter, req *http.Request) {
 }
 
 func RegisterAggregatorCallbackKey() {
-	tokenSummaryProjectId := fmt.Sprintf(TOKENSUMMARY_PROJECTID, NAMESPACE)
-	pairSummaryProjectId := fmt.Sprintf(PAIRSUMMARY_PROJECTID, NAMESPACE)
-	dailyStatsSummaryProjectId := fmt.Sprintf(DAILYSTATSSUMMARY_PROJECTID, NAMESPACE)
+	tokenSummaryProjectId := fmt.Sprintf(TOKENSUMMARY_PROJECTID, settingsObj.PoolerNamespace)
+	pairSummaryProjectId := fmt.Sprintf(PAIRSUMMARY_PROJECTID, settingsObj.PoolerNamespace)
+	dailyStatsSummaryProjectId := fmt.Sprintf(DAILYSTATSSUMMARY_PROJECTID, settingsObj.PoolerNamespace)
 
 	body, _ := json.Marshal(map[string]string{
 		"callbackURL": fmt.Sprintf("http://localhost:%d/block_height_confirm_callback", settingsObj.TokenAggregatorSettings.Port),
@@ -176,7 +174,7 @@ func FetchTokensMetaData() {
 }
 
 func FetchAndFillTokenMetaData(pairContractAddr string) {
-	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PAIR_CONTRACT_TOKENS_DATA, NAMESPACE, pairContractAddr)
+	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PAIR_CONTRACT_TOKENS_DATA, settingsObj.PoolerNamespace, pairContractAddr)
 	log.Debug("Fetching PairContractTokensData from redis with key:", redisKey)
 	var tokenPairMeta map[string]string
 	var err error
@@ -200,7 +198,7 @@ func FetchAndFillTokenMetaData(pairContractAddr string) {
 
 	//Use tokenContractAddress to store tokenData as tokenSymbol is not gauranteed to be unique.
 	var tokenContractAddresses map[string]string
-	redisKey = fmt.Sprintf(redisutils.REDIS_KEY_PAIR_TOKEN_ADDRESSES, NAMESPACE, pairContractAddr)
+	redisKey = fmt.Sprintf(redisutils.REDIS_KEY_PAIR_TOKEN_ADDRESSES, settingsObj.PoolerNamespace, pairContractAddr)
 	for retryCount := 0; ; {
 		tokenContractAddresses, err = redisClient.HGetAll(ctx, redisKey).Result()
 		if err != nil {
@@ -248,7 +246,7 @@ func FetchAndFillTokenMetaData(pairContractAddr string) {
 func PrepareAndSubmitTokenSummarySnapshot() {
 
 	curBlockHeight := FetchPairsSummaryLatestBlockHeight()
-	dagChainProjectId := fmt.Sprintf(TOKENSUMMARY_PROJECTID, NAMESPACE)
+	dagChainProjectId := fmt.Sprintf(TOKENSUMMARY_PROJECTID, settingsObj.PoolerNamespace)
 
 	if curBlockHeight > lastSnapshotBlockHeight {
 		var sourceBlockHeight int64
@@ -366,18 +364,18 @@ func FetchAndUpdateStatusOfOlderSnapshots(projectId string) error {
 
 	var redisAggregatorProjectId string
 	switch projectId {
-	case fmt.Sprintf(TOKENSUMMARY_PROJECTID, NAMESPACE):
+	case fmt.Sprintf(TOKENSUMMARY_PROJECTID, settingsObj.PoolerNamespace):
 		redisAggregatorProjectId = fmt.Sprintf(
 			redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOTS_ZSET,
-			NAMESPACE)
-	case fmt.Sprintf(PAIRSUMMARY_PROJECTID, NAMESPACE):
+			settingsObj.PoolerNamespace)
+	case fmt.Sprintf(PAIRSUMMARY_PROJECTID, settingsObj.PoolerNamespace):
 		redisAggregatorProjectId = fmt.Sprintf(
 			redisutils.REDIS_KEY_PAIRS_SUMMARY_SNAPSHOTS_ZSET,
-			NAMESPACE)
-	case fmt.Sprintf(DAILYSTATSSUMMARY_PROJECTID, NAMESPACE):
+			settingsObj.PoolerNamespace)
+	case fmt.Sprintf(DAILYSTATSSUMMARY_PROJECTID, settingsObj.PoolerNamespace):
 		redisAggregatorProjectId = fmt.Sprintf(
 			redisutils.REDIS_KEY_DAILY_STATS_SUMMARY_SNAPSHOTS_ZSET,
-			NAMESPACE)
+			settingsObj.PoolerNamespace)
 	}
 
 	key := redisAggregatorProjectId
@@ -453,7 +451,7 @@ func FetchAndUpdateStatusOfOlderSnapshots(projectId string) error {
 }
 
 func FetchTokenSummaryLatestBlockHeight() int64 {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_TENTATIVE_HEIGHT, NAMESPACE)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_TENTATIVE_HEIGHT, settingsObj.PoolerNamespace)
 	for retryCount := 0; retryCount < 3; retryCount++ {
 		res := redisClient.Get(ctx, key)
 		if res.Err() != nil {
@@ -492,7 +490,7 @@ func ResetTokenData() {
 
 func CalculateAndFillPriceChange(fromTime float64, tokenData *TokenData) *TokenPriceHistoryEntry {
 	curTimeEpoch := float64(time.Now().Unix())
-	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PRICE_HISTORY, NAMESPACE, tokenData.ContractAddress)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PRICE_HISTORY, settingsObj.PoolerNamespace, tokenData.ContractAddress)
 
 	zRangeByScore := redisClient.ZRangeByScore(ctx, key, &redis.ZRangeBy{
 		Min: fmt.Sprintf("%f", fromTime),
@@ -516,7 +514,7 @@ func CalculateAndFillPriceChange(fromTime float64, tokenData *TokenData) *TokenP
 }
 
 func UpdateTokenPriceHistoryRedis(toTime float64, fromTime float64, tokenData *TokenData) {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PRICE_HISTORY, NAMESPACE, tokenData.ContractAddress)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PRICE_HISTORY, settingsObj.PoolerNamespace, tokenData.ContractAddress)
 	var priceHistoryEntry TokenPriceHistoryEntry = TokenPriceHistoryEntry{toTime, tokenData.Price, tokenData.Block_height}
 	val, err := json.Marshal(priceHistoryEntry)
 	if err != nil {
@@ -546,7 +544,7 @@ func PrunePriceHistoryInRedis(key string, fromTime float64) {
 }
 
 func PruneTokenPriceZSet(tokenContractAddr string, blockHeight int64) {
-	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_BLOCK_HEIGHT_PRICE, NAMESPACE, tokenContractAddr)
+	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_BLOCK_HEIGHT_PRICE, settingsObj.PoolerNamespace, tokenContractAddr)
 	res := redisClient.ZRemRangeByScore(ctx,
 		redisKey,
 		"-inf",
@@ -559,7 +557,7 @@ func PruneTokenPriceZSet(tokenContractAddr string, blockHeight int64) {
 
 func FetchTokenPriceAtBlockHeight(tokenContractAddr string, blockHeight int64) float64 {
 
-	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_BLOCK_HEIGHT_PRICE, NAMESPACE, tokenContractAddr)
+	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_BLOCK_HEIGHT_PRICE, settingsObj.PoolerNamespace, tokenContractAddr)
 	type tokenPriceAtBlockHeight struct {
 		BlockHeight int     `json:"blockHeight"`
 		Price       float64 `json:"price"`
@@ -594,7 +592,7 @@ func FetchTokenPriceAtBlockHeight(tokenContractAddr string, blockHeight int64) f
 }
 
 func StoreTokensSummaryPayload(blockHeight int64) {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOT_AT_BLOCKHEIGHT, NAMESPACE, blockHeight)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOT_AT_BLOCKHEIGHT, settingsObj.PoolerNamespace, blockHeight)
 	payload := make([]*TokenData, len(tokenList))
 	var i int
 	for _, tokenData := range tokenList {
@@ -619,7 +617,7 @@ func StoreTokensSummaryPayload(blockHeight int64) {
 }
 
 func StoreTokenSummaryCIDInSnapshotsZSet(blockHeight int64, tokenSummarySnapshotMeta *TokenSummarySnapshotMeta) {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOTS_ZSET, NAMESPACE)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOTS_ZSET, settingsObj.PoolerNamespace)
 	ZsetMemberJson, err := json.Marshal(tokenSummarySnapshotMeta)
 	if err != nil {
 		log.Fatalf("Json marshal error %+v", err)
@@ -642,7 +640,7 @@ func StoreTokenSummaryCIDInSnapshotsZSet(blockHeight int64, tokenSummarySnapshot
 }
 
 func PruneTokenSummarySnapshotsZSet() {
-	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOTS_ZSET, NAMESPACE)
+	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOTS_ZSET, settingsObj.PoolerNamespace)
 	res := redisClient.ZCard(ctx, redisKey)
 	zsetLen := res.Val()
 	log.Debugf("ZSet length is %d", zsetLen)
@@ -667,7 +665,7 @@ func CommitTokenSummaryPayload() error {
 
 	var apCommitResp AuditProtocolCommitPayloadResp
 	var request AuditProtocolCommitPayloadReq
-	request.ProjectId = fmt.Sprintf(TOKENSUMMARY_PROJECTID, NAMESPACE)
+	request.ProjectId = fmt.Sprintf(TOKENSUMMARY_PROJECTID, settingsObj.PoolerNamespace)
 	request.Payload.TokensData = make([]*TokenData, len(tokenList))
 	request.Web3Storage = true //Always store TokenData snapshot in web3.storage.
 	request.SkipAnchorProof = settingsObj.SkipSummaryProjectProof
@@ -726,7 +724,7 @@ func CommitTokenSummaryPayload() error {
 }
 
 func FetchPairSummarySnapshot(blockHeight int64) []TokenPairLiquidityProcessedData {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_PAIRS_SUMMARY_SNAPSHOT_BLOCKHEIGHT, NAMESPACE, blockHeight)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PAIRS_SUMMARY_SNAPSHOT_BLOCKHEIGHT, settingsObj.PoolerNamespace, blockHeight)
 	log.Debugf("Fetching latest PairSummary snapshot from redis key %s", key)
 	var pairsSummarySnapshot PairSummarySnapshot
 
@@ -802,7 +800,7 @@ func WaitAndFetchBlockHeightStatus(projectID string, blockHeight int64, retries 
 }
 
 func FetchPairsSummaryLatestBlockHeight() int64 {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_PAIRS_SUMMARY_SNAPSHOTS_ZSET, NAMESPACE)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PAIRS_SUMMARY_SNAPSHOTS_ZSET, settingsObj.PoolerNamespace)
 	log.Debugf("Fetching latest available PairSummarySnapshot Blockheight from %s", key)
 
 	for retryCount := 0; retryCount < 3; retryCount++ {
@@ -858,7 +856,7 @@ func ReadSettings() {
 		settingsObj.TokenAggregatorSettings.Port = 8000
 	}
 	retryInterval = settingsObj.RetryIntervalSecs
-	log.Info("Settings for namespace", NAMESPACE)
+	log.Info("Settings for namespace", settingsObj.PoolerNamespace)
 }
 
 func SetupRedisClient() {

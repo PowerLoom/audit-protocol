@@ -102,24 +102,10 @@ type SettingsObj struct {
 		Db       int    `json:"db"`
 		Password string `json:"password"`
 	} `json:"redis_reader"`
-	TableNames struct {
-		APIKeys           string `json:"api_keys"`
-		AccountingRecords string `json:"accounting_records"`
-		RetreivalsSingle  string `json:"retreivals_single"`
-		RetreivalsBulk    string `json:"retreivals_bulk"`
-	} `json:"table_names"`
-	CleanupServiceInterval   int           `json:"cleanup_service_interval"`
-	AuditContract            string        `json:"audit_contract"`
 	PayloadCommitConcurrency int           `json:"payload_commit_concurrency"`
 	IpfsTimeout              int           `json:"ipfs_timeout"`
 	IPFSRateLimiter          *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
-	APIKey                   string        `json:"api_key"`
-	AiohtttpTimeouts         struct {
-		SockRead    int `json:"sock_read"`
-		SockConnect int `json:"sock_connect"`
-		Connect     int `json:"connect"`
-	} `json:"aiohtttp_timeouts"`
-	Web3Storage struct {
+	Web3Storage              struct {
 		URL             string        `json:"url"`
 		APIToken        string        `json:"api_token"`
 		TimeoutSecs     int           `json:"timeout_secs"`
@@ -136,6 +122,7 @@ type SettingsObj struct {
 	PayloadCachePath        string                   `json:"local_cache_path"`
 	TokenAggregatorSettings TokenAggregatorSettings_ `json:"token_aggregator"`
 	SkipSummaryProjectProof bool                     `json:"skip_summary_projects_anchor_proof"`
+	PoolerNamespace         string                   `json:"pooler_namespace"`
 }
 
 type ConsensusConfig_ struct {

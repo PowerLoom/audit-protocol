@@ -1,10 +1,10 @@
 {
-	"instance_id":"unique-uuid",
-	"host": "127.0.0.1",
+	"instance_id":"generated-uuid",
+	"host": "0.0.0.0",
 	"port": 9000,
 	"keepalive_secs": 600,
 	"webhook_listener": {
-		"host": "127.0.0.1",
+		"host": "0.0.0.0",
 		"port": 9002,
 		"validate_header_sig": false,
 		"keepalive_secs": 600,
@@ -14,11 +14,11 @@
 			"burst": 20
 		}
 	},
-	"rpc_url": "https://<rpc-url>/****",
+	"rpc_url": "https://rpc-url",
 	"rabbitmq": {
 		"user": "guest",
 		"password": "guest",
-		"host": "localhost",
+		"host": "host.docker.internal",
 		"port": 5672,
 		"setup": {
 			"core": {
@@ -37,50 +37,37 @@
 		}
 	},
 	"contract_addresses": {
-		"iuniswap_v2_factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-		"iuniswap_v2_router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-		"iuniswap_v2_pair": "0x3356c9A8f40F8E9C1d192A4347A76D18243fABC5",
-		"USDT": "0xdac17f958d2ee523a2206206994597c13d831ec7",
-		"DAI": "0x6b175474e89094c44da98b954eedeac495271d0f",
-		"USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-		"WETH": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
-	"ipfs_url": "/ip4/127.0.0.1/tcp/5001",
+	"ipfs_url": "/dns/host.docker.internal/tcp/5001",
 	"ipfs_rate_limit" :{
 		"req_per_sec": 100,
 		"burst": 100
 	},
-	"ipfs_reader_url":"/ip4/127.0.0.1/tcp/5001",
+	"ipfs_reader_url":"/dns/host.docker.internal/tcp/5001",
 	"snapshot_interval": 4,
 	"contract_call_backend": "http://127.0.0.1:8888/writer",
 	"contract_rate_limit" :{
 		"req_per_sec": 50,
 		"burst": 50
 	},
-	"retry_count": 10,
+	"retry_count": 3,
 	"retry_interval_secs":5,
 	"http_client_timeout_secs": 10,
 	"redis": {
-		"host": "127.0.0.1",
+		"host": "host.docker.internal",
 		"port": 6379,
 		"db": 0,
 		"password": null
 	},
  	"redis_reader": {
-      "host": "127.0.0.1",
+      "host": "host.docker.internal",
       "port": 6379,
       "db": 0,
       "password": null
     },
 	"rlimit": {
 		"file_descriptors": 2048
-	},
-	"audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
-	"aiohtttp_timeouts": {
-		"sock_read": 5,
-		"sock_connect": 5,
-		"connect": 5
 	},
 	"payload_commit_concurrency": 20,
 	"local_cache_path":"/home/ubuntu/local_cache/",
@@ -89,7 +76,7 @@
 	"web3_storage":{
 		"url":"https://api.web3.storage",
 		"upload_url_suffix":"/upload",
-		"api_token":"",
+		"api_token":"web3-storage-token",
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
 		"idle_conn_timeout":0,
@@ -144,7 +131,7 @@
 	},
 	"use_consensus": true,
 	"consensus_config":{
-		"service_url": "",
+		"service_url": "https://consensus-url",
 		"rate_limit":{
 			"req_per_sec": 5,
 			"burst": 5
@@ -158,5 +145,6 @@
 		"port": 8000,
 		"run_interval_secs": 60
 	},
-	"skip_summary_projects_anchor_proof":true
+	"skip_summary_projects_anchor_proof":true,
+	"pooler_namespace":"relevant-namespace"
 }
