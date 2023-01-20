@@ -139,7 +139,7 @@ func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRet
 		}
 		req, err := http.NewRequest(method, reqURL, bytes.NewBuffer(reqBytes))
 		if err != nil {
-			log.Fatalf("Failed to create new HTTP Req with URL %s for snapshot %s project %s with commitId %s with error %+v",
+			log.Errorf("Failed to create new HTTP Req with URL %s for snapshot %s project %s with commitId %s with error %+v",
 				reqURL, payload.SnapshotCID, payload.ProjectId, payload.CommitId, err)
 			return "", err
 		}

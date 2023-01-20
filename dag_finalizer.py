@@ -560,17 +560,24 @@ class DAGFinalizationCallbackProcessor:
                                     continue
                                 try:
                                     parsed_snapshot_response = SubmissionResponse.parse_obj(each_consensus_response)
-                                except Exception as e:
+                                except Exception as exc:
+                                    #TODO: Retry fetching from consensus in case of network error or retryable HTTP response codes.
                                     custom_logger.warning(
                                         'Consensus Self Healing | Project %s | Exception converting response to '
                                         'data model against epoch end height %s, expected tentative height: %s | %s',
                                         project_id,
                                         epochs_to_fetch[tentative_height],
                                         tentative_height,
-                                        e,
+                                        exc,
                                         exc_info=True
                                     )
                                     tentative_height_to_cid_map[tentative_height] = f'null_{epochs_to_fetch[tentative_height]}'
+                                    # Remove any existing payloadCid entry from Zset
+                                    await writer_redis_conn.zremrangebyscore(
+                                        name=redis_keys.get_payload_cids_key(project_id),
+                                        min=tentative_height,
+                                        max=tentative_height
+                                    )
                                     continue
 
                                 custom_logger.info(
