@@ -22,13 +22,14 @@ echo "Got UUID: ${UUID}"
 
 echo "Got WEB3_STORAGE_TOKEN: ${WEB3_STORAGE_TOKEN}"
 
+echo "Got CONSENSUS_URL: ${CONSENSUS_URL}"
 cp settings.example.json settings.json
 
-export namespace=docker-UNISWAPV2-ph15-prod
-export consensus_url=https://offchain-consensus-api.powerloom.io
+export namespace=UNISWAPV2-ph15-prod
+export consensus_url="${CONSENSUS_URL:-https://offchain-consensus-api.powerloom.io}"
 
-echo $namespace
-echo $consensus_url
+echo "Using Namespace: ${namespace}"
+echo "Using CONSENSUS_URL: ${consensus_url}"
 
 sed -i "s|relevant-namespace|$namespace|" settings.json
 
