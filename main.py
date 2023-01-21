@@ -664,18 +664,23 @@ async def register_projects(
         *project_registration_request.projectIDs
     )
 
-    client = httpx.Client(limits=httpx.Limits(
+    client = httpx.AsyncClient(limits=httpx.Limits(
         max_connections=20, max_keepalive_connections=20
     ))
 
     failed_tasks = []
     # Skip summary and stats projectIDs
     projects_for_consensus = filter(lambda project_id: "Summary" not in project_id and "Stats" not in project_id, project_registration_request.projectIDs)
+
+    tasks = []
     for project_id in projects_for_consensus:
-        r = client.post(
+        tasks.append(client.post(
             url=settings.consensus_config.service_url + "/registerProjectPeer",
             json=PeerRegistrationRequest(projectID = project_id, instanceID = settings.instance_id).dict()
-        )
+        ))
+    
+    results = await asyncio.gather(*tasks)
+    for project_id, r in zip(projects_for_consensus, results):
         if r.status_code != 200:
             failed_tasks.append(project_id)
 
