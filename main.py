@@ -95,6 +95,11 @@ async def create_retrieval_request(project_id: str, from_height: int, to_height:
     return request_id
 
 
+# Health check endpoint that returns 200 OK
+@app.get('/health')
+async def health_check():
+    return {'status': 'OK'}
+
 @app.post('/commit_payload')
 async def commit_payload(
         request: Request,
