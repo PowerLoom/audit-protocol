@@ -8,7 +8,7 @@ RUN apk add --update --no-cache python3 && ln -sf python3 /usr/bin/python
 RUN python3 -m ensurepip
 RUN pip3 install --no-cache --upgrade pip setuptools
 
-RUN apk update && apk add --no-cache ethtool nodejs npm bash gcc musl-dev libc-dev python3-dev libffi-dev vim nano
+RUN apk update && apk add --no-cache ethtool nodejs npm bash gcc musl-dev libc-dev python3-dev curl libffi-dev vim nano
 
 RUN npm install pm2 -g
 
