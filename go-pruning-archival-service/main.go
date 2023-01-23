@@ -906,9 +906,15 @@ func InitW3sClient() {
 }
 
 func InitIPFSClient() {
-	url := settingsObj.IpfsURL
+	url := settingsObj.IpfsConfig.URL
 	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+	if settingsObj.IpfsConfig.BasicAuthConfig.UserName != "" &&
+		settingsObj.IpfsConfig.BasicAuthConfig.PassKey != "" {
+		connectUrl = "https://" + settingsObj.IpfsConfig.BasicAuthConfig.UserName + ":" +
+			settingsObj.IpfsConfig.BasicAuthConfig.UserName + "@" +
+			strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+	}
 	ipfsHTTPURL = connectUrl
 	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
 	t := http.Transport{

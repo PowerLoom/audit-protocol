@@ -535,6 +535,7 @@ func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 			time.Sleep(1 * time.Second)
 			continue
 		}
+
 		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
 
 		if err != nil {
@@ -1114,9 +1115,15 @@ func InitRedisClient() {
 }
 
 func InitIPFSClient() {
-	url := settingsObj.IpfsURL
+	url := settingsObj.IpfsConfig.URL
 	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+	if settingsObj.IpfsConfig.BasicAuthConfig.UserName != "" &&
+		settingsObj.IpfsConfig.BasicAuthConfig.PassKey != "" {
+		connectUrl = "https://" + settingsObj.IpfsConfig.BasicAuthConfig.UserName + ":" +
+			settingsObj.IpfsConfig.BasicAuthConfig.UserName + "@" +
+			strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+	}
 
 	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
 	t := http.Transport{

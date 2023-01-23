@@ -33,5 +33,6 @@ psutil
 rich==12.1.0
 cardinality
 httpx==0.22.0
+httpx_auth==0.15.0
 typer==0.3.2
 safe-eth-py==4.1.3

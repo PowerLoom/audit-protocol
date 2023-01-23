@@ -21,16 +21,22 @@ type IpfsClient struct {
 }
 
 func (client *IpfsClient) Init(settingsObj *settings.SettingsObj) {
-	url := settingsObj.IpfsReaderURL
-	if url == "" {
-		url = settingsObj.IpfsURL
+	_url := settingsObj.IpfsConfig.ReaderURL
+	if _url == "" {
+		_url = settingsObj.IpfsConfig.URL
 	}
-	_, err := ma.NewMultiaddr(url)
+	url := ""
+	_, err := ma.NewMultiaddr(_url)
 	if err == nil {
 		// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
-		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+		url = strings.Split(_url, "/")[2] + ":" + strings.Split(_url, "/")[4]
 	}
-
+	if settingsObj.IpfsConfig.BasicAuthConfig.UserName != "" &&
+		settingsObj.IpfsConfig.BasicAuthConfig.PassKey != "" {
+		url = "https://" + settingsObj.IpfsConfig.BasicAuthConfig.UserName + ":" +
+			settingsObj.IpfsConfig.BasicAuthConfig.UserName + "@" +
+			strings.Split(_url, "/")[2] + ":" + strings.Split(_url, "/")[4]
+	}
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.DagVerifierSettings.Concurrency,

@@ -50,7 +50,6 @@ type TokenAggregatorSettings_ struct {
 	RunIntervalSecs int `json:"run_interval_secs"`
 }
 
-// TODO: Move settings into a common package to be used by all go services under audit-protocol.
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
@@ -59,9 +58,15 @@ type SettingsObj struct {
 		Port        int           `json:"port"`
 		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
-	IpfsURL       string `json:"ipfs_url"`
-	IpfsReaderURL string `json:"ipfs_reader_url"`
-	Rlimit        struct {
+	IpfsConfig struct {
+		URL             string `json:"ipfs_url"`
+		ReaderURL       string `json:"ipfs_reader_url"`
+		BasicAuthConfig struct {
+			UserName string `json:"username"`
+			PassKey  string `json:"passkey"`
+		} `json:"basic_auth"`
+	} `json:"ipfs"`
+	Rlimit struct {
 		FileDescriptors int `json:"file_descriptors"`
 	} `json:"rlimit"`
 	Rabbitmq struct {

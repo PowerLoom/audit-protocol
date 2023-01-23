@@ -78,6 +78,14 @@ class ConsensusConfig(BaseModel):
     idle_conn_timeout: int
     finalization_wait_time_secs: int
 
+class BasicAuthConfig(BaseModel):
+    username:str=None,
+    passkey:str=None
+
+class IPFSconfig(BaseModel):
+    url:str
+    reader_url: str
+    basic_auth: BasicAuthConfig
 
 class Settings(BaseModel):
     instance_id: str
@@ -85,8 +93,7 @@ class Settings(BaseModel):
     port: str
     keepalive_secs: int = 600
     rlimit: dict
-    ipfs_url: str
-    ipfs_reader_url: str
+    ipfs:IPFSconfig
     rabbitmq: RabbitMQConfig
     contract_call_backend: str
     dag_verifier: DAGVerifierSettings
