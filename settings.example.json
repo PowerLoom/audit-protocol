@@ -18,7 +18,7 @@
 	"rabbitmq": {
 		"user": "guest",
 		"password": "guest",
-		"host": "host.docker.internal",
+		"host": "rabbitmq",
 		"port": 5672,
 		"setup": {
 			"core": {
@@ -39,12 +39,12 @@
 	"contract_addresses": {
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
-	"ipfs_url": "/dns/host.docker.internal/tcp/5001",
+	"ipfs_url": "/dns/ipfs/tcp/5001",
 	"ipfs_rate_limit" :{
 		"req_per_sec": 100,
 		"burst": 100
 	},
-	"ipfs_reader_url":"/dns/host.docker.internal/tcp/5001",
+	"ipfs_reader_url":"/dns/ipfs/tcp/5001",
 	"snapshot_interval": 4,
 	"contract_call_backend": "http://127.0.0.1:8888/writer",
 	"contract_rate_limit" :{
@@ -55,13 +55,13 @@
 	"retry_interval_secs":5,
 	"http_client_timeout_secs": 10,
 	"redis": {
-		"host": "host.docker.internal",
+		"host": "redis",
 		"port": 6379,
 		"db": 0,
 		"password": null
 	},
  	"redis_reader": {
-      "host": "host.docker.internal",
+      "host": "redis",
       "port": 6379,
       "db": 0,
       "password": null
