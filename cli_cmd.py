@@ -53,7 +53,7 @@ def dagChainStatus(namespace: str = typer.Argument('UNISWAPV2'), dag_chain_heigh
     }
 
     # get highest dag chain height
-    project_heights = r.hgetall(redis_keys.get_uniswap_projects_dag_verifier_status(namespace))
+    project_heights = r.hgetall(redis_keys.get_uniswap_projects_dag_verifier_status())
     if project_heights:
         for key, value in project_heights.items():
             if int(value.decode('utf-8')) > total_issue_count["CURRENT_DAG_CHAIN_HEIGHT"]:
@@ -161,48 +161,33 @@ def dagChainStatus(namespace: str = typer.Argument('UNISWAPV2'), dag_chain_heigh
 
     print("\n")
 
-@app.command()
-def updateStoredProjectIds(namespace: str = typer.Argument('UNISWAPV2')):
-    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
-
-    all_contracts = read_json_file('static/cached_pair_addresses.json')
-    all_projectIds = []
-    for contract in all_contracts:
-        pair_reserve_template = f"uniswap_pairContract_pair_total_reserves_{contract}_{namespace}"
-        pair_trade_volume_template = f"uniswap_pairContract_trade_volume_{contract}_{namespace}"
-        all_projectIds.append(pair_reserve_template)
-        all_projectIds.append(pair_trade_volume_template)
-
-    all_projectIds.append(f"uniswap_V2PairsSummarySnapshot_{namespace}")
-    all_projectIds.append(f"uniswap_V2TokensSummarySnapshot_{namespace}")
-    all_projectIds.append(f"uniswap_V2DailyStatsSnapshot_{namespace}")
-
-    r.sadd('storedProjectIds', *all_projectIds)
 
 @app.command()
 def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2", "--namespace"), projectId: str = typer.Option(None, "--projectId")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
-    indexeStatus = None
+    index_status = None
+    key = 'projects-test:IndexStatus'
     if projectId:
-        indexeStatus = r.hget(f'projects:{namespace}:IndexStatus', projectId)
-        if not indexeStatus:
+        index_status = r.hget(key, projectId)
+        if not index_status:
             console.log(f"\n[bold red]Project is not indexed[bold red]: \n{projectId}\n")
             return
-        indexeStatus = [{projectId: indexeStatus.decode('utf-8')}]
+        index_status = [{projectId: index_status.decode('utf-8')}]
     else:
-        indexeStatus = r.hgetall(f'projects:{namespace}:IndexStatus')
-        if not indexeStatus:
+        index_status = r.hgetall(key)
+        if not index_status:
             console.log(f"\n[bold red]Indexes map doesn't exist [bold red]: 'projects:{namespace}:IndexStatus'\n")
             return
-        indexeStatus = [{k.decode('utf-8'): v.decode('utf-8')} for k, v in indexeStatus.items()]
+        index_status = dict(filter(lambda elem: namespace in elem[0].decode('utf-8'), index_status.items()))
+        index_status = [{k.decode('utf-8'): v.decode('utf-8')} for k, v in index_status.items()]
 
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("ProjecId", justify="center")
     table.add_column("Start source chain height", justify="center")
     table.add_column("Current source chain height", justify="center")
 
-    for project_indexes in indexeStatus:
+    for project_indexes in index_status:
         k, v = project_indexes.popitem()
         v = json.loads(v)
         table.add_row(
