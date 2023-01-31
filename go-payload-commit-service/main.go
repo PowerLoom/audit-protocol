@@ -998,7 +998,7 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 }
 
 func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (requestID string, txHash string, retry retryType, err error) {
-	reqURL := settingsObj.ContractCallBackend
+	reqURL := settingsObj.ContractCallBackend.URL
 	var reqParams AuditContractCommitParams
 	reqParams.RequestID = payload.RequestID
 	reqParams.ApiKeyHash = tokenHash
@@ -1095,13 +1095,13 @@ func InitTxManagerClient() {
 	//Default values
 	tps := rate.Limit(50) //50 TPS
 	burst := 50
-	if settingsObj.ContractRateLimiter != nil {
-		burst = settingsObj.ContractRateLimiter.Burst
-		if settingsObj.ContractRateLimiter.RequestsPerSec == -1 {
+	if settingsObj.ContractCallBackend.RateLimiter != nil {
+		burst = settingsObj.ContractCallBackend.RateLimiter.Burst
+		if settingsObj.ContractCallBackend.RateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.ContractRateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.ContractCallBackend.RateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for tx-manager Client at %v TPS with a burst of %d", tps, burst)

@@ -83,6 +83,10 @@ class IPFSconfig(BaseModel):
     reader_url: str
     timeout: int
 
+class TxnConfig(BaseModel):
+    url:str
+    rate_limit: BurstRateLimit
+
 class Settings(BaseModel):
     instance_id: str
     host: str
@@ -91,7 +95,7 @@ class Settings(BaseModel):
     rlimit: dict
     ipfs:IPFSconfig
     rabbitmq: RabbitMQConfig
-    contract_call_backend: str
+    txn_config: TxnConfig
     dag_verifier: DAGVerifierSettings
     local_cache_path: str
     pruning: PruneSettings

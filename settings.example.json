@@ -14,7 +14,6 @@
 			"burst": 20
 		}
 	},
-	"rpc_url": "https://rpc-url",
 	"rabbitmq": {
 		"user": "guest",
 		"password": "guest",
@@ -36,6 +35,7 @@
 			}
 		}
 	},
+	"rpc_url": "https://rpc-url",
 	"contract_addresses": {
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
@@ -48,10 +48,12 @@
 		},
 		"timeout": 20
 	},
-	"contract_call_backend": "http://127.0.0.1:8888/writer",
-	"contract_rate_limit" :{
-		"req_per_sec": 50,
-		"burst": 50
+	"txn_config":{
+		"url": "http://host.docker.internal:8085/commitRecord",
+		"rate_limit" :{
+			"req_per_sec": 10,
+			"burst": 10
+		}
 	},
 	"retry_count": 3,
 	"retry_interval_secs":5,

@@ -88,11 +88,13 @@ type SettingsObj struct {
 			} `json:"queues"`
 		} `json:"setup"`
 	} `json:"rabbitmq"`
-	ContractCallBackend   string        `json:"contract_call_backend"`
-	ContractRateLimiter   *RateLimiter_ `json:"contract_rate_limit,omitempty"`
-	RetryCount            *int          `json:"retry_count"`
-	RetryIntervalSecs     int           `json:"retry_interval_secs"`
-	HttpClientTimeoutSecs int           `json:"http_client_timeout_secs"`
+	ContractCallBackend struct {
+		URL         string        `json:"url"`
+		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
+	} `json:"txn_config"`
+	RetryCount            *int `json:"retry_count"`
+	RetryIntervalSecs     int  `json:"retry_interval_secs"`
+	HttpClientTimeoutSecs int  `json:"http_client_timeout_secs"`
 	Redis                 struct {
 		Host     string `json:"host"`
 		Port     int    `json:"port"`
