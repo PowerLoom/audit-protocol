@@ -50,7 +50,6 @@ type TokenAggregatorSettings_ struct {
 	RunIntervalSecs int `json:"run_interval_secs"`
 }
 
-// TODO: Move settings into a common package to be used by all go services under audit-protocol.
 type SettingsObj struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
@@ -59,9 +58,13 @@ type SettingsObj struct {
 		Port        int           `json:"port"`
 		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
 	} `json:"webhook_listener"`
-	IpfsURL       string `json:"ipfs_url"`
-	IpfsReaderURL string `json:"ipfs_reader_url"`
-	Rlimit        struct {
+	IpfsConfig struct {
+		URL             string        `json:"url"`
+		ReaderURL       string        `json:"reader_url"`
+		IPFSRateLimiter *RateLimiter_ `json:"write_rate_limit,omitempty"`
+		Timeout         int           `json:"timeout"`
+	} `json:"ipfs"`
+	Rlimit struct {
 		FileDescriptors int `json:"file_descriptors"`
 	} `json:"rlimit"`
 	Rabbitmq struct {
@@ -102,9 +105,7 @@ type SettingsObj struct {
 		Db       int    `json:"db"`
 		Password string `json:"password"`
 	} `json:"redis_reader"`
-	PayloadCommitConcurrency int           `json:"payload_commit_concurrency"`
-	IpfsTimeout              int           `json:"ipfs_timeout"`
-	IPFSRateLimiter          *RateLimiter_ `json:"ipfs_rate_limit,omitempty"`
+	PayloadCommitConcurrency int `json:"payload_commit_concurrency"`
 	Web3Storage              struct {
 		URL             string        `json:"url"`
 		APIToken        string        `json:"api_token"`

@@ -535,6 +535,7 @@ func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 			time.Sleep(1 * time.Second)
 			continue
 		}
+
 		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
 
 		if err != nil {
@@ -1114,7 +1115,7 @@ func InitRedisClient() {
 }
 
 func InitIPFSClient() {
-	url := settingsObj.IpfsURL
+	url := settingsObj.IpfsConfig.URL
 	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
 
@@ -1129,7 +1130,7 @@ func InitIPFSClient() {
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
+		Timeout:   time.Duration(settingsObj.IpfsConfig.Timeout * 1000000000),
 		Transport: &t,
 	}
 	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
@@ -1138,13 +1139,13 @@ func InitIPFSClient() {
 	//Default values
 	tps := rate.Limit(100) //50 TPS
 	burst := 100
-	if settingsObj.IPFSRateLimiter != nil {
-		burst = settingsObj.IPFSRateLimiter.Burst
-		if settingsObj.IPFSRateLimiter.RequestsPerSec == -1 {
+	if settingsObj.IpfsConfig.IPFSRateLimiter != nil {
+		burst = settingsObj.IpfsConfig.IPFSRateLimiter.Burst
+		if settingsObj.IpfsConfig.IPFSRateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.IPFSRateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.IpfsConfig.IPFSRateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)

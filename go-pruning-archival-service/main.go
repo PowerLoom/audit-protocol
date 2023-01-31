@@ -906,9 +906,10 @@ func InitW3sClient() {
 }
 
 func InitIPFSClient() {
-	url := settingsObj.IpfsURL
+	url := settingsObj.IpfsConfig.URL
 	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+
 	ipfsHTTPURL = connectUrl
 	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
 	t := http.Transport{
@@ -921,7 +922,7 @@ func InitIPFSClient() {
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
+		Timeout:   time.Duration(settingsObj.IpfsConfig.Timeout * 1000000000),
 		Transport: &t,
 	}
 	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())

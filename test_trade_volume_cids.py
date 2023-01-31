@@ -66,7 +66,7 @@ def read_json_file(directory:str, file_name: str):
 
 
 async def verify_trade_volume_cids(data_cid, timePeriod, storeLogsInFile):
-    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs.url)
     await ipfs_client.init_session()
     data = await get_payload_cid_output(data_cid, ipfs_client)
     timePeriod = 'trade_volume_24h_cids' if timePeriod == '24h' else 'trade_volume_7d_cids'

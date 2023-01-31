@@ -96,7 +96,7 @@ class DiffCalculationCallbackWorker(Process):
         # TODO: what is this async IPFS client doing in sync code?
         #       cant initialize any way
         #       all operations are async
-        self._ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+        self._ipfs_client = AsyncIPFSClient(addr=settings.ipfs.url)
         self._redis_conn_pool = redis.BlockingConnectionPool(**REDIS_CONN_CONF, max_connections=20)
         self.rabbitmq_interactor: RabbitmqSelectLoopInteractor = RabbitmqSelectLoopInteractor(
             consume_queue_name=self._queue_name,

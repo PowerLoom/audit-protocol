@@ -78,6 +78,10 @@ class ConsensusConfig(BaseModel):
     idle_conn_timeout: int
     finalization_wait_time_secs: int
 
+class IPFSconfig(BaseModel):
+    url:str
+    reader_url: str
+    timeout: int
 
 class Settings(BaseModel):
     instance_id: str
@@ -85,14 +89,12 @@ class Settings(BaseModel):
     port: str
     keepalive_secs: int = 600
     rlimit: dict
-    ipfs_url: str
-    ipfs_reader_url: str
+    ipfs:IPFSconfig
     rabbitmq: RabbitMQConfig
     contract_call_backend: str
     dag_verifier: DAGVerifierSettings
     local_cache_path: str
     pruning: PruneSettings
-    ipfs_timeout: int
     webhook_listener: Union[WebhookListener, dict]
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
