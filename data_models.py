@@ -120,16 +120,6 @@ class DAGFinalizerCallback(BaseModel):
     event_data: DAGFinalizerCBEventData
 
 
-class DiffCalculationRequest(BaseModel):
-    project_id: str
-    dagCid: str
-    lastDagCid: Optional[str] = None
-    payloadCid: str
-    txHash: str
-    tentative_block_height: int
-    timestamp: int
-
-
 class uniswapPairsSnapshotZset(BaseModel):
     cid: str
     txHash: str = None

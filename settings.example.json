@@ -80,7 +80,6 @@
 			"burst": 20
 		}
 	},
-	"calculate_diff": false,
 	"web3_storage": {
 		"url": "https://api.web3.storage",
 		"upload_url_suffix": "/upload",

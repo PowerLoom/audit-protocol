@@ -109,7 +109,6 @@ class Settings(BaseModel):
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
     contract_addresses: Union[ContractAddresses, dict]
-    calculate_diff: bool
     rpc_url: str
     use_consensus: bool = False
     consensus_config: ConsensusConfig
