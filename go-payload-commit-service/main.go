@@ -189,7 +189,7 @@ func InitRabbitmqConsumer() {
 	var err error
 	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
 	rmqConnection, err = GetConn(rabbitMqURL)
-	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, settingsObj.PayloadCommitConcurrency)
+	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, settingsObj.PayloadCommit.Concurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -201,7 +201,7 @@ func InitRabbitmqConsumer() {
 		rmqExchangeName,
 		rmqRoutingKey,
 		RabbitmqMsgHandler,
-		settingsObj.PayloadCommitConcurrency)
+		settingsObj.PayloadCommit.Concurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -844,7 +844,7 @@ func GetTentativeBlockHeight(projectId string) (int, error) {
 // TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
 // As of now it is copy pasted and looks ugly.
 func InvokeDAGFinalizerCallback(payload *PayloadCommit, requestID string) retryType {
-	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.WebhookListener.Host, settingsObj.WebhookListener.Port)
+	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.DAGFinalizer.Host, settingsObj.DAGFinalizer.Port)
 	var req AuditContractSimWebhookCallbackRequest
 	req.EventName = "RecordAppended"
 	req.Type = "event"
@@ -1078,9 +1078,9 @@ func InitTxManagerClient() {
 	log.Info("InitTxManagerClient")
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
-		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
-		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
+		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -1111,7 +1111,7 @@ func InitTxManagerClient() {
 func InitRedisClient() {
 	redisURL := fmt.Sprintf("%s:%d", settingsObj.Redis.Host, settingsObj.Redis.Port)
 	redisDb := settingsObj.Redis.Db
-	redisClient = redisutils.InitRedisClient(redisURL, redisDb, settingsObj.PayloadCommitConcurrency)
+	redisClient = redisutils.InitRedisClient(redisURL, redisDb, settingsObj.PayloadCommit.Concurrency)
 }
 
 func InitIPFSClient() {
@@ -1122,9 +1122,9 @@ func InitIPFSClient() {
 	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
-		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
-		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
+		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -1191,9 +1191,9 @@ func InitDAGFinalizerCallbackClient() {
 
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
-		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
-		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
+		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -1205,13 +1205,13 @@ func InitDAGFinalizerCallbackClient() {
 	//Default values
 	tps := rate.Limit(50) //50 TPS
 	burst := 20
-	if settingsObj.WebhookListener.RateLimiter != nil {
-		burst = settingsObj.WebhookListener.RateLimiter.Burst
-		if settingsObj.WebhookListener.RateLimiter.RequestsPerSec == -1 {
+	if settingsObj.PayloadCommit.DAGFinalizerRateLimiter != nil {
+		burst = settingsObj.PayloadCommit.DAGFinalizerRateLimiter.Burst
+		if settingsObj.PayloadCommit.DAGFinalizerRateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.WebhookListener.RateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.PayloadCommit.DAGFinalizerRateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for dagFinalizerClient at %v TPS with a burst of %d", tps, burst)

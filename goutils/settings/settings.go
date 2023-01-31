@@ -34,7 +34,8 @@ type PruningServiceSettings_ struct {
 }
 
 type _DagVerifierSettings_ struct {
-	IssueReporterPort            int           `json:"issue_reporter_port"`
+	Host                         string        `json:"host"`
+	Port                         int           `json:"port"`
 	SlackNotifyURL               string        `json:"slack_notify_URL"`
 	RunIntervalSecs              int           `json:"run_interval_secs"`
 	SuppressNotificationTimeSecs int64         `json:"suppress_notification_for_secs"`
@@ -51,13 +52,15 @@ type TokenAggregatorSettings_ struct {
 }
 
 type SettingsObj struct {
-	Host            string `json:"host"`
-	Port            int    `json:"port"`
-	WebhookListener struct {
-		Host        string        `json:"host"`
-		Port        int           `json:"port"`
-		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
-	} `json:"webhook_listener"`
+	APBackend struct {
+		Host          string `json:"host"`
+		Port          int    `json:"port"`
+		KeepAliveSecs int    `json:"keepalive_secs"`
+	} `json:"ap_backend"`
+	DAGFinalizer struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	} `json:"dag_finalizer"`
 	IpfsConfig struct {
 		URL             string        `json:"url"`
 		ReaderURL       string        `json:"reader_url"`
@@ -89,8 +92,9 @@ type SettingsObj struct {
 		} `json:"setup"`
 	} `json:"rabbitmq"`
 	ContractCallBackend struct {
-		URL         string        `json:"url"`
-		RateLimiter *RateLimiter_ `json:"rate_limit,omitempty"`
+		URL                     string        `json:"url"`
+		RateLimiter             *RateLimiter_ `json:"rate_limit,omitempty"`
+		SkipSummaryProjectProof bool          `json:"skip_summary_projects_anchor_proof"`
 	} `json:"txn_config"`
 	RetryCount            *int `json:"retry_count"`
 	RetryIntervalSecs     int  `json:"retry_interval_secs"`
@@ -107,8 +111,11 @@ type SettingsObj struct {
 		Db       int    `json:"db"`
 		Password string `json:"password"`
 	} `json:"redis_reader"`
-	PayloadCommitConcurrency int `json:"payload_commit_concurrency"`
-	Web3Storage              struct {
+	PayloadCommit struct {
+		Concurrency             int           `json:"concurrency"`
+		DAGFinalizerRateLimiter *RateLimiter_ `json:"dag_finalizer_rate_limit,omitempty"`
+	} `json:"payload_commit"`
+	Web3Storage struct {
 		URL             string        `json:"url"`
 		APIToken        string        `json:"api_token"`
 		TimeoutSecs     int           `json:"timeout_secs"`
@@ -124,7 +131,6 @@ type SettingsObj struct {
 	InstanceId              string                   `json:"instance_id"`
 	PayloadCachePath        string                   `json:"local_cache_path"`
 	TokenAggregatorSettings TokenAggregatorSettings_ `json:"token_aggregator"`
-	SkipSummaryProjectProof bool                     `json:"skip_summary_projects_anchor_proof"`
 	PoolerNamespace         string                   `json:"pooler_namespace"`
 }
 
@@ -171,8 +177,8 @@ func SetDefaults(settingsObj *SettingsObj) {
 	if settingsObj.HttpClientTimeoutSecs == 0 {
 		settingsObj.HttpClientTimeoutSecs = 10
 	}
-	if settingsObj.PayloadCommitConcurrency == 0 {
-		settingsObj.PayloadCommitConcurrency = 20
+	if settingsObj.PayloadCommit.Concurrency == 0 {
+		settingsObj.PayloadCommit.Concurrency = 20
 	}
 	if settingsObj.Web3Storage.UploadURLSuffix == "" {
 		settingsObj.Web3Storage.UploadURLSuffix = "/upload"

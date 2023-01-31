@@ -753,7 +753,7 @@ class DAGFinalizationCallbackProcessor:
         if null_assigned_epochs:
             tasks.append(
                 self._httpx_client.post(
-                    url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
+                    url=urljoin(f'http://{settings.dag_verifier.host}:{settings.dag_verifier.port}', '/reportIssue'),
                     json=SnapshotterIssue(
                         instanceID=settings.instance_id,
                         severity=SnapshotterIssueSeverity.high,
@@ -768,7 +768,7 @@ class DAGFinalizationCallbackProcessor:
         if cid_finalized_epochs:
             tasks.append(
                 self._httpx_client.post(
-                    url=urljoin(f'http://localhost:{settings.dag_verifier.issue_reporter_port}', '/reportIssue'),
+                    url=urljoin(f'http://{settings.dag_verifier.host}:{settings.dag_verifier.port}', '/reportIssue'),
                     json=SnapshotterIssue(
                         instanceID=settings.instance_id,
                         severity=SnapshotterIssueSeverity.medium,

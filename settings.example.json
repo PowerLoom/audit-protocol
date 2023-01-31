@@ -1,18 +1,18 @@
 {
 	"instance_id":"generated-uuid",
-	"host": "0.0.0.0",
-	"port": 9000,
-	"keepalive_secs": 600,
-	"webhook_listener": {
+	"pooler_namespace":"relevant-namespace",
+	"rpc_url": "https://rpc-url",
+	"local_cache_path":"/home/ubuntu/local_cache/",
+	"ap_backend":{
+		"host": "0.0.0.0",
+		"port": 9000,
+		"keepalive_secs": 600
+	},
+	"dag_finalizer": {
 		"host": "0.0.0.0",
 		"port": 9002,
 		"validate_header_sig": false,
-		"keepalive_secs": 600,
-		"redis_lock_lifetime": 30,
-		"rate_limit" :{
-			"req_per_sec": 50,
-			"burst": 20
-		}
+		"keepalive_secs": 600
 	},
 	"rabbitmq": {
 		"user": "guest",
@@ -35,7 +35,6 @@
 			}
 		}
 	},
-	"rpc_url": "https://rpc-url",
 	"contract_addresses": {
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
@@ -53,7 +52,8 @@
 		"rate_limit" :{
 			"req_per_sec": 10,
 			"burst": 10
-		}
+		},
+		"skip_summary_projects_anchor_proof":true
 	},
 	"retry_count": 3,
 	"retry_interval_secs":5,
@@ -73,9 +73,13 @@
 	"rlimit": {
 		"file_descriptors": 2048
 	},
-	"payload_commit_concurrency": 20,
-	"local_cache_path":"/home/ubuntu/local_cache/",
-	"ipfs_timeout": 20,
+	"payload_commit":{
+		"concurrency": 20,
+		"dag_finalizer_rate_limit" :{
+			"req_per_sec": 50,
+			"burst": 20
+		}
+	},
 	"calculate_diff": false,
 	"web3_storage":{
 		"url":"https://api.web3.storage",
@@ -90,7 +94,8 @@
 		}
 	},
 	"dag_verifier":{
-		"issue_reporter_port": 9030,
+		"host": "0.0.0.0",
+		"port": 9030,
 		"slack_notify_URL":"",
 		"notify_suppress_time_secs":1800,
 		"concurrency": 10,
@@ -148,7 +153,5 @@
 	"token_aggregator":{
 		"port": 8000,
 		"run_interval_secs": 60
-	},
-	"skip_summary_projects_anchor_proof":true,
-	"pooler_namespace":"relevant-namespace"
+	}
 }

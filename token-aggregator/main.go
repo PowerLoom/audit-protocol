@@ -53,7 +53,7 @@ func main() {
 	logger.InitLogger()
 
 	ReadSettings()
-	auditProtocolBaseURL = fmt.Sprintf("http://%s:%d", settingsObj.Host, settingsObj.Port)
+	auditProtocolBaseURL = fmt.Sprintf("http://%s:%d", settingsObj.APBackend.Host, settingsObj.APBackend.Port)
 	var pairContractAddressesFile string
 	snapshotCallbackProjectLocks = make(map[string]*sync.Mutex)
 
@@ -668,7 +668,7 @@ func CommitTokenSummaryPayload() error {
 	request.ProjectId = fmt.Sprintf(TOKENSUMMARY_PROJECTID, settingsObj.PoolerNamespace)
 	request.Payload.TokensData = make([]*TokenData, len(tokenList))
 	request.Web3Storage = true //Always store TokenData snapshot in web3.storage.
-	request.SkipAnchorProof = settingsObj.SkipSummaryProjectProof
+	request.SkipAnchorProof = settingsObj.ContractCallBackend.SkipSummaryProjectProof
 	var i int
 	for _, tokenData := range tokenList {
 		request.Payload.TokensData[i] = tokenData
