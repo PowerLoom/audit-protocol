@@ -53,7 +53,7 @@ func main() {
 	logger.InitLogger()
 
 	ReadSettings()
-	auditProtocolBaseURL = fmt.Sprintf("http://%s:%d", settingsObj.APBackend.Host, settingsObj.APBackend.Port)
+	auditProtocolBaseURL = fmt.Sprintf("http://%s:%d", settingsObj.TokenAggregatorSettings.APHost, settingsObj.APBackend.Port)
 	var pairContractAddressesFile string
 	snapshotCallbackProjectLocks = make(map[string]*sync.Mutex)
 

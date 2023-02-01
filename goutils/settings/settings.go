@@ -47,8 +47,9 @@ type _DagVerifierSettings_ struct {
 }
 
 type TokenAggregatorSettings_ struct {
-	Port            int `json:"port"`
-	RunIntervalSecs int `json:"run_interval_secs"`
+	Port            int    `json:"port"`
+	RunIntervalSecs int    `json:"run_interval_secs"`
+	APHost          string `json:"ap_host"`
 }
 
 type SettingsObj struct {
@@ -141,6 +142,7 @@ type ConsensusConfig_ struct {
 	MaxIdleConns        int           `json:"max_idle_conns"`
 	IdleConnTimeout     int           `json:"idle_conn_timeout"`
 	FinalizationWaiTime int64         `json:"finalization_wait_time_secs"`
+	PollingIntervalSecs int           `json:"polling_interval_secs"`
 }
 
 func ParseSettings(settingsFile string) *SettingsObj {

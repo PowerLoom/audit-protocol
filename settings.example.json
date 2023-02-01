@@ -147,10 +147,12 @@
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
 		"idle_conn_timeout": 0,
-		"finalization_wait_time_secs": 300
+		"finalization_wait_time_secs": 300,
+		"polling_interval_secs": 10
 	},
 	"token_aggregator": {
 		"port": 8000,
-		"run_interval_secs": 60
+		"run_interval_secs": 60,
+		"ap_host": "audit-protocol"
 	}
 }
