@@ -33,8 +33,8 @@ func main() {
 	var wg sync.WaitGroup
 
 	http.HandleFunc("/reportIssue", IssueReportHandler)
-	port := settingsObj.DagVerifierSettings.IssueReporterPort
-	host := settingsObj.Host
+	port := settingsObj.DagVerifierSettings.Port
+	host := settingsObj.DagVerifierSettings.Host
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

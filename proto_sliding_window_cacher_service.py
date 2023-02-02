@@ -308,8 +308,8 @@ async def periodic_retrieval():
         follow_redirects=False,
         transport=async_transport
     )
-    ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs_url)
-    ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
+    ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs.url)
+    ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs.reader_url)
     await ipfs_write_client.init_session()
     await ipfs_read_client.init_session()
     aioredis_pool = RedisPool()

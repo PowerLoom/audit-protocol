@@ -44,7 +44,7 @@ async def get_payload_cid_output(cid, ipfs_read_client: AsyncIPFSClient):
 
 
 async def verify_dag_block_calculations(dag_cid):
-    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs.url)
     await ipfs_client.init_session()
     aioredis_pool = RedisPool()
     await aioredis_pool.populate()
@@ -98,7 +98,7 @@ async def verify_dag_block_calculations(dag_cid):
 
 
 async def verify_trade_volume_cids(data_cid):
-    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs.url)
     await ipfs_client.init_session()
     data = await get_payload_cid_output(data_cid, ipfs_client)
     trade_volume_24h_cids = data['resultant']['trade_volume_24h_cids']

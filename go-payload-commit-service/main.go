@@ -189,7 +189,7 @@ func InitRabbitmqConsumer() {
 	var err error
 	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
 	rmqConnection, err = GetConn(rabbitMqURL)
-	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, settingsObj.PayloadCommitConcurrency)
+	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, settingsObj.PayloadCommit.Concurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -201,7 +201,7 @@ func InitRabbitmqConsumer() {
 		rmqExchangeName,
 		rmqRoutingKey,
 		RabbitmqMsgHandler,
-		settingsObj.PayloadCommitConcurrency)
+		settingsObj.PayloadCommit.Concurrency)
 	if err != nil {
 		panic(err)
 	}
@@ -535,6 +535,7 @@ func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
 			time.Sleep(1 * time.Second)
 			continue
 		}
+
 		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
 
 		if err != nil {
@@ -843,7 +844,7 @@ func GetTentativeBlockHeight(projectId string) (int, error) {
 // TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
 // As of now it is copy pasted and looks ugly.
 func InvokeDAGFinalizerCallback(payload *PayloadCommit, requestID string) retryType {
-	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.WebhookListener.Host, settingsObj.WebhookListener.Port)
+	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.DAGFinalizer.Host, settingsObj.DAGFinalizer.Port)
 	var req AuditContractSimWebhookCallbackRequest
 	req.EventName = "RecordAppended"
 	req.Type = "event"
@@ -997,7 +998,7 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 }
 
 func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (requestID string, txHash string, retry retryType, err error) {
-	reqURL := settingsObj.ContractCallBackend
+	reqURL := settingsObj.ContractCallBackend.URL
 	var reqParams AuditContractCommitParams
 	reqParams.RequestID = payload.RequestID
 	reqParams.ApiKeyHash = tokenHash
@@ -1077,9 +1078,9 @@ func InitTxManagerClient() {
 	log.Info("InitTxManagerClient")
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
-		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
-		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
+		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -1094,13 +1095,13 @@ func InitTxManagerClient() {
 	//Default values
 	tps := rate.Limit(50) //50 TPS
 	burst := 50
-	if settingsObj.ContractRateLimiter != nil {
-		burst = settingsObj.ContractRateLimiter.Burst
-		if settingsObj.ContractRateLimiter.RequestsPerSec == -1 {
+	if settingsObj.ContractCallBackend.RateLimiter != nil {
+		burst = settingsObj.ContractCallBackend.RateLimiter.Burst
+		if settingsObj.ContractCallBackend.RateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.ContractRateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.ContractCallBackend.RateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for tx-manager Client at %v TPS with a burst of %d", tps, burst)
@@ -1110,26 +1111,26 @@ func InitTxManagerClient() {
 func InitRedisClient() {
 	redisURL := fmt.Sprintf("%s:%d", settingsObj.Redis.Host, settingsObj.Redis.Port)
 	redisDb := settingsObj.Redis.Db
-	redisClient = redisutils.InitRedisClient(redisURL, redisDb, settingsObj.PayloadCommitConcurrency)
+	redisClient = redisutils.InitRedisClient(redisURL, redisDb, settingsObj.PayloadCommit.Concurrency)
 }
 
 func InitIPFSClient() {
-	url := settingsObj.IpfsURL
+	url := settingsObj.IpfsConfig.URL
 	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
 	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
 
 	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
-		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
-		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
+		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
 
 	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsTimeout * 1000000000),
+		Timeout:   time.Duration(settingsObj.IpfsConfig.Timeout * 1000000000),
 		Transport: &t,
 	}
 	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
@@ -1138,13 +1139,13 @@ func InitIPFSClient() {
 	//Default values
 	tps := rate.Limit(100) //50 TPS
 	burst := 100
-	if settingsObj.IPFSRateLimiter != nil {
-		burst = settingsObj.IPFSRateLimiter.Burst
-		if settingsObj.IPFSRateLimiter.RequestsPerSec == -1 {
+	if settingsObj.IpfsConfig.IPFSRateLimiter != nil {
+		burst = settingsObj.IpfsConfig.IPFSRateLimiter.Burst
+		if settingsObj.IpfsConfig.IPFSRateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.IPFSRateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.IpfsConfig.IPFSRateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
@@ -1190,9 +1191,9 @@ func InitDAGFinalizerCallbackClient() {
 
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PayloadCommitConcurrency,
-		MaxConnsPerHost:     settingsObj.PayloadCommitConcurrency,
-		MaxIdleConnsPerHost: settingsObj.PayloadCommitConcurrency,
+		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
+		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
+		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
 		IdleConnTimeout:     0,
 		DisableCompression:  true,
 	}
@@ -1204,13 +1205,13 @@ func InitDAGFinalizerCallbackClient() {
 	//Default values
 	tps := rate.Limit(50) //50 TPS
 	burst := 20
-	if settingsObj.WebhookListener.RateLimiter != nil {
-		burst = settingsObj.WebhookListener.RateLimiter.Burst
-		if settingsObj.WebhookListener.RateLimiter.RequestsPerSec == -1 {
+	if settingsObj.PayloadCommit.DAGFinalizerRateLimiter != nil {
+		burst = settingsObj.PayloadCommit.DAGFinalizerRateLimiter.Burst
+		if settingsObj.PayloadCommit.DAGFinalizerRateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
 		} else {
-			tps = rate.Limit(settingsObj.WebhookListener.RateLimiter.RequestsPerSec)
+			tps = rate.Limit(settingsObj.PayloadCommit.DAGFinalizerRateLimiter.RequestsPerSec)
 		}
 	}
 	log.Infof("Rate Limit configured for dagFinalizerClient at %v TPS with a burst of %d", tps, burst)

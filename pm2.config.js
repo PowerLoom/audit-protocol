@@ -27,17 +27,6 @@ module.exports = {
         NODE_ENV: NODE_ENV
       }
     },
-/*     {
-      name   : "ap-diff-service",
-      script : `${INTERPRETER} ${__dirname}/diff_calculation_service.py`,
-      cwd : CWD,
-      max_restarts: MAX_RESTART,
-      min_uptime: MIN_UPTIME,
-      kill_timeout : 3000,
-      env: {
-        NODE_ENV: NODE_ENV,
-      }
-    }, */
     {
       name   : "ap-backend",
       script : `${INTERPRETER} ${__dirname}/gunicorn_main_launcher.py`,

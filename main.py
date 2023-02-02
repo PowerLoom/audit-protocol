@@ -11,7 +11,6 @@ from utils import helper_functions
 from utils import redis_keys
 from functools import partial
 from utils import retrieval_utils
-from utils.diffmap_utils import process_payloads_for_diff
 from data_models import PayloadCommit, PayloadCommitAPIRequest, PeerRegistrationRequest, ProjectRegistrationRequest, ProjectRegistrationRequestForIndexing
 from config import settings
 
@@ -185,33 +184,6 @@ async def commit_payload(
     }
 
 
-@app.post('/{projectId:str}/diffRules')
-async def configure_project(
-        request: Request,
-        response: Response,
-        projectId: str
-):
-    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
-    req_args = await request.json()
-    """
-    {
-        "rules":
-            [
-                {
-                    "ruleType": "ignore",
-                    "field": "trail",
-                    "fieldType": "list",
-                    "listMemberType": "map",
-                    "ignoreMemberFields": ["chainHeight"]
-                }
-            ]
-    }
-    """
-    rules = req_args['rules']
-    await writer_redis_conn.set(redis_keys.get_diff_rules_key(projectId), json.dumps(rules))
-    rest_logger.debug(f'Set diff rules {rules} for project ID {projectId}')
-
-
 @app.post('/{projectId:str}/confirmations/callback')
 async def register_confirmation_callback(
         request: Request,
@@ -223,185 +195,6 @@ async def register_confirmation_callback(
     await writer_redis_conn.set(f'powerloom:project:{projectId}:callbackURL', req_json['callbackURL'])
     response.status_code = 200
     return {'success': True}
-
-
-@app.get('/{projectId:str}/getDiffRules')
-async def get_diff_rules(
-        request: Request,
-        response: Response,
-        project_id: str
-):
-    """ This endpoint returs the diffRules set against a projectId """
-    out = await helper_functions.check_project_exists(
-        project_id=project_id, reader_redis_conn=request.app.reader_redis_pool
-    )
-    if out == 0:
-        return {'error': 'The projectId provided does not exist'}
-
-    diff_rules_key = redis_keys.get_diff_rules_key(project_id)
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await reader_redis_conn.get(diff_rules_key)
-    if out is None:
-        """ For projectId's who dont have any diffRules, return empty dict"""
-        return dict()
-    rest_logger.debug(out)
-    rules = json.loads(out.decode('utf-8'))
-    return rules
-
-
-@app.get('/requests/{request_id:str}')
-async def request_status(
-        request: Request,
-        response: Response,
-        request_id: str
-):
-    """
-        Given a request_id, return either the status of that request or retrieve all the payloads for that
-    """
-
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    # Check if the request is already in the pending list
-    requests_list_key = f"pendingRetrievalRequests"
-    out = await reader_redis_conn.sismember(requests_list_key, request_id)
-    if out == 1:
-        return {'requestId': request_id, 'requestStatus': 'Pending'}
-
-    # Get all the retrieved files
-    retrieval_files_key = redis_keys.get_retrieval_request_files_key(request_id)
-    retrieved_files = await reader_redis_conn.zrange(
-        name=retrieval_files_key,
-        start=0,
-        end=-1,
-        withscores=True
-    )
-
-    if not retrieved_files:
-        response.status_code = 400
-        return {'error': 'Invalid requestId'}
-
-    data = {}
-    files = []
-    for file_, block_height in retrieved_files:
-        file_ = file_.decode('utf-8')
-        cid = file_.split('/')[-1]
-        block_height = int(block_height)
-
-        dag_block = {
-            'dagCid': cid,
-            'payloadFile': '/' + file_,
-            'height': block_height
-        }
-        files.append(dag_block)
-
-    data['requestId'] = request_id
-    data['requestStatus'] = 'Completed'
-    data['files'] = files
-    response.status_code = 200
-    return data
-
-
-# TODO: get API key/token specific updates corresponding to projects committed with those credentials
-@app.get('/projects/updates')
-async def get_latest_project_updates(
-        request: Request,
-        response: Response,
-        namespace: str = Query(default=None),
-        maxCount: int = Query(default=20)
-):
-    project_diffs_snapshots = list()
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    h = await reader_redis_conn.hgetall(redis_keys.get_last_seen_snapshots_key())
-    if len(h) < 1:
-        return {}
-    for i, d in h.items():
-        project_id = i.decode('utf-8')
-        diff_data = json.loads(d)
-        each_project_info = {
-            'projectId': project_id,
-            'diff_data': diff_data
-        }
-        if namespace and namespace in project_id:
-            project_diffs_snapshots.append(each_project_info)
-        if not namespace:
-            try:
-                project_id_int = int(project_id)
-            except:
-                pass
-            else:
-                project_diffs_snapshots.append(each_project_info)
-    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'],
-                                            reverse=True)
-    return sorted_project_diffs_snapshots[:maxCount]
-
-
-@app.get('/{projectId:str}/payloads/cachedDiffs/count')
-async def get_payloads_diff_counts(
-        request: Request,
-        response: Response,
-        projectId: str,
-        maxCount: int = Query(default=10)
-):
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
-    if out == 0:
-        return {'error': 'The projectId provided does not exist'}
-    diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
-    r = await reader_redis_conn.zcard(diff_snapshots_cache_zset)
-    if not r:
-        return {'count': 0}
-    else:
-        try:
-            return {'count': int(r)}
-        except:
-            return {'count': None}
-
-
-# TODO: get API key/token specific updates corresponding to projects committed with those credentials
-
-
-@app.get('/{projectId:str}/payloads/cachedDiffs')
-async def get_payloads_diffs(
-        request: Request,
-        response: Response,
-        projectId: str,
-        from_height: int = Query(default=1),
-        to_height: int = Query(default=-1),
-        maxCount: int = Query(default=10)
-):
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
-    if out == 0:
-        return {'error': 'The projectId provided does not exist'}
-
-    max_block_height = 0
-    max_block_height = await helper_functions.get_block_height(
-        project_id=projectId,
-        reader_redis_conn=reader_redis_conn
-    )
-
-    if to_height == -1:
-        to_height = max_block_height
-        rest_logger.debug("Max Block Height: %d",max_block_height)
-    if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
-        return {'error': 'Invalid Height'}
-    extracted_count = 0
-    diff_response = list()
-    diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
-    r = await reader_redis_conn.zrevrangebyscore(
-        name=diff_snapshots_cache_zset,
-        min=from_height,
-        max=to_height,
-        withscores=False
-    )
-    for diff in r:
-        if extracted_count >= maxCount:
-            break
-        diff_response.append(json.loads(diff))
-        extracted_count += 1
-    return {
-        'count': extracted_count,
-        'diffs': diff_response
-    }
 
 
 @app.get('/{projectId:str}/payloads')
@@ -657,7 +450,7 @@ async def register_projects(
     req_json = await request.json()
     try:
         project_registration_request = ProjectRegistrationRequest.parse_obj(req_json)
-    except ValidationError:        
+    except ValidationError:
         response.status_code = 400
         return {'error': 'Bad request'}
 
@@ -683,7 +476,7 @@ async def register_projects(
             url=settings.consensus_config.service_url + "/registerProjectPeer",
             json=PeerRegistrationRequest(projectID = project_id, instanceID = settings.instance_id).dict()
         ))
-    
+
     results = await asyncio.gather(*tasks)
     for project_id, r in zip(projects_for_consensus, results):
         if r.status_code != 200:
@@ -703,7 +496,7 @@ async def register_projects_for_indexing(
     req_json = await request.json()
     try:
         indexing_data = ProjectRegistrationRequestForIndexing.parse_obj(req_json)
-    except ValidationError:        
+    except ValidationError:
         response.status_code = 400
         return {'error': 'Bad request'}
 

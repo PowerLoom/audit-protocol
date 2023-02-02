@@ -7,12 +7,11 @@ class ContractAddresses(BaseModel):
     MAKER: str
 
 
-class WebhookListener(BaseModel):
+class DAGFinalizer(BaseModel):
     host: str
     port: int
     validate_header_sig: bool = False
     keepalive_secs: int = 600
-    redis_lock_lifetime: int
 
 
 class HTTPClientConnection(BaseModel):
@@ -54,7 +53,8 @@ class BurstRateLimit(BaseModel):
 
 
 class DAGVerifierSettings(BaseModel):
-    issue_reporter_port: int
+    host: str
+    port: int
     slack_notify_URL: str
     notify_suppress_time_secs: int
     concurrency: int
@@ -78,28 +78,38 @@ class ConsensusConfig(BaseModel):
     idle_conn_timeout: int
     finalization_wait_time_secs: int
 
+class IPFSconfig(BaseModel):
+    url:str
+    reader_url: str
+    timeout: int
 
-class Settings(BaseModel):
-    instance_id: str
+class TxnConfig(BaseModel):
+    url:str
+    rate_limit: BurstRateLimit
+    skip_summary_projects_anchor_proof: bool=False
+
+
+
+class BackEndConfig(BaseModel):
     host: str
     port: str
     keepalive_secs: int = 600
+
+class Settings(BaseModel):
+    instance_id: str
+    ap_backend:BackEndConfig
     rlimit: dict
-    ipfs_url: str
-    ipfs_reader_url: str
+    ipfs:IPFSconfig
     rabbitmq: RabbitMQConfig
-    contract_call_backend: str
+    txn_config: TxnConfig
     dag_verifier: DAGVerifierSettings
     local_cache_path: str
     pruning: PruneSettings
-    ipfs_timeout: int
-    webhook_listener: Union[WebhookListener, dict]
+    dag_finalizer: Union[DAGFinalizer, dict]
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
     contract_addresses: Union[ContractAddresses, dict]
-    calculate_diff: bool
     rpc_url: str
     use_consensus: bool = False
     consensus_config: ConsensusConfig
-    skip_summary_projects_anchor_proof: bool=False
     pooler_namespace: str

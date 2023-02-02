@@ -828,7 +828,7 @@ async def v2_pairs_data(
                         project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
                         report_payload=summarized_payload,
                         session=async_httpx_client,
-                        skipAnchorProof=settings.skip_summary_projects_anchor_proof
+                        skipAnchorProof=settings.txn_config.skip_summary_projects_anchor_proof
                     )
                 except Exception as exc:
                     logger.error(

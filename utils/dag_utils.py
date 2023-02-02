@@ -101,7 +101,7 @@ async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPF
         logger.info("Failed to read dag-block with CID %s for project %s from local cache ",
         dag_cid,project_id)
         try:
-            async with async_timeout.timeout(settings.ipfs_timeout) as cm:
+            async with async_timeout.timeout(settings.ipfs.timeout) as cm:
                 try:
                     dag = await ipfs_read_client.dag.get(dag_cid)
                     dag = dag.as_json()

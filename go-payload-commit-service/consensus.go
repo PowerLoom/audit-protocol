@@ -69,7 +69,6 @@ func InitConsensusClient() {
 }
 
 func PollConsensusForConfirmations() {
-	//sleepInterval := 5
 	for {
 		if len(WaitQueueForConsensus) > 0 {
 			//TODO: Scale this based on number of items in queue.
@@ -87,7 +86,7 @@ func PollConsensusForConfirmations() {
 				ProcessPendingSnapshot(snapshotCID, value)
 			}
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(time.Duration(settingsObj.ConsensusConfig.PollingIntervalSecs) * time.Second)
 	}
 }
 
