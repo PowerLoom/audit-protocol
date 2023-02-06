@@ -20,12 +20,13 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 
-	shell "github.com/ipfs/go-ipfs-api"
-	"github.com/powerloom/goutils/commonutils"
-	"github.com/powerloom/goutils/logger"
-	"github.com/powerloom/goutils/redisutils"
-	"github.com/powerloom/goutils/settings"
-	"github.com/powerloom/goutils/slackutils"
+	"github.com/powerloom/audit-prototol-private/goutils/commonutils"
+	"github.com/powerloom/audit-prototol-private/goutils/ipfsutils"
+	"github.com/powerloom/audit-prototol-private/goutils/logger"
+	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
+	"github.com/powerloom/audit-prototol-private/goutils/settings"
+	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
@@ -33,9 +34,8 @@ import (
 var ctx = context.Background()
 
 var redisClient *redis.Client
-var ipfsClient *shell.Shell
+var ipfsClient ipfsutils.IpfsClient
 var settingsObj *settings.SettingsObj
-var ipfsClientRateLimiter *rate.Limiter
 var ipfsHTTPURL string
 
 var ipfsHttpClient http.Client
@@ -81,8 +81,22 @@ func main() {
 	logger.InitLogger()
 	settingsObj = settings.ParseSettings("../settings.json")
 	SetDefaultPruneConfig()
-	InitIPFSClient()
-	InitRedisClient()
+	ipfsUrl := settingsObj.IpfsConfig.ReaderURL
+	if ipfsUrl == "" {
+		ipfsUrl = settingsObj.IpfsConfig.URL
+	}
+	ipfsClient.Init(
+		ipfsUrl,
+		settingsObj.PruningServiceSettings.Concurrency,
+		settingsObj.PruningServiceSettings.IPFSRateLimiter,
+		settingsObj.PruningServiceSettings.IpfsTimeout)
+
+	redisClient = redisutils.InitRedisClient(
+		settingsObj.Redis.Host,
+		settingsObj.Redis.Port,
+		settingsObj.Redis.Db,
+		settingsObj.DagVerifierSettings.RedisPoolSize,
+		settingsObj.Redis.Password)
 	InitIPFSHTTPClient()
 	InitW3sClient()
 	slackutils.InitSlackWorkFlowClient(settingsObj.DagVerifierSettings.SlackNotifyURL)
@@ -426,10 +440,10 @@ func ProcessProject(projectId string) int {
 					return -2
 				}
 				log.WithField("CycleID", cycleDetails.CycleID).Infof("Unpinning DAG CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
-				errCount := UnPinFromIPFS(projectId, dagCids)
+				errCount := ipfsClient.UnPinCidsFromIPFS(projectId, dagCids)
 				projectReport.UnPinFailed += errCount
 				log.WithField("CycleID", cycleDetails.CycleID).Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", projectId, dagSegmentEndHeight)
-				errCount = UnPinFromIPFS(projectId, payloadCids)
+				errCount = ipfsClient.UnPinCidsFromIPFS(projectId, payloadCids)
 				projectReport.UnPinFailed += errCount
 				UpdateDagSegmentStatusToRedis(projectId, dagSegmentEndHeight, &dagSegment)
 
@@ -745,42 +759,6 @@ func UploadChunkToWeb3Storage(fileName string, fileReader io.Reader) (string, bo
 	return "", false
 }
 
-func UnPinFromIPFS(projectId string, cids *map[int]string) int {
-	errorCount := 0
-	for height, cid := range *cids {
-		i := 0
-		for ; i < 3; i++ {
-			err := ipfsClientRateLimiter.Wait(context.Background())
-			if err != nil {
-				log.WithField("CycleID", cycleDetails.CycleID).Warnf("IPFSClient Rate Limiter wait timeout with error %+v", err)
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectId)
-			err = ipfsClient.Unpin(cid)
-			if err != nil {
-				//CID has already been unpinned
-				if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
-					log.WithField("CycleID", cycleDetails.CycleID).Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
-					break
-				}
-				log.WithField("CycleID", cycleDetails.CycleID).Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, i)
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectId)
-			break
-		}
-		if i == 3 {
-			log.WithField("CycleID", cycleDetails.CycleID).Errorf("Failed to unpin CID %s at height %d from ipfs for project %s after max retries", cid, height, projectId)
-			//TODO: Add to some failed queue to Unpin this CID at a later stage.
-			errorCount++
-			continue
-		}
-	}
-	return errorCount
-}
-
 func GetPayloadCidsFromRedis(projectId string, startScore int, endScore int) *map[int]string {
 	cids := make(map[int]string, endScore-startScore)
 
@@ -903,62 +881,4 @@ func InitW3sClient() {
 	}
 	log.Infof("Rate Limit configured for web3.storage at %v TPS with a burst of %d", tps, burst)
 	web3StorageClientRateLimiter = rate.NewLimiter(tps, burst)
-}
-
-func InitIPFSClient() {
-	url := settingsObj.IpfsConfig.URL
-	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
-	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
-
-	ipfsHTTPURL = connectUrl
-	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
-	t := http.Transport{
-		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PruningServiceSettings.Concurrency,
-		MaxConnsPerHost:     settingsObj.PruningServiceSettings.Concurrency,
-		MaxIdleConnsPerHost: settingsObj.PruningServiceSettings.Concurrency,
-		IdleConnTimeout:     0,
-		DisableCompression:  true,
-	}
-
-	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsConfig.Timeout * 1000000000),
-		Transport: &t,
-	}
-	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
-	ipfsClient = shell.NewShellWithClient(connectUrl, &ipfsHttpClient)
-
-	//Default values
-	tps := rate.Limit(20) //50 TPS
-	burst := 20
-	if settingsObj.PruningServiceSettings.IPFSRateLimiter != nil {
-		burst = settingsObj.PruningServiceSettings.IPFSRateLimiter.Burst
-		if settingsObj.PruningServiceSettings.IPFSRateLimiter.RequestsPerSec == -1 {
-			tps = rate.Inf
-			burst = 0
-		} else {
-			tps = rate.Limit(settingsObj.PruningServiceSettings.IPFSRateLimiter.RequestsPerSec)
-		}
-	}
-	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
-	ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
-
-}
-
-func InitRedisClient() {
-	redisURL := fmt.Sprintf("%s:%d", settingsObj.Redis.Host, settingsObj.Redis.Port)
-	redisDb := settingsObj.Redis.Db
-	log.Infof("Connecting to redis DB %d at %s", redisDb, redisURL)
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     redisURL,
-		Password: settingsObj.Redis.Password,
-		DB:       redisDb,
-		PoolSize: settingsObj.DagVerifierSettings.RedisPoolSize,
-	})
-	pong, err := redisClient.Ping(ctx).Result()
-	if err != nil {
-		log.Errorf("Unable to connect to redis at %s with error %+v", redisURL, err)
-	}
-	log.Info("Connected successfully to Redis and received ", pong, " back")
-
 }

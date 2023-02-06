@@ -1,12 +1,11 @@
-module dagChainVerifier
+module github.com/powerloom/audit-prototol-private/dag-verifier
 
-go 1.17
+go 1.19
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/ipfs/go-ipfs-api v0.3.0
-	github.com/multiformats/go-multiaddr v0.4.1
-	github.com/powerloom/goutils v0.0.0-00010101000000-000000000000
+	github.com/multiformats/go-multiaddr v0.8.0
 	github.com/sirupsen/logrus v1.9.0
 	golang.org/x/time v0.0.0-20220922220347-f3bd1da661af
 )
@@ -14,6 +13,7 @@ require (
 require (
 	github.com/ipfs/go-cid v0.1.0
 	github.com/ipld/go-car/v2 v2.1.1
+	github.com/ipld/go-ipld-prime v0.14.3
 	github.com/web3-storage/go-w3s-client v0.0.6
 )
 
@@ -60,7 +60,6 @@ require (
 	github.com/ipfs/ipfs-cluster v0.14.2 // indirect
 	github.com/ipld/go-car v0.3.3 // indirect
 	github.com/ipld/go-codec-dagpb v1.3.0 // indirect
-	github.com/ipld/go-ipld-prime v0.14.3 // indirect
 	github.com/jbenet/go-temp-err-catcher v0.1.0 // indirect
 	github.com/jbenet/goprocess v0.1.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
@@ -89,6 +88,7 @@ require (
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/polydawn/refmt v0.0.0-20201211092308-30ac6d18308e // indirect
+	github.com/powerloom/audit-prototol-private/goutils v0.0.0-00010101000000-000000000000 // indirect
 	github.com/spacemonkeygo/spacelog v0.0.0-20180420211403-2296661a0572 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tomnomnom/linkheader v0.0.0-20180905144013-02ca5825eb80 // indirect
@@ -109,4 +109,4 @@ require (
 	lukechampine.com/blake3 v1.1.6 // indirect
 )
 
-replace github.com/powerloom/goutils => ../goutils
+replace github.com/powerloom/audit-prototol-private/goutils => ../goutils

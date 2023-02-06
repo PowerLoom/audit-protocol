@@ -6,12 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,21 +18,22 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
-	shell "github.com/ipfs/go-ipfs-api"
 	log "github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
 
-	"github.com/powerloom/goutils/filecache"
-	"github.com/powerloom/goutils/logger"
-	"github.com/powerloom/goutils/redisutils"
-	"github.com/powerloom/goutils/settings"
+	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
+	"github.com/powerloom/audit-prototol-private/goutils/filecache"
+	"github.com/powerloom/audit-prototol-private/goutils/ipfsutils"
+	"github.com/powerloom/audit-prototol-private/goutils/logger"
+	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
+	"github.com/powerloom/audit-prototol-private/goutils/settings"
 )
 
 var ctx = context.Background()
 
 var redisClient *redis.Client
-var ipfsClient *shell.Shell
+var ipfsClient ipfsutils.IpfsClient
 var txMgrHttpClient http.Client
 var dagFinalizerClient http.Client
 var w3sHttpClient http.Client
@@ -41,16 +41,15 @@ var settingsObj *settings.SettingsObj
 var consts ConstsObj
 var rmqConnection *Conn
 var exitChan chan bool
-var WaitQueueForConsensus map[string]*PayloadCommit
+var WaitQueueForConsensus map[string]*datamodel.PayloadCommit
 var QueueLock sync.Mutex
 
 // Rate Limiter Objects
 var dagFinalizerClientRateLimiter *rate.Limiter
 var web3StorageClientRateLimiter *rate.Limiter
-var ipfsClientRateLimiter *rate.Limiter
 var txClientRateLimiter *rate.Limiter
 
-var commonTxReqParams CommonTxRequestParams
+var commonTxReqParams datamodel.CommonTxRequestParams
 
 type retryType int64
 
@@ -144,8 +143,18 @@ func main() {
 
 	logger.InitLogger()
 	ParseSettings()
-	InitIPFSClient()
-	InitRedisClient()
+	ipfsClient.Init(
+		settingsObj.IpfsConfig.URL,
+		settingsObj.PayloadCommit.Concurrency,
+		settingsObj.IpfsConfig.IPFSRateLimiter,
+		settingsObj.IpfsConfig.Timeout)
+	redisClient = redisutils.InitRedisClient(
+		settingsObj.Redis.Host,
+		settingsObj.Redis.Port,
+		settingsObj.Redis.Db,
+		settingsObj.PayloadCommit.Concurrency,
+		settingsObj.Redis.Password)
+
 	InitTxManagerClient()
 	InitDAGFinalizerCallbackClient()
 	InitW3sClient()
@@ -153,7 +162,7 @@ func main() {
 	if settingsObj.UseConsensus {
 		wg.Add(1)
 		InitConsensusClient()
-		WaitQueueForConsensus = make(map[string]*PayloadCommit, 100)
+		WaitQueueForConsensus = make(map[string]*datamodel.PayloadCommit, 100)
 		go func() {
 			defer wg.Done()
 			PollConsensusForConfirmations()
@@ -210,7 +219,7 @@ func InitRabbitmqConsumer() {
 	<-exitChan
 }
 
-func AssignTentativeHeight(payloadCommit *PayloadCommit) int {
+func AssignTentativeHeight(payloadCommit *datamodel.PayloadCommit) int {
 	tentativeBlockHeight := 0
 	firstEpochEndHeight, epochSize := GetFirstEpochDetails(payloadCommit)
 	if epochSize == 0 || firstEpochEndHeight == 0 {
@@ -223,7 +232,7 @@ func AssignTentativeHeight(payloadCommit *PayloadCommit) int {
 	return tentativeBlockHeight
 }
 
-func GetFirstEpochDetails(payloadCommit *PayloadCommit) (int, int) {
+func GetFirstEpochDetails(payloadCommit *datamodel.PayloadCommit) (int, int) {
 
 	//Record Project epoch size for the first epoch and also the endHeight.
 	epochSize := FetchProjectEpochSize(payloadCommit.ProjectId)
@@ -246,7 +255,7 @@ func GetFirstEpochDetails(payloadCommit *PayloadCommit) (int, int) {
 	return firstEpochEndHeight, epochSize
 }
 
-func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
+func ProcessUnCommittedSnapshot(payloadCommit *datamodel.PayloadCommit) bool {
 	tentativeBlockHeight := 0
 	updateTentativeBlockHeightState := false
 	//TODO: Need to think of a better way to do this in future,
@@ -278,7 +287,8 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ipfsStatus = UploadSnapshotToIPFS(payloadCommit)
+			ipfsStatus = ipfsClient.UploadSnapshotToIPFS(payloadCommit,
+				settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
 			if !ipfsStatus {
 				return
 			}
@@ -312,7 +322,8 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 	} else {
 		log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s with commitId %s from rabbitmq. Adding payload to IPFS.",
 			payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.CommitId)
-		ipfsStatus = UploadSnapshotToIPFS(payloadCommit)
+		ipfsStatus = ipfsClient.UploadSnapshotToIPFS(payloadCommit,
+			settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
 		if !ipfsStatus {
 			return false
 		}
@@ -322,7 +333,8 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 		log.Errorf("Failed to store payload in cache for the project %s with commitId %s due to error %+v",
 			payloadCommit.ProjectId, payloadCommit.CommitId, err)
 	}
-	err = StorePayloadCidInRedis(payloadCommit)
+	err = redisutils.AddPayloadCidToZSet(ctx, redisClient, payloadCommit,
+		settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
 	if err != nil {
 		log.Errorf("Failed to store payloadCid in redis for the project %s with commitId %s due to error %+v",
 			payloadCommit.ProjectId, payloadCommit.CommitId, err)
@@ -343,61 +355,39 @@ func ProcessUnCommittedSnapshot(payloadCommit *PayloadCommit) bool {
 func SetProjectEpochSize(projectId string, epochSize int) bool {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_EPOCH_SIZE, projectId)
 	log.Debugf("Setting  epoch size as %d for project %s", epochSize, projectId)
-	return SetIntFieldInRedis(key, epochSize)
+
+	return redisutils.SetIntFieldInRedis(
+		ctx, redisClient, key, epochSize,
+		settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
 }
 
 func SetFirstEpochEndHeight(projectId string, epochEndHeight int) bool {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_FIRST_EPOCH_END_HEIGHT, projectId)
 	log.Debugf("Setting First epoch endHeight as %d for project %s", epochEndHeight, projectId)
-	return SetIntFieldInRedis(key, epochEndHeight)
-}
 
-func SetIntFieldInRedis(key string, value int) bool {
-	for j := 0; j < 3; j++ {
-		resSet := redisClient.Set(ctx, key, strconv.Itoa(value), 0)
-		if resSet.Err() != nil {
-			log.Errorf("Failed to set key %s due to error %+v", key, resSet.Err())
-			j++
-			continue
-		}
-		log.Debugf("Set key %s with value %d successfully in redis", key, value)
-		return true
-	}
-	return false
+	return redisutils.SetIntFieldInRedis(
+		ctx, redisClient, key, epochEndHeight,
+		settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
 }
 
 func FetchProjectEpochSize(projectID string) int {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_EPOCH_SIZE, projectID)
-	epochSize := FetchIntFieldFromRedis(key)
+
+	epochSize := redisutils.FetchIntFieldFromRedis(
+		ctx, redisClient, key,
+		settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
+
 	return epochSize
 }
 
 func FetchFirstEpochEndHeight(projectID string) int {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_FIRST_EPOCH_END_HEIGHT, projectID)
-	firstEpochEndHeight := FetchIntFieldFromRedis(key)
-	return firstEpochEndHeight
-}
 
-func FetchIntFieldFromRedis(key string) int {
-	for i := 0; i < 3; i++ {
-		res := redisClient.Get(ctx, key)
-		if res.Err() == redis.Nil {
-			log.Debugf("Key %s not present in redis", key)
-			return 0
-		} else if res.Err() != nil {
-			log.Errorf("Failed to fetch key %s due to error %+v", key, res.Err())
-			i++
-			continue
-		}
-		value, err := strconv.Atoi(res.Val())
-		if err != nil {
-			log.Fatalf("Failed to convert int value fetched from redis key %s due to error %+v", key, err)
-			return -1
-		}
-		log.Debugf("Fetched key %s from redis with value %d", key, value)
-		return value
-	}
-	return -1
+	firstEpochEndHeight := redisutils.FetchIntFieldFromRedis(
+		ctx, redisClient, key,
+		settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
+
+	return firstEpochEndHeight
 }
 
 func RabbitmqMsgHandler(d amqp.Delivery) bool {
@@ -407,7 +397,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	}
 	log.Tracef("Received Message from rabbitmq %v", d.Body)
 
-	var payloadCommit PayloadCommit
+	var payloadCommit datamodel.PayloadCommit
 
 	err := json.Unmarshal(d.Body, &payloadCommit)
 	if err != nil {
@@ -483,9 +473,9 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	return true
 }
 
-func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string, requestID string) bool {
+func AddToPendingTxns(payloadCommit *datamodel.PayloadCommit, txHash string, requestID string) bool {
 	/*Add to redis pendingTransactions*/
-	err := AddToPendingTxnsInRedis(payloadCommit, requestID, txHash)
+	err := UpdatePendingTxnInRedis(payloadCommit, requestID, txHash)
 	if err != nil {
 		//Not retrying further..expecting self-healing to take care.
 		log.Errorf("Unable to add transaction to PendingTxns after max retries for project %s and commitId %s with tentativeBlockHeight %d.",
@@ -507,8 +497,8 @@ func AddToPendingTxns(payloadCommit *PayloadCommit, txHash string, requestID str
 	return true
 }
 
-func ReadPayloadFromCache(projectID string, payloadCid string) (*PayloadData, error) {
-	var payload PayloadData
+func ReadPayloadFromCache(projectID string, payloadCid string) (*datamodel.PayloadData, error) {
+	var payload datamodel.PayloadData
 	log.Debugf("Fetching payloadCid %s from local Cache", payloadCid)
 	bytes, err := filecache.ReadFromCache(settingsObj.PayloadCachePath+"/", projectID, payloadCid)
 	if err != nil {
@@ -526,139 +516,9 @@ func ReadPayloadFromCache(projectID string, payloadCid string) (*PayloadData, er
 	return &payload, nil
 }
 
-func UploadSnapshotToIPFS(payloadCommit *PayloadCommit) bool {
-	for retryCount := 0; ; {
-
-		err := ipfsClientRateLimiter.Wait(context.Background())
-		if err != nil {
-			log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		snapshotCid, err := ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
-
-		if err != nil {
-			if retryCount == *settingsObj.RetryCount {
-				log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, *settingsObj.RetryCount, err)
-				return false
-			}
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			retryCount++
-			log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", payloadCommit, err, retryCount)
-			continue
-		}
-		log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
-			snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-		payloadCommit.SnapshotCID = snapshotCid
-		break
-	}
-	return true
-}
-
-func GetPayloadCidAtProjectHeightFromRedis(projectId string, startScore string) (string, error) {
-	//key := projectId + ":payloadCids"
-	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
-	payloadCid := ""
-
-	log.Debug("Fetching PayloadCid from redis at key:", key, ",with startScore: ", startScore)
-	for i := 0; ; {
-		zRangeByScore := redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
-			Min: startScore,
-			Max: startScore,
-		})
-
-		err := zRangeByScore.Err()
-		log.Debug("Result for ZRangeByScoreWithScores : ", zRangeByScore)
-		if err != nil {
-			log.Errorf("Could not fetch PayloadCid from  redis for project %s at blockHeight %d error: %+v Query: %+v",
-				projectId, startScore, err, zRangeByScore)
-			if i == *settingsObj.RetryCount {
-				log.Errorf("Could not fetch PayloadCid from  redis after max retries for project %s at blockHeight %d error: %+v Query: %+v",
-					projectId, startScore, err, zRangeByScore)
-				return "", err
-			}
-			i++
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
-
-		res := zRangeByScore.Val()
-
-		//dagPayloadsInfo = make([]DagPayload, len(res))
-		log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
-		if len(res) == 1 {
-			payloadCid = fmt.Sprintf("%v", res[0].Member)
-			log.Debugf("PayloadCID %s fetched for project %s at height %s from redis", payloadCid, projectId, startScore)
-		} else if len(res) > 1 {
-			log.Errorf("Found more than 1 payload CIDS at height %d for project %s which means project state is messed up due to an issue that has occured while previous snapshot processing, considering the first one so that current snapshot processing can proceed",
-				startScore, projectId)
-			payloadCid = fmt.Sprintf("%v", res[0].Member)
-		}
-		break
-	}
-	return payloadCid, nil
-}
-
-func GetPayloadFromIPFS(payloadCid string, retryCount int) (*PayloadData, error) {
-	var payload PayloadData
-	for i := 0; ; {
-		log.Debugf("Fetching payloadCid %s from IPFS", payloadCid)
-		data, err := ipfsClient.Cat(payloadCid)
-		if err != nil {
-			if i >= retryCount {
-				log.Errorf("Failed to fetch Payload with CID %s from IPFS even after max retries due to error %+v.", payloadCid, err)
-				return &payload, err
-			}
-			log.Warnf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			i++
-			continue
-		}
-
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(data)
-
-		err = json.Unmarshal(buf.Bytes(), &payload)
-		if err != nil {
-			log.Errorf("Failed to Unmarshal Json Payload from IPFS, CID %s, bytes: %+v due to error %+v ",
-				payloadCid, buf, err)
-			return nil, err
-		}
-		break
-	}
-
-	log.Debugf("Fetched Payload with CID %s from IPFS: %+v", payloadCid, payload)
-	return &payload, nil
-}
-
-func StorePayloadCidInRedis(payload *PayloadCommit) error {
-	for retryCount := 0; ; {
-		key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, payload.ProjectId)
-		res := redisClient.ZAdd(ctx, key,
-			&redis.Z{
-				Score:  float64(payload.TentativeBlockHeight),
-				Member: payload.SnapshotCID,
-			})
-		if res.Err() != nil {
-			if retryCount == *settingsObj.RetryCount {
-				log.Errorf("Failed to Add payload %s to redis Zset with key %s after max-retries of %d", payload.SnapshotCID, key, *settingsObj.RetryCount)
-				return res.Err()
-			}
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			retryCount++
-			log.Errorf("Failed to Add payload %s to redis Zset with key %s..retryCount %d", payload.SnapshotCID, key, retryCount)
-			continue
-		}
-		log.Debugf("Added payload %s to redis Zset with key %s successfully", payload.SnapshotCID, key)
-		break
-	}
-	return nil
-}
-
-func AddToPendingTxnsInRedis(payload *PayloadCommit, requestID string, txHash string) error {
+func UpdatePendingTxnInRedis(payload *datamodel.PayloadCommit, requestID string, txHash string) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PENDING_TXNS, payload.ProjectId)
-	var pendingtxn PendingTransaction
+	var pendingtxn datamodel.PendingTransaction
 	pendingtxn.EventData.ProjectId = payload.ProjectId
 	pendingtxn.EventData.SnapshotCid = payload.SnapshotCID
 	pendingtxn.EventData.PayloadCommitId = payload.CommitId
@@ -732,14 +592,14 @@ func AddToPendingTxnsInRedis(payload *PayloadCommit, requestID string, txHash st
 	return nil
 }
 
-func GenerateTokenHash(payload *PayloadCommit) (string, bool) {
+func GenerateTokenHash(payload *datamodel.PayloadCommit) (string, bool) {
 	bn := make([]byte, 32)
 	ba := make([]byte, 32)
 	bm := make([]byte, 32)
 	bn[31] = 0
 	ba[31] = 0
 	bm[31] = 0
-	var snapshot Snapshot
+	var snapshot datamodel.Snapshot
 	snapshot.Cid = payload.SnapshotCID
 
 	snapshotBytes, err := json.Marshal(snapshot)
@@ -752,7 +612,7 @@ func GenerateTokenHash(payload *PayloadCommit) (string, bool) {
 	return tokenHash, true
 }
 
-func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, string, retryType) {
+func PrepareAndSubmitTxnToChain(payload *datamodel.PayloadCommit) (string, string, retryType) {
 	var tokenHash, requestID, txHash string
 	var status bool
 	var err error
@@ -794,58 +654,39 @@ func PrepareAndSubmitTxnToChain(payload *PayloadCommit) (string, string, retryTy
 	return requestID, txHash, NO_RETRY_SUCCESS
 }
 
-func UpdateTentativeBlockHeight(payload *PayloadCommit) error {
+func UpdateTentativeBlockHeight(payload *datamodel.PayloadCommit) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, payload.ProjectId)
-	for retryCount := 0; ; retryCount++ {
-		res := redisClient.Set(ctx, key, strconv.Itoa(payload.TentativeBlockHeight), 0)
-		if res.Err() != nil {
-			if retryCount > *settingsObj.RetryCount {
-				return res.Err()
-			}
-			log.Errorf("Failed to update tentativeBlockHeight for project %s with commitId %s due to error %+v, retrying",
-				payload.ProjectId, payload.CommitId, res.Err())
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
-		break
+
+	status := redisutils.SetIntFieldInRedis(
+		ctx, redisClient, key,
+		payload.TentativeBlockHeight,
+		settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
+
+	if !status {
+		return errors.New("failed t update tentativeBlockHeight in redis")
 	}
 	return nil
 }
 
 func GetTentativeBlockHeight(projectId string) (int, error) {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, projectId)
 	tentativeBlockHeight := 0
-	var err error
-	for retryCount := 0; ; retryCount++ {
-		res := redisClient.Get(ctx, key)
-		if res.Err() != nil {
-			if res.Err() == redis.Nil {
-				log.Infof("TentativeBlockHeight key is not present ")
-				return tentativeBlockHeight, nil
-			}
-			if retryCount > *settingsObj.RetryCount {
-				return tentativeBlockHeight, res.Err()
-			}
-			log.Errorf("Failed to fetch tentativeBlockHeight for project %s", projectId)
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
-		tentativeBlockHeight, err = strconv.Atoi(res.Val())
-		if err != nil {
-			log.Fatalf("TentativeBlockHeight Corrupted for project %s with err %+v", projectId, err)
-			return tentativeBlockHeight, err
-		}
-		break
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, projectId)
+
+	retVal := redisutils.FetchIntFieldFromRedis(ctx, redisClient,
+		key, settingsObj.RetryIntervalSecs, *settingsObj.RetryCount)
+
+	if retVal == -1 {
+		return tentativeBlockHeight, errors.New("failed to fetch tentativeBlockHeight from redis")
 	}
-	log.Debugf("TenativeBlockHeight for project %s is %d", projectId, tentativeBlockHeight)
-	return tentativeBlockHeight, nil
+	return retVal, nil
+
 }
 
 // TODO: Optimize code for all HTTP client's to reuse retry logic like tenacity retry of Python.
 // As of now it is copy pasted and looks ugly.
-func InvokeDAGFinalizerCallback(payload *PayloadCommit, requestID string) retryType {
+func InvokeDAGFinalizerCallback(payload *datamodel.PayloadCommit, requestID string) retryType {
 	reqURL := fmt.Sprintf("http://%s:%d/", settingsObj.DAGFinalizer.Host, settingsObj.DAGFinalizer.Port)
-	var req AuditContractSimWebhookCallbackRequest
+	var req datamodel.AuditContractSimWebhookCallbackRequest
 	req.EventName = "RecordAppended"
 	req.Type = "event"
 	req.Ctime = time.Now().Unix()
@@ -897,7 +738,7 @@ func InvokeDAGFinalizerCallback(payload *PayloadCommit, requestID string) retryT
 		}
 		defer res.Body.Close()
 		var resp map[string]json.RawMessage
-		respBody, err := ioutil.ReadAll(res.Body)
+		respBody, err := io.ReadAll(res.Body)
 		if err != nil {
 			retryCount++
 			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from DAG finalizer with error %+v. Retrying %d",
@@ -926,7 +767,7 @@ func InvokeDAGFinalizerCallback(payload *PayloadCommit, requestID string) retryT
 	}
 }
 
-func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
+func UploadToWeb3Storage(payload *datamodel.PayloadCommit) (string, bool) {
 
 	reqURL := settingsObj.Web3Storage.URL + settingsObj.Web3Storage.UploadURLSuffix
 	for retryCount := 0; ; {
@@ -960,8 +801,8 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 			continue
 		}
 		defer res.Body.Close()
-		var resp Web3StoragePutResponse
-		respBody, err := ioutil.ReadAll(res.Body)
+		var resp datamodel.Web3StoragePutResponse
+		respBody, err := io.ReadAll(res.Body)
 		if err != nil {
 			retryCount++
 			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from web3.storage with error %+v. Retrying %d",
@@ -982,7 +823,7 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 			return resp.CID, true
 		} else {
 			retryCount++
-			var resp Web3StorageErrResponse
+			var resp datamodel.Web3StorageErrResponse
 			err = json.Unmarshal(respBody, &resp)
 			if err != nil {
 				log.Errorf("Failed to unmarshal error response %+v for project %s with snapshotCID %s commitId %s towards web3.storage with error %+v. Retrying %d",
@@ -997,9 +838,9 @@ func UploadToWeb3Storage(payload *PayloadCommit) (string, bool) {
 	}
 }
 
-func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (requestID string, txHash string, retry retryType, err error) {
+func SubmitTxnToChain(payload *datamodel.PayloadCommit, tokenHash string) (requestID string, txHash string, retry retryType, err error) {
 	reqURL := settingsObj.ContractCallBackend.URL
-	var reqParams AuditContractCommitParams
+	var reqParams datamodel.AuditContractCommitParams
 	reqParams.RequestID = payload.RequestID
 	reqParams.ApiKeyHash = tokenHash
 	reqParams.PayloadCommitId = payload.CommitId
@@ -1042,8 +883,8 @@ func SubmitTxnToChain(payload *PayloadCommit, tokenHash string) (requestID strin
 		return "", "", RETRY_WITH_DELAY, err
 	}
 	defer res.Body.Close()
-	var resp AuditContractCommitResp
-	respBody, err := ioutil.ReadAll(res.Body)
+	var resp datamodel.AuditContractCommitResp
+	respBody, err := io.ReadAll(res.Body)
 	if err != nil {
 		log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from tx-manager with error %+v",
 			payload.ProjectId, payload.SnapshotCID, payload.CommitId, err)
@@ -1106,51 +947,6 @@ func InitTxManagerClient() {
 	}
 	log.Infof("Rate Limit configured for tx-manager Client at %v TPS with a burst of %d", tps, burst)
 	txClientRateLimiter = rate.NewLimiter(tps, burst)
-}
-
-func InitRedisClient() {
-	redisURL := fmt.Sprintf("%s:%d", settingsObj.Redis.Host, settingsObj.Redis.Port)
-	redisDb := settingsObj.Redis.Db
-	redisClient = redisutils.InitRedisClient(redisURL, redisDb, settingsObj.PayloadCommit.Concurrency)
-}
-
-func InitIPFSClient() {
-	url := settingsObj.IpfsConfig.URL
-	// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
-	connectUrl := strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
-
-	log.Infof("Initializing the IPFS client with IPFS Daemon URL %s.", connectUrl)
-	t := http.Transport{
-		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
-		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
-		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
-		IdleConnTimeout:     0,
-		DisableCompression:  true,
-	}
-
-	ipfsHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.IpfsConfig.Timeout * 1000000000),
-		Transport: &t,
-	}
-	log.Debugf("Setting IPFS HTTP client timeout as %f seconds", ipfsHttpClient.Timeout.Seconds())
-	ipfsClient = shell.NewShellWithClient(connectUrl, &ipfsHttpClient)
-
-	//Default values
-	tps := rate.Limit(100) //50 TPS
-	burst := 100
-	if settingsObj.IpfsConfig.IPFSRateLimiter != nil {
-		burst = settingsObj.IpfsConfig.IPFSRateLimiter.Burst
-		if settingsObj.IpfsConfig.IPFSRateLimiter.RequestsPerSec == -1 {
-			tps = rate.Inf
-			burst = 0
-		} else {
-			tps = rate.Limit(settingsObj.IpfsConfig.IPFSRateLimiter.RequestsPerSec)
-		}
-	}
-	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
-	ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
-
 }
 
 func InitW3sClient() {

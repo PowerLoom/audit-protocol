@@ -11,11 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
+	"github.com/powerloom/audit-prototol-private/goutils/filecache"
+	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
+	"github.com/powerloom/audit-prototol-private/goutils/settings"
+	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+
 	"github.com/go-redis/redis/v8"
-	"github.com/powerloom/goutils/filecache"
-	"github.com/powerloom/goutils/redisutils"
-	"github.com/powerloom/goutils/settings"
-	"github.com/powerloom/goutils/slackutils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -36,7 +38,7 @@ type DagVerifier struct {
 	lastVerifiedDagBlockHeightsMutex *sync.RWMutex
 	dagChainHasIssues                bool
 	dagCacheIssues                   int
-	dagChainIssues                   map[string][]DagChainIssue
+	dagChainIssues                   map[string][]datamodel.DagChainIssue
 	previousCycleDagChainHeight      map[string]int64
 	noOfCyclesSinceChainStuck        map[string]int
 	lastNotifyTime                   int64
@@ -52,11 +54,25 @@ const DAG_CHAIN_REPORT_SEVERITY_CLEAR = "Cleared"
 
 func (verifier *DagVerifier) Initialize(settings *settings.SettingsObj) {
 	verifier.settings = settings
-	verifier.InitIPFSClient()
-	verifier.InitRedisClient()
-	verifier.InitSlackClient()
+	ipfsURL := settings.IpfsConfig.ReaderURL
+	if ipfsURL == "" {
+		ipfsURL = settings.IpfsConfig.URL
+	}
+	ipfsClient.Init(
+		ipfsURL,
+		settings.DagVerifierSettings.Concurrency,
+		settings.DagVerifierSettings.IPFSRateLimiter,
+		settings.HttpClientTimeoutSecs)
 
-	verifier.dagChainIssues = make(map[string][]DagChainIssue)
+	verifier.redisClient = redisutils.InitRedisClient(
+		verifier.settings.Redis.Host,
+		verifier.settings.Redis.Port,
+		verifier.settings.Redis.Db,
+		verifier.settings.DagVerifierSettings.RedisPoolSize,
+		verifier.settings.Redis.Password)
+	slackutils.InitSlackWorkFlowClient(verifier.settings.DagVerifierSettings.SlackNotifyURL)
+
+	verifier.dagChainIssues = make(map[string][]datamodel.DagChainIssue)
 
 	verifier.PopulateProjects()
 
@@ -169,7 +185,7 @@ func (verifier *DagVerifier) FetchStartIndex(projectId string) (int64, error) {
 	payload, err := verifier.GetPayloadFromCache(projectId, payloadCid)
 	if err != nil {
 		//Fetch CID from IPFS and store the startHeight.
-		payload, err = ipfsClient.GetPayload(payloadCid, 3)
+		payload, err = ipfsClient.GetPayloadChainHeightRang(payloadCid, 3)
 		if err != nil {
 			log.Errorf("Failed to fetch payloadCID %s from IPFS for project %s", payloadCid, projectId)
 			return 0, nil
@@ -178,15 +194,15 @@ func (verifier *DagVerifier) FetchStartIndex(projectId string) (int64, error) {
 	return payload.ChainHeightRange.Begin, nil
 }
 
-func (verifier *DagVerifier) GetPayloadCidAtDAGHeightFromRedis(projectId string, startScore string) (string, error) {
+func (verifier *DagVerifier) GetPayloadCidAtDAGHeightFromRedis(projectId string, height string) (string, error) {
 	//key := projectId + ":payloadCids"
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectId)
 	payloadCid := ""
 
-	log.Debug("Fetching PayloadCid from redis at key:", key, ",with startScore: ", startScore)
+	log.Debug("Fetching PayloadCid from redis at key:", key, ",with height: ", height)
 	zRangeByScore := verifier.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
-		Min: startScore,
-		Max: startScore,
+		Min: height,
+		Max: height,
 	})
 
 	err := zRangeByScore.Err()
@@ -196,7 +212,6 @@ func (verifier *DagVerifier) GetPayloadCidAtDAGHeightFromRedis(projectId string,
 		return "", err
 	}
 	res := zRangeByScore.Val()
-	//dagPayloadsInfo = make([]DagPayload, len(res))
 	log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
 	if len(res) == 1 {
 		payloadCid = fmt.Sprintf("%v", res[0].Member)
@@ -259,26 +274,6 @@ func (verifier *DagVerifier) UpdateLastStatusToRedis() {
 	}
 }
 
-func (verifier *DagVerifier) InitIPFSClient() {
-
-	//Initialize and do a basic test to see if IPFS client is connected to IPFS server and is able to fetch.
-	ipfsClient.Init(verifier.settings)
-	//TODO: Add  a way to verify IPFS client initialization is sucess and connection to IPFS node?
-	/*dagCid := "bafyreidiweqijqgiaaitzyktovv3zpiuqh7sbk5rmbrjxupgg7dhfcehvu"
-
-	dagBlock, err := ipfsClient.DagGet(dagCid)
-	if err != nil {
-		return
-	}
-	//log.Debug("Got dag Block", dagBlock, ", for CID:", dagCid)
-	log.Debugf("Got dag Block %+v for CID:%s", dagBlock, dagCid)
-	dagPayload, err := ipfsClient.GetPayload(dagBlock.Data.Cid)
-	if err != nil {
-		return
-	}
-	log.Debugf("Read Data CId from IPFS: %+v", dagPayload)*/
-}
-
 func (verifier *DagVerifier) Run() {
 	periodicRetrievalInterval := time.Duration(verifier.settings.DagVerifierSettings.RunIntervalSecs) * time.Second
 
@@ -332,8 +327,8 @@ func (verifier *DagVerifier) GetProjectDAGBlockHeightFromRedis(projectId string)
 	return "0"
 }
 
-func (verifier *DagVerifier) GetPayloadFromCache(projectId string, payloadCid string) (DagPayloadData, error) {
-	var payload DagPayloadData
+func (verifier *DagVerifier) GetPayloadFromCache(projectId string, payloadCid string) (datamodel.DagPayloadChainHeightRange, error) {
+	var payload datamodel.DagPayloadChainHeightRange
 	bytes, err := filecache.ReadFromCache(verifier.settings.PayloadCachePath, projectId, payloadCid)
 	if err != nil {
 		if !strings.Contains(err.Error(), "no such file or directory") {
@@ -377,7 +372,7 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	for i := range dagChain {
 		payload, err := verifier.GetPayloadFromCache(projectId, dagChain[i].Payload.PayloadCid)
 		if err != nil {
-			payload, err = ipfsClient.GetPayload(dagChain[i].Payload.PayloadCid, 3)
+			payload, err = ipfsClient.GetPayloadChainHeightRang(dagChain[i].Payload.PayloadCid, 3)
 			if err != nil {
 				//If we are unable to fetch a CID from IPFS, retry
 				log.Error("Failed to get PayloadCID from IPFS. Either cache is corrupt or there is an actual issue.CID:", dagChain[i].Payload.PayloadCid)
@@ -419,7 +414,7 @@ func (verifier *DagVerifier) VerifyDagChain(projectId string) error {
 	return nil
 }
 
-func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps []DagChainIssue) {
+func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps []datamodel.DagChainIssue) {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_DAG_CHAIN_GAPS, projectId)
 	var gaps []*redis.Z
 	for i := range chainGaps {
@@ -446,7 +441,7 @@ func (verifier *DagVerifier) updateDagIssuesInRedis(projectId string, chainGaps 
 }
 
 func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
-	var dagSummary DagChainReport
+	var dagSummary datamodel.DagChainReport
 	dagSummary.InstanceId = verifier.settings.InstanceId
 	dagSummary.HostName, _ = os.Hostname()
 	currentCycleDAGchainHeight := make(map[string]int64, len(verifier.projects))
@@ -495,7 +490,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
 				log.Errorf("DAG Chain stuck for summary project %s at height %s", projectId, currentDagHeight)
 				isDagchainStuckForSummaryProject++
-				var summaryProject SummaryProjectState
+				var summaryProject datamodel.SummaryProjectVerificationStatus
 				summaryProject.ProjectHeight = currentDagHeight
 				summaryProject.ProjectId = projectId
 				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
@@ -505,7 +500,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 		} else {
 			if verifier.noOfCyclesSinceChainStuck[projectId] > 2 {
 				summaryProjectsMovingAheadAfterStuck = true
-				var summaryProject SummaryProjectState
+				var summaryProject datamodel.SummaryProjectVerificationStatus
 				summaryProject.ProjectId = projectId
 				summaryProject.ProjectHeight = currentDagHeight
 				dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_CLEAR
@@ -535,7 +530,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 		}
 		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_HIGH
 	} else if verifier.dagCacheIssues > 0 {
-		var dagSummary DagChainReport
+		var dagSummary datamodel.DagChainReport
 		dagSummary.ProjectsTrackedCount = len(verifier.projects)
 		dagSummary.Severity = DAG_CHAIN_REPORT_SEVERITY_LOW
 		dagSummary.ProjectsWithCacheIssueCount = verifier.dagCacheIssues
@@ -560,7 +555,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 	}
 	//Cleanup reported issues, because either they auto-recover or a manual recovery is needed.
 	verifier.dagChainHasIssues = false
-	verifier.dagChainIssues = make(map[string][]DagChainIssue)
+	verifier.dagChainIssues = make(map[string][]datamodel.DagChainIssue)
 
 	for _, projectId := range verifier.projects {
 		verifier.previousCycleDagChainHeight[projectId] = currentCycleDAGchainHeight[projectId]
@@ -568,7 +563,7 @@ func (verifier *DagVerifier) SummarizeDAGIssuesAndNotify() {
 
 }
 
-func (verifier *DagVerifier) NotifySlack(dagSummary *DagChainReport) error {
+func (verifier *DagVerifier) NotifySlack(dagSummary *datamodel.DagChainReport) error {
 	dagSummaryStr, _ := json.MarshalIndent(dagSummary, "", "\t")
 	//err := verifier.NotifySlackOfDAGSummary(dagSummary)
 	err := slackutils.NotifySlackWorkflow(string(dagSummaryStr), dagSummary.Severity, "DAGVerifier")
@@ -583,8 +578,8 @@ func (verifier *DagVerifier) NotifySlack(dagSummary *DagChainReport) error {
 
 }*/
 
-func (verifier *DagVerifier) GetDagChainCidsFromRedis(projectId string, startScore string) ([]DagChainBlock, error) {
-	var dagChainCids []DagChainBlock
+func (verifier *DagVerifier) GetDagChainCidsFromRedis(projectId string, startScore string) ([]datamodel.DagBlock, error) {
+	var dagChainCids []datamodel.DagBlock
 
 	//key := projectId + ":payloadCids"
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_CIDS, projectId)
@@ -602,7 +597,7 @@ func (verifier *DagVerifier) GetDagChainCidsFromRedis(projectId string, startSco
 		return nil, err
 	}
 	res := zRangeByScore.Val()
-	dagChainCids = make([]DagChainBlock, len(res))
+	dagChainCids = make([]datamodel.DagBlock, len(res))
 	log.Debugf("Fetched %d DAG Chain CIDs for key %s", len(res), key)
 	for i := range res {
 		//Safe to convert as we know height will always be int.
@@ -617,7 +612,9 @@ func (verifier *DagVerifier) GetDagChainCidsFromRedis(projectId string, startSco
 	return dagChainCids, nil
 }
 
-func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string, startScore string, dagChain []DagChainBlock) ([]DagChainBlock, error) {
+func (verifier *DagVerifier) GetPayloadCidsFromRedis(projectId string,
+	startScore string,
+	dagChain []datamodel.DagBlock) ([]datamodel.DagBlock, error) {
 	//var dagPayloadsInfo []DagPayload
 
 	//key := projectId + ":payloadCids"
@@ -654,13 +651,13 @@ RESTART_CID_COMP_LOOP:
 				//Handling special case of duplicate entries in redis DAG cache, this doesn't affect original DAGChain that is in IPFS.
 				if (i > 0) &&
 					(dagChain[i].Height == dagChain[i-1].Height) {
-					dagBlock, err := ipfsClient.DagGet(dagChain[i].CurrentCid)
+					dagBlock, err := ipfsClient.GetDagBlock(dagChain[i].CurrentCid)
 					if err != nil {
 						log.Infof("Failed to fetch DAGblock %s from IPFS due to error %+v..retrying in next cycle",
 							dagChain[i].CurrentCid, err)
 						return nil, errors.New("failed to fetch DAGblock from IPFS due to error")
 					}
-					dagBlock1, err := ipfsClient.DagGet(dagChain[i-1].CurrentCid)
+					dagBlock1, err := ipfsClient.GetDagBlock(dagChain[i-1].CurrentCid)
 					if err != nil {
 						log.Infof("Failed to fetch DAGblock %s from IPFS due to error %+v..retrying in next cycle",
 							dagChain[i-1].CurrentCid, err)
@@ -701,18 +698,18 @@ RESTART_CID_COMP_LOOP:
 	return dagChain, nil
 }
 
-func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, []DagChainIssue) {
+func (verifier *DagVerifier) verifyDagForIssues(chain *[]datamodel.DagBlock) (bool, []datamodel.DagChainIssue) {
 	dagChain := *chain
 	log.Info("Verifying DAG for Issues. DAG chain length is:", len(dagChain))
 	var prevDagBlockEnd, lastBlock, firstBlock, numGaps, numDuplicates int64
 	firstBlock = dagChain[0].Payload.Data.ChainHeightRange.End
 	lastBlock = dagChain[len(dagChain)-1].Payload.Data.ChainHeightRange.Begin
-	var dagIssues []DagChainIssue
+	var dagIssues []datamodel.DagChainIssue
 	for i := range dagChain {
 		//log.Debug("Processing dag block :", i, "nextDagBlockStart:", nextDagBlockStart)
 		if prevDagBlockEnd != 0 {
 			if dagChain[i].Height == dagChain[i-1].Height {
-				dagIssues = append(dagIssues, DagChainIssue{IssueType: DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT,
+				dagIssues = append(dagIssues, datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_DUPLICATE_HEIGHT,
 					TimestampIdentified: time.Now().Unix(),
 					DAGBlockHeight:      dagChain[i].Height})
 				//TODO:If there are multiple snapshots observed at same blockHeight, need to take action to cleanup snapshots
@@ -725,7 +722,7 @@ func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, [
 			if curBlockStart != 0 && curBlockStart != prevDagBlockEnd+1 {
 				log.Debug("Gap identified at ChainHeight:", dagChain[i].Height, ",PayloadCID:", dagChain[i].Payload.PayloadCid, ", between height:", dagChain[i-1].Height, " and ", dagChain[i].Height)
 				log.Debug("Missing blocks from(not including): ", prevDagBlockEnd, " to(not including): ", curBlockStart)
-				dagIssues = append(dagIssues, DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, MissingBlockHeightStart: prevDagBlockEnd + 1,
+				dagIssues = append(dagIssues, datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, MissingBlockHeightStart: prevDagBlockEnd + 1,
 					MissingBlockHeightEnd: curBlockStart - 1, // How can -1 be recorded??
 					TimestampIdentified:   time.Now().Unix(),
 					DAGBlockHeight:        dagChain[i].Height})
@@ -741,15 +738,4 @@ func (verifier *DagVerifier) verifyDagForIssues(chain *[]DagChainBlock) (bool, [
 	} else {
 		return false, dagIssues
 	}
-}
-
-func (verifier *DagVerifier) InitRedisClient() {
-	redisURL := verifier.settings.Redis.Host + ":" + strconv.Itoa(verifier.settings.Redis.Port)
-	redisDb := verifier.settings.Redis.Db
-	verifier.redisClient = redisutils.InitRedisClient(redisURL, redisDb, verifier.settings.DagVerifierSettings.RedisPoolSize)
-}
-
-func (verifier *DagVerifier) InitSlackClient() {
-
-	slackutils.InitSlackWorkFlowClient(verifier.settings.DagVerifierSettings.SlackNotifyURL)
 }

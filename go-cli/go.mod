@@ -1,12 +1,10 @@
 module go-cli
 
-go 1.18
+go 1.19
 
-replace github.com/powerloom/goutils => ../goutils
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5
-	github.com/powerloom/goutils v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.0
 )
 

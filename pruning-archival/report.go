@@ -6,9 +6,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
+	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+
 	"github.com/go-redis/redis/v8"
-	"github.com/powerloom/goutils/redisutils"
-	"github.com/powerloom/goutils/slackutils"
 	log "github.com/sirupsen/logrus"
 )
 

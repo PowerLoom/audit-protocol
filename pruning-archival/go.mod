@@ -1,13 +1,12 @@
-module github.com/powerloom/pruningArchivalService
+module github.com/powerloom/audit-prototol-private/pruning-archival
 
-go 1.18
+go 1.19
 
 require (
 	github.com/alanshaw/go-carbites v0.5.0
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.2.0
 	github.com/ipfs/go-ipfs-api v0.3.0
-	github.com/powerloom/goutils v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.0
 	golang.org/x/time v0.0.0-20220922220347-f3bd1da661af
 )
@@ -54,7 +53,7 @@ require (
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/multiformats/go-base32 v0.0.3 // indirect
 	github.com/multiformats/go-base36 v0.1.0 // indirect
-	github.com/multiformats/go-multiaddr v0.3.3 // indirect
+	github.com/multiformats/go-multiaddr v0.8.0 // indirect
 	github.com/multiformats/go-multibase v0.0.3 // indirect
 	github.com/multiformats/go-multicodec v0.3.1-0.20210902112759-1539a079fd61 // indirect
 	github.com/multiformats/go-multihash v0.1.0 // indirect
@@ -62,6 +61,7 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
 	github.com/polydawn/refmt v0.0.0-20201211092308-30ac6d18308e // indirect
+	github.com/powerloom/audit-prototol-private/goutils v0.0.0-00010101000000-000000000000 // indirect
 	github.com/spacemonkeygo/spacelog v0.0.0-20180420211403-2296661a0572 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/whyrusleeping/cbor v0.0.0-20171005072247-63513f603b11 // indirect
@@ -79,4 +79,4 @@ require (
 	lukechampine.com/blake3 v1.1.6 // indirect
 )
 
-replace github.com/powerloom/goutils => ../goutils
+replace github.com/powerloom/audit-prototol-private/goutils => ../goutils

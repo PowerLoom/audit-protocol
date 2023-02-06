@@ -28,6 +28,7 @@ docker/settings.json
 test.py
 
 #ignore go binaries
-go-payload-commit-service/payloadCommitService
-go-pruning-archival-service/pruningArchivalService
-token-aggregator/uniswapTokenData
+payload-commit/payload-commit
+pruning-archival/pruning-archival
+token-aggregator/token-aggregator
+dag-verifier/dag-verifier

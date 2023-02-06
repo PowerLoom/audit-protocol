@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/powerloom/audit-prototol-private/goutils/settings"
+
 	"github.com/go-redis/redis/v8"
-	"github.com/powerloom/goutils/settings"
 )
 
 var ctx = context.Background()

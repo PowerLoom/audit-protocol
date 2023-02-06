@@ -15,13 +15,15 @@ import (
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/powerloom/goutils/logger"
-	"github.com/powerloom/goutils/redisutils"
-	"github.com/powerloom/goutils/settings"
-	"github.com/powerloom/goutils/slackutils"
+	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
+	"github.com/powerloom/audit-prototol-private/goutils/ipfsutils"
+	"github.com/powerloom/audit-prototol-private/goutils/logger"
+	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
+	"github.com/powerloom/audit-prototol-private/goutils/settings"
+	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
 )
 
-var ipfsClient IpfsClient
+var ipfsClient ipfsutils.IpfsClient
 var dagVerifier DagVerifier
 
 var settingsObj *settings.SettingsObj
@@ -81,7 +83,7 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 		// Notify consensus layer
 		ReportIssueToConsensus(reqBytes)
 
-		var reqPayload IssueReport
+		var reqPayload datamodel.IssueReport
 
 		err = json.Unmarshal(reqBytes, &reqPayload)
 		if err != nil {

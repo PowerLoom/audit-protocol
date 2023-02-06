@@ -20,10 +20,11 @@ import (
 	"github.com/web3-storage/go-w3s-client"
 	"golang.org/x/time/rate"
 
-	"github.com/powerloom/goutils/commonutils"
-	"github.com/powerloom/goutils/redisutils"
-	"github.com/powerloom/goutils/settings"
-	"github.com/powerloom/goutils/slackutils"
+	"github.com/powerloom/audit-prototol-private/goutils/commonutils"
+	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
+	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
+	"github.com/powerloom/audit-prototol-private/goutils/settings"
+	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
 )
 
 type ProjectPruningVerificationStatus struct {
@@ -50,9 +51,9 @@ type PruningVerificationReport struct {
 }
 
 type PruningIssueReport struct {
-	ProjectID    string          `json:"projectID"`
-	SegmentError SegmentError    `json:"error"`
-	ChainIssues  []DagChainIssue `json:"dagChainIssues"`
+	ProjectID    string                    `json:"projectID"`
+	SegmentError SegmentError              `json:"error"`
+	ChainIssues  []datamodel.DagChainIssue `json:"dagChainIssues"`
 }
 type SegmentError struct {
 	Error     string `json:"errorData"`
@@ -72,12 +73,15 @@ type Web3StorageErrResponse struct {
 }
 
 func (verifier *PruningVerifier) Init(settings *settings.SettingsObj) {
-	redisURL := settings.Redis.Host + ":" + strconv.Itoa(settings.Redis.Port)
-	redisDb := settings.Redis.Db
-	poolSize := settings.DagVerifierSettings.RedisPoolSize
+
 	//Verify every half-time of pruningInterval
 	verifier.RunInterval = settings.PruningServiceSettings.RunIntervalMins / 2
-	verifier.redisClient = redisutils.InitRedisClient(redisURL, redisDb, poolSize)
+	verifier.redisClient = redisutils.InitRedisClient(
+		settings.Redis.Host,
+		settings.Redis.Port,
+		settings.Redis.Db,
+		settings.DagVerifierSettings.RedisPoolSize,
+		settings.Redis.Password)
 	verifier.settingsObj = settings
 	verifier.w3httpClient = InitW3sHTTPClient(settings)
 	verifier.InitW3sClient()
@@ -188,7 +192,7 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 	for _, endHeightStr := range *sortedSegments {
 		dagSegment := dagSegments[endHeightStr]
 		var pruningReport PruningIssueReport
-		pruningReport.ChainIssues = make([]DagChainIssue, 0)
+		pruningReport.ChainIssues = make([]datamodel.DagChainIssue, 0)
 		pruningReport.ProjectID = projectId
 		endHeight, _ := strconv.Atoi(endHeightStr)
 		if endHeight > projectStatus.LastSegmentEndHeight {
@@ -241,7 +245,7 @@ func (verifier *PruningVerifier) AddPruningIssueReport(report *PruningIssueRepor
 	log.Debugf("Updated pruning issues key for project %s successfully.", report.ProjectID)
 }
 
-func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment *ProjectDAGSegment) (bool, string, *[]DagChainIssue) {
+func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment *ProjectDAGSegment) (bool, string, *[]datamodel.DagChainIssue) {
 	//verifyStatus := false
 	//curl -i -X 'HEAD' 'https://api.web3.storage/car/bafyreiglb6wf4ps4nthoaqml6sxndccxn5utrwv4n46l5uc263vny5nidm' -H 'accept: */*'
 	//Response: - 200 OK with
@@ -297,30 +301,30 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment 
 	return true, "", nil
 }
 
-func (verifier *PruningVerifier) VerifyDAGSegment(projectId string, segment *ProjectDAGSegment) (*[]DagChainIssue, string) {
+func (verifier *PruningVerifier) VerifyDAGSegment(projectId string, segment *ProjectDAGSegment) (*[]datamodel.DagChainIssue, string) {
 	dagHeight := segment.EndHeight
-	chainIssues := make([]DagChainIssue, 0)
+	chainIssues := make([]datamodel.DagChainIssue, 0)
 	prevBlockChainEndHeight := int64(0)
 	for cid := segment.EndDAGCID; dagHeight >= segment.BeginHeight; dagHeight-- {
 		log.Debugf("Project %s: DAG CID is %s at height %d", projectId, cid, dagHeight)
-		dagBlock, err := ipfsClient.DagGet(cid)
+		dagBlock, err := ipfsClient.GetDagBlock(cid)
 		if err != nil {
 			log.Errorf("Project %s: Could not fetch DAG CID %s at DagHeight %d from IPFS due to error %+v and hence can't verify further DAGChain", projectId, cid, dagHeight, err)
-			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssue := datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
 			chainIssues = append(chainIssues, chainIssue)
 			return &chainIssues, fmt.Sprintf("Could not fetch DAG CID %s at DagHeight %d from IPFS and hence can't verify further DAGChain", cid, dagHeight)
 		}
-		payload, err := ipfsClient.GetPayload(dagBlock.Data.Cid.LinkData, 3)
+		payload, err := ipfsClient.GetPayloadChainHeightRang(dagBlock.Data.Cid.LinkData, 3)
 		if err != nil {
 			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
-			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssue := datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
 			chainIssues = append(chainIssues, chainIssue)
 			cid = dagBlock.PrevCid.LinkData
 			continue
 		}
 		if prevBlockChainEndHeight != 0 && payload.ChainHeightRange.Begin == prevBlockChainEndHeight+1 {
 			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
-			chainIssue := DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssue := datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
 			chainIssues = append(chainIssues, chainIssue)
 			cid = dagBlock.PrevCid.LinkData
 			continue

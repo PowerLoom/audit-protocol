@@ -40,8 +40,8 @@ module.exports = {
     },
     {
       name   : "ap-payload-commit",
-      script : "./payloadCommitService",
-      cwd : `${__dirname}/go-payload-commit-service`,
+      script : "./payload-commit",
+      cwd : `${__dirname}/payload-commit`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
@@ -52,7 +52,7 @@ module.exports = {
     },
     {
       name   : "ap-token-aggregator",
-      script : "./uniswapTokenData",
+      script : "./token-aggregator",
       cwd : `${__dirname}/token-aggregator`,
       max_restarts: MAX_RESTART,
       env: {
@@ -72,8 +72,8 @@ module.exports = {
     },
     {
       name   : "ap-dag-verifier",
-      script : "./dagChainVerifier",
-      cwd : `${__dirname}/dag_verifier`,
+      script : "./dag-verifier",
+      cwd : `${__dirname}/dag-verifier`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
@@ -84,8 +84,8 @@ module.exports = {
     },
     {
       name   : "ap-pruning-archival-service",
-      script : "./pruningArchivalService",
-      cwd : `${__dirname}/go-pruning-archival-service`,
+      script : "./pruning-archival",
+      cwd : `${__dirname}/pruning-archival`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,

@@ -12,16 +12,16 @@ RUN apk update && apk add --no-cache ethtool nodejs npm bash gcc musl-dev libc-d
 
 RUN npm install pm2 -g
 
-WORKDIR /go/src/github.com/powerloom/goutils
+WORKDIR /go/src/github.com/powerloom/audit-protocol-private/goutils
 
-# Copy the Go module files and download the dependencies
+#Copy the Go module files and download the dependencies
 COPY goutils/go.mod goutils/go.sum ./
 RUN go mod download
-COPY go-pruning-archival-service/go.mod go-pruning-archival-service/go.sum ./
+COPY pruning-archival/go.mod pruning-archival/go.sum ./
 RUN go mod download
-COPY go-payload-commit-service/go.mod go-payload-commit-service/go.sum ./
+COPY payload-commit/go.mod payload-commit/go.sum ./
 RUN go mod download
-COPY dag_verifier/go.mod dag_verifier/go.sum ./
+COPY dag-verifier/go.mod dag-verifier/go.sum ./
 RUN go mod download
 COPY token-aggregator/go.mod token-aggregator/go.sum ./
 RUN go mod download
@@ -38,5 +38,6 @@ EXPOSE 9002
 EXPOSE 9030
 
 COPY . .
+RUN ./build.sh
 
 RUN chmod +x init_processes.sh snapshotter_autofill.sh

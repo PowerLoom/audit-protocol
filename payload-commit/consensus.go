@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"time"
+
+	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -90,7 +92,7 @@ func PollConsensusForConfirmations() {
 	}
 }
 
-func ProcessPendingSnapshot(snapshotCID string, payload *PayloadCommit) {
+func ProcessPendingSnapshot(snapshotCID string, payload *datamodel.PayloadCommit) {
 	//Fetch status of snapshot
 	status, err := SendRequestToConsensusService(payload, http.MethodPost, 3, "/checkForSnapshotConfirmation")
 	if err != nil {
@@ -116,12 +118,12 @@ func ProcessPendingSnapshot(snapshotCID string, payload *PayloadCommit) {
 	}
 }
 
-func SubmitSnapshotForConsensus(payload *PayloadCommit) (string, error) {
+func SubmitSnapshotForConsensus(payload *datamodel.PayloadCommit) (string, error) {
 	payload.ConsensusSubmissionTs = time.Now().UnixMicro()
 	return SendRequestToConsensusService(payload, http.MethodPost, *settingsObj.RetryCount, "/submitSnapshot")
 }
 
-func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRetries int, urlSuffix string) (string, error) {
+func SendRequestToConsensusService(payload *datamodel.PayloadCommit, method string, maxRetries int, urlSuffix string) (string, error) {
 	reqURL := settingsObj.ConsensusConfig.ServiceURL + urlSuffix
 	req := SubmitSnapshotRequest{
 		Epoch:       Epoch_{Begin: payload.SourceChainDetails.EpochStartHeight, End: payload.SourceChainDetails.EpochEndHeight},
@@ -162,7 +164,7 @@ func SendRequestToConsensusService(payload *PayloadCommit, method string, maxRet
 		}
 		defer res.Body.Close()
 		var resp SubmitSnapshotResponse
-		respBody, err := ioutil.ReadAll(res.Body)
+		respBody, err := io.ReadAll(res.Body)
 		if err != nil {
 			retryCount++
 			log.Errorf("Failed to read response body for project %s with snapshotCID %s commitId %s from consensus service with error %+v. Retrying %d",

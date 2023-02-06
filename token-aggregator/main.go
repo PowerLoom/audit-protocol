@@ -17,10 +17,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
+	"github.com/powerloom/audit-prototol-private/goutils/logger"
+	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
+	"github.com/powerloom/audit-prototol-private/goutils/settings"
+
 	"github.com/go-redis/redis/v8"
-	"github.com/powerloom/goutils/logger"
-	"github.com/powerloom/goutils/redisutils"
-	"github.com/powerloom/goutils/settings"
 )
 
 var settingsObj *settings.SettingsObj
@@ -72,7 +73,13 @@ func main() {
 	}
 
 	RegisterAggregatorCallbackKey()
-	SetupRedisClient()
+	redisClient = redisutils.InitRedisClient(
+		settingsObj.Redis.Host,
+		settingsObj.Redis.Port,
+		settingsObj.Redis.Db,
+		settingsObj.DagVerifierSettings.RedisPoolSize,
+		settingsObj.Redis.Password)
+
 	InitAuditProtocolClient()
 	tokenList = make(map[string]*TokenData)
 	tokenPairTokenMapping = make(map[string]TokenDataRefs)
@@ -857,22 +864,6 @@ func ReadSettings() {
 	}
 	retryInterval = settingsObj.RetryIntervalSecs
 	log.Info("Settings for namespace", settingsObj.PoolerNamespace)
-}
-
-func SetupRedisClient() {
-	redisURL := settingsObj.Redis.Host + ":" + strconv.Itoa(settingsObj.Redis.Port)
-
-	log.Info("Connecting to redis at:", redisURL)
-	redisClient = redis.NewClient(&redis.Options{
-		Addr:     redisURL,
-		Password: "",
-		DB:       settingsObj.Redis.Db,
-	})
-	pong, err := redisClient.Ping(ctx).Result()
-	if err != nil {
-		log.Error("Unable to connect to redis at:")
-	}
-	log.Info("Connected successfully to Redis and received ", pong, " back")
 }
 
 func InitAuditProtocolClient() {
