@@ -61,20 +61,23 @@ group Worker-Processing
                  note over dagf: Fetch eventData. \n Build and submit request to commit_payload.\n update lastTouchedBlock.
             end
          end
-         group #lightgreen check and fetch missing block from consensus (Similar to self-healing of chains)
+         group check and fetch missing block from consensus (Similar to self-healing of chains)
             alt if tentative_block_height_event_data > finalized_block_height_project+5(no of epochs configurable)
                 note over dagf: This takes care of self-healing of chains in case of processing error when out of order event occurs.\n As well as when a snapshot is missed.
                 alt if first_pending_tx.event_data.tentativeBlockHeight >= finalized_block_height_project+1
                     note over dagf: arrive at epochToFetch(s) based on epochSize ,projectFirstEpochHeight and missingDAGHeight. \n epochToFetch = missingHeight*epochSize+firstEpochHeight
                     loop each epochHeight:
                         dagf <-> consensus: GET /epochStatus {instanceId,projectID,epochToFetch}
-                        alt if 200
+                        alt if 200 and finalized SnapshotCID received
                             group Simulate Process in order eventt. Make it a function
                             note over dagf: add snapshotCID to payloadCids Zset. Rest of in-order processing...\nCreate DAGBlock with empty txHash (Or fixed value such as NA???).
                             end
                         end
-                        alt else
-                            note over dagf: Log error and proceed.
+                        alt else //Consensus not achieved
+                            note over dagf: Create an null payload at this height and insert a DAG block without a payload reference. \n This dag chain gap would be filled in by the network.
+                            note over dagf: Notify as SKIP_EPOCH to dag_verifier.
+                        else
+                            note over dagf: Notify as MISSED_SNAPSHOT to dag_verifier.
                         end
                     end
                     note over dagf: Process pendingBlocks to be added to DAG Chain.\nFinalize pendingTxns from blockHeight+1 that have lastTouchedBlock==-1. Make it a function
