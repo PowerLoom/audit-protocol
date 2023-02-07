@@ -1,4 +1,4 @@
-@startuml "Project Pruning Verification
+@startuml "Project Pruning Verification"
 autonumber
 
 participant "dag-verifier" as dagv
