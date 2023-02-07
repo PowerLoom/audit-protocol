@@ -1,10 +1,11 @@
-@startuml "Pruning Processing Flow"
+@startuml "Pruning Archival Processing Flow"
 autonumber
 
 participant "Pruning-Archival-Service" as pruning
 participant "IPFS" as ipfs
 database redis
 participant "web3.storage" as w3s
+participant "slack-notification-\nendpoint" as slack
 
 
 group init
@@ -35,7 +36,7 @@ group Periodic Processing
 
             note over pruning: pruningHeight = tail(7d)-100
 
-            alt if segment can be archived and is not archived
+            alt if archival enabled and segment can be archived and is not archived
                 pruning <-> ipfs: Export DAG segment (dag export <lastDAGCID of segment>)
                 note over pruning: Store exported DAG as CAR file in /tmp
 
@@ -62,7 +63,15 @@ group Periodic Processing
                 pruning <-> redis: prune payloadCids Zset from start to pruningHeight
 
                 pruning <-> redis : Update project's lastPrunedHeight to pruningHeight and project's pruning Report
+
+                note over pruning: Delete all the payloads(payloadCids) and DAG-blocks(DAGCids) from local-file-cache
+
             end //Pruning
         end
     end
+
+    alt if archival failed
+        pruning <-> slack: Report project pruning status indicating count of projects succeded and failed.
+    end
+
 end //Processing

@@ -9,6 +9,7 @@ __pycache__/
 *.swp
 files/
 .env
+out/
 static/cached_pair_addresses.json
 
 # Ignore dynaconf secret files
