@@ -22,11 +22,11 @@ app = typer.Typer()
 
 
 @app.command()
-def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2-ph15-prod", "--namespace"), projectId: str = typer.Option(None, "--projectId")):
+def projectStatus(namespace: str = typer.Option("UNISWAPV2-ph15-prod", "--namespace"), projectId: str = typer.Option(None, "--projectId")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
     index_status = None
-    key = 'projects-test:IndexStatus'
+    key = 'projects:IndexStatus'
     if projectId:
         index_status = r.hget(key, projectId)
         if not index_status:
@@ -42,7 +42,7 @@ def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2-ph15-prod", "--n
         index_status = [{k.decode('utf-8'): v.decode('utf-8')} for k, v in index_status.items()]
 
     table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("ProjecId", justify="center")
+    table.add_column("ProjectId", justify="center")
     table.add_column("Start source chain height", justify="center")
     table.add_column("Current source chain height", justify="center")
 

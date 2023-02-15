@@ -91,7 +91,8 @@ cp settings.example.json settings.json
     - Configure consensus URL at `consensus_config.service_url`.
 - *Optional Steps*
     - Increase rate-limit config `consensus_config.rate_limit` towards consensus based on number of pairs being snapshotted.
-    - Configure `settings.dag_verifier.slack_notify_URL` if you want to receive alerts on slack channel. In order to setup slack workflow, refer steps [here](dag-verifier/README.md#configuring-slack-notifications).
+    - Configure `settings.dag_verifier.slack_notify_URL` if you want to receive alerts on slack channel.
+    In order to setup slack workflow, refer steps [here](dag-verifier/README.md#configuring-slack-notifications).
 - Copy over `static/cached_pair_addresses.json` from `pooler/static/cached_pair_addresses.json` .
 * Note that by default many of these services uses default ports which are set
 to 9000, 9002, 9030 and 8000 but if you already have some services running at that ports, you can
@@ -109,9 +110,20 @@ pm2 start pm2.config.js
 - To see all logs you can run `pm2 logs`
 - To see logs for a specific process you can run `pm2 logs <Process Identifier>`
 - To see only error logs you can run `pm2 logs --err`
-- You can monitor the status of all the projects such as if dag-chains are moving ahead etc with the following cli command.
+- You can monitor the last indexed status of all the projects with the following cli command.
+This command shall output the startEpoch and last finalized epoch for each project. Sample output is also shown.
 ```shell
-python cli_cmd.py projectsstatus
+python cli_cmd.py projectstatus
+
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+┃                      ┃ Start source chain  ┃ Current source chain ┃
+┃       ProjecId       ┃       height        ┃        height        ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+│ uniswap_pairContrac… │      16619241       │       16633160       │
+│ uniswap_pairContrac… │      16619241       │       16633160       │
+│ uniswap_pairContrac… │      16619241       │       16633160       │
+│ uniswap_pairContrac… │      16619241       │       16633160       │
+│ uniswap_pairContrac… │      16619241       │       16633160       │
 ```
 ## Usage
 
@@ -126,4 +138,5 @@ You can get more details about these endpoints in the [postman collection](Backe
 
 
 ## Architecture Details
-Details about working of various components is present in [Introduction](docs/Introduction.md) if you're interested to know more about audit-protocol.
+Details about working of various components is present in [Introduction](docs/Introduction.md)
+if you're interested to know more about audit-protocol.
