@@ -122,7 +122,7 @@ Audit protocol provides various endpoints which helps in users utilizing the bas
 
 A high level user-interaction workflow is depicted in the diagram [ap-usage](docs/AuditProtocolUsage.png)
 
-You can get more details about these endpoints in the [postman collection](../Powerloom%20New%20Architecture.postman_collection.json).
+You can get more details about these endpoints in the [postman collection](Backend_API_Postman_Collection.json).
 
 
 ## Architecture Details

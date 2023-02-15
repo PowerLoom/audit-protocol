@@ -98,7 +98,7 @@ It has following functionalities"
 2. Registers projects locally and also with the off-chain consensus service for snapshotting.
 3. Submit received snapshots to a rabbitmq exchange which is in-turn consumed by the payload-commit service.
 
-The API details be found in the [postman collection](../Powerloom%20New%20Architecture.postman_collection.json)
+The API details be found in the [postman collection](../Backend_API_Postman_Collection.json)
 
 Code for this service can be browsed by going through [main](../main.py)
 
