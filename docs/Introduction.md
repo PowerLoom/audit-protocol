@@ -7,8 +7,8 @@
 
 # Audit Protocol
 
-This document describes some of the concepts of the Audit protocol. It is highly recommended to use the dockerized
-installation to run the project instead of manually running all the services.
+This document describes some of the concepts and details the services of the Audit protocol.
+It is highly recommended to use the dockerized installation to run the project instead of manually running all the services.
 
 ## Introduction
 
@@ -78,13 +78,13 @@ The `timestamp` field in a DAG block is the block timestamp of the latest block 
 ![DAG_Block_Chain](DAG_Block_Chain.jpg)
 
 
-### tentativeBlockHeight
+### Tentative Block Height
 This is only applicable for SummaryProjects (which are special projects that are not based on epochs)
 - Every payload that is sent to **/commit_payload** will be assigned a tentativeBlockHeight.
 - tentativeBlockHeight represents what the height of the DAG block will be once it is created and appended to the DAG chain.
 
 # Services Details
-## backend
+## Backend
 
 This is the backend server that lets you interact with the core functionality through APIs.
 It has following functionalities"
@@ -224,22 +224,22 @@ Code for this service is located at [token-aggregator](../token-aggregator/)
 Golang Code has been structured as below. Common utils that are used by multiple Golang services are available in [goutils](../goutils/).
  Below are list of utils that are in common folder.
 
-- Logger - Logger initialization and setup code
-- redisutils - Redis client initialization and common operations wrapper code
-- settings - Parsing the settings and settings deaults
-- filecache utils - Code to read and write to file cache
-- slackutils - Code to interact with slack workflow
-- datamodel - Data models used across services
-- ipfsutils - IPFS client initialization and common functionality
-- commonutils - Other miscellaneous utils
+- [logger](../goutils/logger/) - Logger initialization and setup code
+- [redisutils](../goutils/redisutils/) - Redis client initialization and common operations wrapper code
+- [settings](../goutils/settings/) - Parsing the settings and settings deaults
+- [filecache](../goutils/filecache/) utils - Code to read and write to file cache
+- [slackutils](../goutils/slackutils/) - Code to interact with slack workflow
+- [datamodel](../goutils/datamodel/) - Data models used across services
+- [ipfsutils](../goutils/ipfsutils/) - IPFS client initialization and common functionality
+- [commonutils](../goutils/commonutils/) - Other miscellaneous utils
 
 Following services are written in Golang
 
-- DAG Verifier  Service
+- DAG Verifier
     [DAG Verifier Notifications](https://www.notion.so/DAG-Verifier-Notifications-771936189a0f427394ec9fff4c1e8ba9)
-- Payload Commit Service
-- Pruning and Archival Service https://github.com/PowerLoom/audit-protocol-private/issues/94
-- token-aggregator service
+- Payload Commit
+- Pruning and Archival https://github.com/PowerLoom/audit-protocol-private/issues/94
+- Token Aggregator
 
 ### Python Code
 
