@@ -111,19 +111,23 @@ pm2 start pm2.config.js
 - To see logs for a specific process you can run `pm2 logs <Process Identifier>`
 - To see only error logs you can run `pm2 logs --err`
 - You can monitor the last indexed status of all the projects with the following cli command.
-This command shall output the startEpoch and last finalized epoch for each project. Sample output is also shown.
+This command shall output the startEpoch and last finalized epoch for each project along with
+any issues with DAG chains and epochs pending finalization.
+Sample output is shown below.
 ```shell
 python cli_cmd.py projectstatus
 
-┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
-┃                      ┃ Start source chain  ┃ Current source chain ┃
-┃       ProjecId       ┃       height        ┃        height        ┃
-┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
-│ uniswap_pairContrac… │      16619241       │       16633160       │
-│ uniswap_pairContrac… │      16619241       │       16633160       │
-│ uniswap_pairContrac… │      16619241       │       16633160       │
-│ uniswap_pairContrac… │      16619241       │       16633160       │
-│ uniswap_pairContrac… │      16619241       │       16633160       │
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃                ┃  First Epoch   ┃  Current Epoch  ┃   Dag chain    ┃ Epochs pending  ┃
+┃   ProjectId    ┃  Start Height  ┃   End Height    ┃     issues     ┃  finalization   ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ uniswap_pairC… │    16619241    │    16633420     │       0        │        0        │
+│ uniswap_pairC… │    16619241    │    16633420     │       0        │        0        │
+│ uniswap_pairC… │    16619241    │    16633420     │       0        │        0        │
+│ uniswap_pairC… │    16619241    │    16633420     │       0        │        0        │
+│ uniswap_pairC… │    16619241    │    16633420     │       0        │        0        │
+│ uniswap_pairC… │    16619241    │    16633420     │       0        │        0        │
+│ uniswap_pairC… │    16619241    │    16633420     │       0        │        0        │
 ```
 ## Usage
 
