@@ -4,13 +4,16 @@ DAG Verifier service performs following functions:
     Currently, dag verifier checks for following issues:
     - Gaps in DAG chains by looking at epochs at each snapshot and reports missing epochs
     - In case DAG chains are stuck due to any reason
-
-2. Expose an endpoint to which issues are reported by other services [Ref](https://github.com/PowerLoom/audit-protocol-private/issues/143). These issues are :
+2. Verify the archival status of archived dag-segments.
+3. Expose an endpoint to which issues are reported by other services [Ref](https://github.com/PowerLoom/audit-protocol-private/issues/143). These issues are :
     - Recorded in redis
     - Notified to consensus layer
     - Notified on slack if the URL is configured
 
 In order to receive notifications, a slack workflow has to be setup and the webhook URL has to be configured in audit-protocol configuration. Steps to create and configure the workflow are defined [here](#configuring-slack-notifications).
+
+[DAG Verification Call Flow](../docs/DAGVerifier_CallFlow.png)
+[Archival Verification Call Flow](../docs/PruningVerifier_CallFlow.png)
 
 # Configuring Settings
 * Following section lists down all the settings along with defaults used by dag-verifier service.
