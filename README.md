@@ -92,7 +92,7 @@ cp settings.example.json settings.json
 - *Optional Steps*
     - Increase rate-limit config `consensus_config.rate_limit` towards consensus based on number of pairs being snapshotted.
     - Configure `settings.dag_verifier.slack_notify_URL` if you want to receive alerts on slack channel.
-    In order to setup slack workflow, refer steps [here](dag-verifier/README.md#configuring-slack-notifications).
+    In order to setup slack workflow, refer steps [here](go/dag-verifier/README.md#configuring-slack-notifications).
 - Copy over `static/cached_pair_addresses.json` from `pooler/static/cached_pair_addresses.json` .
 * Note that by default many of these services uses default ports which are set
 to 9000, 9002, 9030 and 8000 but if you already have some services running at that ports, you can

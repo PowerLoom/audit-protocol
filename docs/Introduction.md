@@ -15,8 +15,8 @@ It is highly recommended to use the dockerized installation to run the project i
 The project mainly consists of 6 primary services and 2 supplementary services:
 * [Backend](#backend)
 * [Payload Commit](#payload-commit)
-* [DAG Finalizer event-listener](dag-finalizer)
-* [DAG Finalizer Processor](dag-finalizer)
+* [DAG Finalizer event-listener](#dag-finalizer)
+* [DAG Finalizer Processor](#dag-finalizer)
 * [Pruning Archival](#pruning-archival)
 * [Dag Verifier](#dag-verifier)
 
@@ -121,7 +121,7 @@ The payload commit service has following high level functionalities:
 
 ![Call Flow](PayloadCommit_CallFlow.png)
 
-Code for this service is located at [payload-commit](../payload-commit/)
+Code for this service is located at [payload-commit](../go/payload-commit/)
 
 ## DAG finalizer
 
@@ -145,10 +145,10 @@ the received events in order to ensure DAG chain gets created based on the tenta
 ## DAG Verifier
 
 The function of DAG verifier service is to verify the continuity of DAG chains and identify gaps and report them.
-More detailed functionality is explained [here](../dag-verifier/README.md)
+More detailed functionality is explained [here](../go/dag-verifier/README.md)
 
-Code for this service is located at [dag-verifier](../dag-verifier/dag_verifier.go)
-and [pruning-verifier](../dag-verifier/pruning_verifier.go)
+Code for this service is located at [dag-verifier](../go/dag-verifier/dag_verifier.go)
+and [pruning-verifier](../go/dag-verifier/pruning_verifier.go)
 
 
 ## Pruning Archival
@@ -162,7 +162,7 @@ Refer to [94](https://github.com/PowerLoom/audit-protocol-private/issues/94) for
 
 ![Call Flow](PruningArchival_CallFlow.png)
 
-Code for this service is located at [pruning-archival](../pruning-archival)
+Code for this service is located at [pruning-archival](../go/pruning-archival)
 
 ## Indexer Aggregator
 
@@ -215,23 +215,24 @@ Note: If the dag-chain structure changes, then code has to be modified to work w
 
  ![Call Flow](TokenAggregator_CallFlow.png)
 
-Code for this service is located at [token-aggregator](../token-aggregator/)
+Code for this service is located at [token-aggregator](../go/token-aggregator/)
 
 
 ## Code Structure
 
 ### Golang Code
-Golang Code has been structured as below. Common utils that are used by multiple Golang services are available in [goutils](../goutils/).
+Golang Code is present in [go](../go/) folder and has been structured as below.
+Common utils that are used by multiple Golang services are available in [goutils](../go/goutils/).
  Below are list of utils that are in common folder.
 
-- [logger](../goutils/logger/) - Logger initialization and setup code
-- [redisutils](../goutils/redisutils/) - Redis client initialization and common operations wrapper code
-- [settings](../goutils/settings/) - Parsing the settings and settings deaults
-- [filecache](../goutils/filecache/) utils - Code to read and write to file cache
-- [slackutils](../goutils/slackutils/) - Code to interact with slack workflow
-- [datamodel](../goutils/datamodel/) - Data models used across services
-- [ipfsutils](../goutils/ipfsutils/) - IPFS client initialization and common functionality
-- [commonutils](../goutils/commonutils/) - Other miscellaneous utils
+- [logger](../go/goutils/logger/) - Logger initialization and setup code
+- [redisutils](../go/goutils/redisutils/) - Redis client initialization and common operations wrapper code
+- [settings](../go/goutils/settings/) - Parsing the settings and settings deaults
+- [filecache](../go/goutils/filecache/) utils - Code to read and write to file cache
+- [slackutils](../go/goutils/slackutils/) - Code to interact with slack workflow
+- [datamodel](../go/goutils/datamodel/) - Data models used across services
+- [ipfsutils](../go/goutils/ipfsutils/) - IPFS client initialization and common functionality
+- [commonutils](../go/goutils/commonutils/) - Other miscellaneous utils
 
 Following services are written in Golang
 
