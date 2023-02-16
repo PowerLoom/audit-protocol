@@ -20,12 +20,12 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 
-	"github.com/powerloom/audit-prototol-private/goutils/commonutils"
-	"github.com/powerloom/audit-prototol-private/goutils/ipfsutils"
-	"github.com/powerloom/audit-prototol-private/goutils/logger"
-	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
-	"github.com/powerloom/audit-prototol-private/goutils/settings"
-	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+	"audit-protocol/goutils/commonutils"
+	"audit-protocol/goutils/ipfsutils"
+	"audit-protocol/goutils/logger"
+	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/slackutils"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -79,7 +79,7 @@ const DAG_CHAIN_STORAGE_TYPE_PENDING string = "pending"
 func main() {
 
 	logger.InitLogger()
-	settingsObj = settings.ParseSettings("../settings.json")
+	settingsObj = settings.ParseSettings()
 	SetDefaultPruneConfig()
 	ipfsUrl := settingsObj.IpfsConfig.ReaderURL
 	if ipfsUrl == "" {

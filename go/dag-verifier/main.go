@@ -15,12 +15,12 @@ import (
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
-	"github.com/powerloom/audit-prototol-private/goutils/ipfsutils"
-	"github.com/powerloom/audit-prototol-private/goutils/logger"
-	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
-	"github.com/powerloom/audit-prototol-private/goutils/settings"
-	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/ipfsutils"
+	"audit-protocol/goutils/logger"
+	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/slackutils"
 )
 
 var ipfsClient ipfsutils.IpfsClient
@@ -30,7 +30,7 @@ var settingsObj *settings.SettingsObj
 
 func main() {
 	logger.InitLogger()
-	settingsObj = settings.ParseSettings("../settings.json")
+	settingsObj = settings.ParseSettings()
 	dagVerifier.Initialize(settingsObj)
 	var wg sync.WaitGroup
 

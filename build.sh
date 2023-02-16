@@ -1,7 +1,6 @@
 echo "Building common utils"
-cd goutils
+cd go
 go build ./...
-cd ../
 
 echo "Building Pruning Service"
 cd pruning-archival

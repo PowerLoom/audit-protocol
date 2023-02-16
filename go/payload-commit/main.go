@@ -22,12 +22,12 @@ import (
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
 
-	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
-	"github.com/powerloom/audit-prototol-private/goutils/filecache"
-	"github.com/powerloom/audit-prototol-private/goutils/ipfsutils"
-	"github.com/powerloom/audit-prototol-private/goutils/logger"
-	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
-	"github.com/powerloom/audit-prototol-private/goutils/settings"
+	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/filecache"
+	"audit-protocol/goutils/ipfsutils"
+	"audit-protocol/goutils/logger"
+	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/settings"
 )
 
 var ctx = context.Background()
@@ -131,12 +131,12 @@ type ConstsObj struct {
 }
 
 func ParseSettings() {
-	settingsObj = settings.ParseSettings("../settings.json")
+	settingsObj = settings.ParseSettings()
 	if settingsObj.UseConsensus && settingsObj.InstanceId == "" {
 		log.Fatalf("InstanceID is set to null, please generate and set a unique instanceID")
 		os.Exit(1)
 	}
-	ParseConsts("../dev_consts.json")
+	ParseConsts(os.Getenv("CONFIG_PATH") + "/dev_consts.json")
 }
 
 func main() {

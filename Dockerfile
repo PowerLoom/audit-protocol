@@ -12,21 +12,23 @@ RUN apk update && apk add --no-cache ethtool nodejs npm bash gcc musl-dev libc-d
 
 RUN npm install pm2 -g
 
-WORKDIR /go/src/github.com/powerloom/audit-protocol-private/goutils
+#WORKDIR /go/src/github.com/powerloom/audit-protocol
+#WORKDIR /audit-protocol
 
 #Copy the Go module files and download the dependencies
-COPY goutils/go.mod goutils/go.sum ./
-RUN go mod download
-COPY pruning-archival/go.mod pruning-archival/go.sum ./
-RUN go mod download
-COPY payload-commit/go.mod payload-commit/go.sum ./
-RUN go mod download
-COPY dag-verifier/go.mod dag-verifier/go.sum ./
-RUN go mod download
-COPY token-aggregator/go.mod token-aggregator/go.sum ./
-RUN go mod download
+
+#COPY pruning-archival/go.mod pruning-archival/go.sum ./
+#RUN go mod download
+#COPY payload-commit/go.mod payload-commit/go.sum ./
+#RUN go mod download
+#COPY dag-verifier/go.mod dag-verifier/go.sum ./
+#RUN go mod download
+#COPY token-aggregator/go.mod token-aggregator/go.sum ./
+#RUN go mod download
 
 WORKDIR /src
+COPY go/go.mod go/go.sum ./
+RUN go mod download
 # Copy the application's dependencies files
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt

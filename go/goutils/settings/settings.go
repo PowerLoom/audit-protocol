@@ -145,10 +145,11 @@ type ConsensusConfig_ struct {
 	PollingIntervalSecs int           `json:"polling_interval_secs"`
 }
 
-func ParseSettings(settingsFile string) *SettingsObj {
+func ParseSettings() *SettingsObj {
+	SETTINGS_FILE_PATH := os.Getenv("CONFIG_PATH") + "/settings.json"
 	var settingsObj SettingsObj
-	log.Info("Reading Settings:", settingsFile)
-	data, err := os.ReadFile(settingsFile)
+	log.Info("Reading Settings:", SETTINGS_FILE_PATH)
+	data, err := os.ReadFile(SETTINGS_FILE_PATH)
 	if err != nil {
 		log.Error("Cannot read the file:", err)
 		panic(err)

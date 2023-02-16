@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
-	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/slackutils"
 
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"

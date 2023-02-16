@@ -20,11 +20,11 @@ import (
 	"github.com/web3-storage/go-w3s-client"
 	"golang.org/x/time/rate"
 
-	"github.com/powerloom/audit-prototol-private/goutils/commonutils"
-	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
-	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
-	"github.com/powerloom/audit-prototol-private/goutils/settings"
-	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+	"audit-protocol/goutils/commonutils"
+	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/slackutils"
 )
 
 type ProjectPruningVerificationStatus struct {

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
+	"audit-protocol/goutils/datamodel"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"

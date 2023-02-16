@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
-	"github.com/powerloom/audit-prototol-private/goutils/filecache"
-	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
-	"github.com/powerloom/audit-prototol-private/goutils/settings"
-	"github.com/powerloom/audit-prototol-private/goutils/slackutils"
+	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/filecache"
+	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/slackutils"
 
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"

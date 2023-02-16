@@ -17,9 +17,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/powerloom/audit-prototol-private/goutils/logger"
-	"github.com/powerloom/audit-prototol-private/goutils/redisutils"
-	"github.com/powerloom/audit-prototol-private/goutils/settings"
+	"audit-protocol/goutils/logger"
+	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/settings"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -39,8 +39,7 @@ type TokenDataRefs struct {
 	token1Ref *TokenData
 }
 
-const settingsFile string = "../settings.json"
-const pairContractListFile string = "../static/cached_pair_addresses.json"
+const pairContractListFile string = "/static/cached_pair_addresses.json"
 const TOKENSUMMARY_PROJECTID string = "uniswap_V2TokensSummarySnapshot_%s"
 const PAIRSUMMARY_PROJECTID string = "uniswap_V2PairsSummarySnapshot_%s"
 const DAILYSTATSSUMMARY_PROJECTID string = "uniswap_V2DailyStatsSnapshot_%s"
@@ -836,9 +835,9 @@ func PopulatePairContractList(pairContractAddr string) {
 		pairContracts[0] = pairContractAddr
 		return
 	}
-
-	log.Info("Reading contracts:", pairContractListFile)
-	data, err := os.ReadFile(pairContractListFile)
+	pairContractsPath := os.Getenv("CONFIG_PATH") + pairContractListFile
+	log.Info("Reading contracts:", pairContractsPath)
+	data, err := os.ReadFile(pairContractsPath)
 	if err != nil {
 		log.Error("Cannot read the file:", err)
 		panic(err)
@@ -854,8 +853,7 @@ func PopulatePairContractList(pairContractAddr string) {
 
 func ReadSettings() {
 
-	log.Info("Reading Settings:", settingsFile)
-	settingsObj = settings.ParseSettings(settingsFile)
+	settingsObj = settings.ParseSettings()
 	if settingsObj.TokenAggregatorSettings.RunIntervalSecs == 0 {
 		settingsObj.TokenAggregatorSettings.RunIntervalSecs = 60
 	}

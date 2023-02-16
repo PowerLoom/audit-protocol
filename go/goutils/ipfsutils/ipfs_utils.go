@@ -10,8 +10,8 @@ import (
 
 	shell "github.com/ipfs/go-ipfs-api"
 	ma "github.com/multiformats/go-multiaddr"
-	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
-	"github.com/powerloom/audit-prototol-private/goutils/settings"
+	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/settings"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )

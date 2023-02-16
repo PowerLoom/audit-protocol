@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/powerloom/audit-prototol-private/goutils/datamodel"
+	"audit-protocol/goutils/datamodel"
 
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
