@@ -26,7 +26,7 @@ The supplementary services are :
 
 Here is a very high level-diagram of the audit-protocol components and their interactions:
 
-![audit-protocol-architecture](AuditProtocolArchitecture.png)
+![audit-protocol-architecture](images/AuditProtocolArchitecture.png)
 
 ## Glossary of Key Terms
 
@@ -75,7 +75,7 @@ The `timestamp` field in a DAG block is the block timestamp of the latest block 
   in which snapshots are to be finalized (one of the most common ways to achieve ordering in a distributed system).
   4. TentativeHeight is assigned tentatively for a snapshot until it is validated, stored and anchored onto the chain.
   5. Finalized Height is the height at which the finalized snapshot along with proof is added as a DAG Block onto the DAG Chain.
-![DAG_Block_Chain](DAG_Block_Chain.jpg)
+![DAG_Block_Chain](images/DAG_Block_Chain.jpg)
 
 
 ### Tentative Block Height
@@ -119,7 +119,7 @@ The payload commit service has following high level functionalities:
 
 **Call Flow for payload-commit service**
 
-![Call Flow](PayloadCommit_CallFlow.png)
+![Call Flow](images/PayloadCommit_CallFlow.png)
 
 Code for this service is located at [payload-commit](../go/payload-commit/)
 
@@ -140,7 +140,7 @@ the received events in order to ensure DAG chain gets created based on the tenta
 
 **Call-flow of dag-finalizer service**
 
-![Call Flow](DAGFinalizer_CallFlow.png)
+![Call Flow](images/DAGFinalizer_CallFlow.png)
 
 ## DAG Verifier
 
@@ -160,7 +160,7 @@ Refer to [94](https://github.com/PowerLoom/audit-protocol-private/issues/94) for
 
 **Call-flow of  pruning-archival service**
 
-![Call Flow](PruningArchival_CallFlow.png)
+![Call Flow](images/PruningArchival_CallFlow.png)
 
 Code for this service is located at [pruning-archival](../go/pruning-archival)
 
@@ -179,7 +179,7 @@ Refer [Daily Stats Aggregation](https://www.notion.so/powerloom/PowerLoom-Protoc
 
 **Overview of interaction between indexers and aggregators**
 
-![diagram](IndexingAggregation.png)
+![diagram](images/IndexingAggregation.png)
 
 Code for this service is located at [indexer](../proto_sliding_window_cacher_service.py),
 [pair-aggregator](../pair_data_aggregation_service.py) and
@@ -213,7 +213,7 @@ Note: If the dag-chain structure changes, then code has to be modified to work w
 
 **Call-flow of token-aggregator service**
 
- ![Call Flow](TokenAggregator_CallFlow.png)
+ ![Call Flow](images/TokenAggregator_CallFlow.png)
 
 Code for this service is located at [token-aggregator](../go/token-aggregator/)
 

@@ -12,8 +12,8 @@ DAG Verifier service performs following functions:
 
 In order to receive notifications, a slack workflow has to be setup and the webhook URL has to be configured in audit-protocol configuration. Steps to create and configure the workflow are defined [here](#configuring-slack-notifications).
 
-[DAG Verification Call Flow](../../docs/DAGVerifier_CallFlow.png)
-[Archival Verification Call Flow](../../docs/PruningVerifier_CallFlow.png)
+[DAG Verification Call Flow](../../docs/images/DAGVerifier_CallFlow.png)
+[Archival Verification Call Flow](../../docs/images/PruningVerifier_CallFlow.png)
 
 # Configuring Settings
 * Following section lists down all the settings along with defaults used by dag-verifier service.

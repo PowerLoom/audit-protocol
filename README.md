@@ -13,7 +13,7 @@
 
 ## Overview
 
-![Audit-protocol workflow](docs/AuditProtocolOverview.png)
+![Audit-protocol workflow](docs/images/AuditProtocolOverview.png)
 Audit-Protocol is the component of a fully functional, distributed system that works alongside Pooler, off-chain consensus and together they are responsible for
 * generating a time series database of changes occurring over smart contract state data and event logs, that live on decentralized storage protocols
 * higher order aggregated information calculated over decentralized indexes maintained atop the database mentioned above
@@ -136,7 +136,7 @@ Audit protocol provides various endpoints which helps in users utilizing the bas
 * Committing sequence of Snapshots pertaining to the project
 * Query [DAG blocks](https://www.notion.so/powerloom/PowerLoom-Protocol-Overview-c3bf9dd9323541118d46a4d8684565d1?pvs=4#ef64620a4a6b4a45808f25a0556b9794) and payloads stored for the project
 
-A high level user-interaction workflow is depicted in the diagram [ap-usage](docs/AuditProtocolUsage.png)
+A high level user-interaction workflow is depicted in the diagram [ap-usage](docs/images/AuditProtocolUsage.png)
 
 You can get more details about these endpoints in the [postman collection](Backend_API_Postman_Collection.json).
 
