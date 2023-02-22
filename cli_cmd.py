@@ -22,11 +22,11 @@ app = typer.Typer()
 
 
 @app.command()
-def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2-ph15-prod", "--namespace"), projectId: str = typer.Option(None, "--projectId")):
+def projectStatus(namespace: str = typer.Option("", "--namespace"), projectId: str = typer.Option(None, "--projectId")):
     r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True)
 
     index_status = None
-    key = 'projects-test:IndexStatus'
+    key = 'projects:IndexStatus'
     if projectId:
         index_status = r.hget(key, projectId)
         if not index_status:
@@ -36,23 +36,46 @@ def projectIndexStatus(namespace: str = typer.Option("UNISWAPV2-ph15-prod", "--n
     else:
         index_status = r.hgetall(key)
         if not index_status:
-            console.log(f"\n[bold red]Indexes map doesn't exist [bold red]: 'projects:{namespace}:IndexStatus'\n")
+            console.log("\n[bold red]Indexes map doesn't exist [bold red]: 'projects:IndexStatus'\n")
             return
         index_status = dict(filter(lambda elem: namespace in elem[0].decode('utf-8'), index_status.items()))
         index_status = [{k.decode('utf-8'): v.decode('utf-8')} for k, v in index_status.items()]
 
     table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("ProjecId", justify="center")
-    table.add_column("Start source chain height", justify="center")
-    table.add_column("Current source chain height", justify="center")
+    table.add_column("ProjectId", justify="center")
+    table.add_column("First Epoch Start Height", justify="center")
+    table.add_column("Current Epoch End Height", justify="center")
+    table.add_column("Dag chain issues", justify="center")
+    table.add_column("Epochs pending finalization", justify="center")
 
     for project_indexes in index_status:
         k, v = project_indexes.popitem()
         v = json.loads(v)
+
+        chain_issues_key = f"projectID:{k}:dagChainGaps"
+        chain_issues = r.zrangebyscore(
+            chain_issues_key,
+            min='-inf',
+            max='+inf',
+            withscores=True)
+
+        finalized_height_key = f"projectID:{k}:blockHeight"
+        finalized_height=r.get(finalized_height_key)
+
+        payload_cids_key = f"projectID:{k}:payloadCids"
+        payload_cids = r.zrangebyscore(
+            payload_cids_key,
+            min=finalized_height,
+            max='+inf',
+            withscores=True)
+        unfinalized_epochs = int(len(payload_cids)/2)
+
         table.add_row(
             Text(k, justify="left", overflow="ellipsis"),
             str(v["startSourceChainHeight"]),
             str(v["currentSourceChainHeight"]),
+            str(int(len(chain_issues)/2)),
+            str(unfinalized_epochs)
         )
 
     console.print(table)

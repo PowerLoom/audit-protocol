@@ -1,20 +1,19 @@
 echo "Building common utils"
-cd goutils
+cd go
 go build ./...
-cd ../
 
 echo "Building Pruning Service"
-cd go-pruning-archival-service
+cd pruning-archival
 go build .
 cd ../
 
 echo "Building Payload Commit Service"
-cd go-payload-commit-service
+cd payload-commit
 go build .
 
 cd ../
 echo "Building DAG Verifier Service"
-cd dag_verifier
+cd dag-verifier
 go build .
 
 cd ../

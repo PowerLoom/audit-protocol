@@ -40,23 +40,25 @@ module.exports = {
     },
     {
       name   : "ap-payload-commit",
-      script : "./payloadCommitService",
-      cwd : `${__dirname}/go-payload-commit-service`,
+      script : "./payload-commit",
+      cwd : `${__dirname}/go/payload-commit`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
       env: {
-        NODE_ENV: NODE_ENV
+        NODE_ENV: NODE_ENV,
+        CONFIG_PATH:`${__dirname}`
       },
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
     {
       name   : "ap-token-aggregator",
-      script : "./uniswapTokenData",
-      cwd : `${__dirname}/token-aggregator`,
+      script : "./token-aggregator",
+      cwd : `${__dirname}/go/token-aggregator`,
       max_restarts: MAX_RESTART,
       env: {
         NODE_ENV: NODE_ENV,
+        CONFIG_PATH:`${__dirname}`
       },
       args: "5"
     },
@@ -72,25 +74,27 @@ module.exports = {
     },
     {
       name   : "ap-dag-verifier",
-      script : "./dagChainVerifier",
-      cwd : `${__dirname}/dag_verifier`,
+      script : "./dag-verifier",
+      cwd : `${__dirname}/go/dag-verifier`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV,
+        CONFIG_PATH:`${__dirname}`
       },
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
     {
       name   : "ap-pruning-archival-service",
-      script : "./pruningArchivalService",
-      cwd : `${__dirname}/go-pruning-archival-service`,
+      script : "./pruning-archival",
+      cwd : `${__dirname}/go/pruning-archival`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV,
+        CONFIG_PATH:`${__dirname}`
       },
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     }

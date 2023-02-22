@@ -12,21 +12,9 @@ RUN apk update && apk add --no-cache ethtool nodejs npm bash gcc musl-dev libc-d
 
 RUN npm install pm2 -g
 
-WORKDIR /go/src/github.com/powerloom/goutils
-
-# Copy the Go module files and download the dependencies
-COPY goutils/go.mod goutils/go.sum ./
-RUN go mod download
-COPY go-pruning-archival-service/go.mod go-pruning-archival-service/go.sum ./
-RUN go mod download
-COPY go-payload-commit-service/go.mod go-payload-commit-service/go.sum ./
-RUN go mod download
-COPY dag_verifier/go.mod dag_verifier/go.sum ./
-RUN go mod download
-COPY token-aggregator/go.mod token-aggregator/go.sum ./
-RUN go mod download
-
 WORKDIR /src
+COPY go/go.mod go/go.sum ./
+RUN go mod download
 # Copy the application's dependencies files
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt
@@ -38,5 +26,6 @@ EXPOSE 9002
 EXPOSE 9030
 
 COPY . .
+RUN ./build.sh
 
 RUN chmod +x init_processes.sh snapshotter_autofill.sh
