@@ -1,0 +1,18 @@
+@startuml "Monitoring Service flow"
+
+collections AuditProtocolServices as audit
+collections FpmmPoolerServices as pooler 
+participant DAGVerifierService as mon
+database Redis as redis
+participant "Monitoring-CLI/GUI" as monif
+
+
+== Services write failureData to redis ==
+note right of audit 
+Prune records which are processed successfully, but leave failed records as is.
+end note
+audit -> redis : Record Failure Data in redis after max-retries. \n e.g: Failure to commit payload to IPFS.
+pooler -> redis : Record Failure Data in redis after max-retries \n e.g: Failure to get logs from blockchain for epoch.
+mon -> redis : Record gaps in the chain as and when identified. 
+
+

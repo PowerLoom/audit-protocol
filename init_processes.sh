@@ -2,8 +2,6 @@
 
 export PYTHONPATH=$(pwd)
 
-./build.sh
-
 python init_rabbitmq.py
 
 echo 'starting pm2...';
