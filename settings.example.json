@@ -1,144 +1,158 @@
 {
-	"host": "127.0.0.1",
-	"port": 9000,
-	"keepalive_secs": 600,
-	"webhook_listener": {
-		"host": "127.0.0.1",
+	"instance_id": "generated-uuid",
+	"pooler_namespace": "relevant-namespace",
+	"rpc_url": "https://rpc-url",
+	"local_cache_path": "/home/ubuntu/local_cache/",
+	"ap_backend": {
+		"host": "0.0.0.0",
+		"port": 9000,
+		"keepalive_secs": 600
+	},
+	"dag_finalizer": {
+		"host": "0.0.0.0",
 		"port": 9002,
 		"validate_header_sig": false,
-		"keepalive_secs": 600,
-		"redis_lock_lifetime": 30,
-		"rate_limit" :{
-			"req_per_sec": 50,
-			"burst": 20
-		}
+		"keepalive_secs": 600
 	},
-	"rpc_url": "https://<rpc-url>/****",
 	"rabbitmq": {
 		"user": "guest",
 		"password": "guest",
-		"host": "localhost",
+		"host": "rabbitmq",
 		"port": 5672,
 		"setup": {
 			"core": {
 				"exchange": "audit-protocol-backend"
+			},
+			"queues": {
+				"commit-payloads": {
+					"queue_name_prefix": "audit-protocol-commit-payloads:",
+					"routing_key_prefix": "commit-payloads:"
+				},
+				"dag-processing": {
+					"queue_name_prefix": "audit-protocol-dag-processing:",
+					"routing_key_prefix": "dag-processing:"
+				}
 			}
 		}
 	},
 	"contract_addresses": {
-		"iuniswap_v2_factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-		"iuniswap_v2_router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-		"iuniswap_v2_pair": "0x3356c9A8f40F8E9C1d192A4347A76D18243fABC5",
-		"USDT": "0xdac17f958d2ee523a2206206994597c13d831ec7",
-		"DAI": "0x6b175474e89094c44da98b954eedeac495271d0f",
-		"USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-		"WETH": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
 		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
 	},
-	"ipfs_url": "/ip4/192.168.99.100/tcp/5001",
-	"ipfs_rate_limit" :{
-		"req_per_sec": 100,
-		"burst": 100
+	"ipfs": {
+		"url": "/dns/ipfs/tcp/5001",
+		"reader_url": "/dns/ipfs/tcp/5001",
+		"write_rate_limit": {
+			"req_per_sec": 10,
+			"burst": 10
+		},
+		"timeout": 20
 	},
-	"ipfs_reader_url":"/ip4/192.168.99.100/tcp/5001",
-	"snapshot_interval": 4,
-	"contract_call_backend": "http://127.0.0.1:8888/writer",
-	"contract_rate_limit" :{
-		"req_per_sec": 50,
-		"burst": 50
+	"txn_config": {
+		"url": "http://host.docker.internal:8085/commitRecord",
+		"rate_limit": {
+			"req_per_sec": 10,
+			"burst": 10
+		},
+		"skip_summary_projects_anchor_proof": true
 	},
-	"retry_count": 10,
-	"retry_interval_secs":5,
+	"retry_count": 3,
+	"retry_interval_secs": 5,
 	"http_client_timeout_secs": 10,
-	"seed": "THISISRANDOMSEED",
-	"REDIS": {
-		"HOST": "127.0.0.1",
-		"PORT": 6379,
-		"DB": 0,
-		"PASSWORD": null
+	"redis": {
+		"host": "redis",
+		"port": 6379,
+		"db": 0,
+		"password": null
 	},
- 	"redis_reader": {
-      "host": "127.0.0.1",
-      "port": 6379,
-      "db": 0,
-      "password": null
-    },
+	"redis_reader": {
+		"host": "redis",
+		"port": 6379,
+		"db": 0,
+		"password": null
+	},
 	"rlimit": {
 		"file_descriptors": 2048
 	},
-	"table_names": {
-		"api_keys": "api_keys",
-		"accounting_records": "accounting_records",
-		"retreivals_single":"retreivals_single",
-		"retreivals_bulk":"retreivals_bulk"
+	"payload_commit": {
+		"concurrency": 20,
+		"dag_finalizer_rate_limit": {
+			"req_per_sec": 50,
+			"burst": 20
+		}
 	},
-	"audit_contract" : "0x54474092d52b6cb3003ca8a0eda912db6035e6a5",
-	"aiohtttp_timeouts": {
-		"sock_read": 5,
-		"sock_connect": 5,
-		"connect": 5
-	},
-	"payload_commit_concurrency": 20,
-	"local_cache_path":"/home/ubuntu/local_cache/",
-	"ipfs_timeout": 20,
-	"calculate_diff": false,
-	"web3_storage":{
-		"url":"https://api.web3.storage",
-		"upload_url_suffix":"/upload",
-		"api_token":"",
+	"web3_storage": {
+		"url": "https://api.web3.storage",
+		"upload_url_suffix": "/upload",
+		"api_token": "web3-storage-token",
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
-		"idle_conn_timeout":0,
-		"rate_limit" :{
+		"idle_conn_timeout": 0,
+		"rate_limit": {
 			"req_per_sec": 3,
 			"burst": 6
 		}
 	},
-	"dag_verifier":{
-		"slack_notify_URL":"",
-		"notify_suppress_time_secs":1800,
+	"dag_verifier": {
+		"host": "0.0.0.0",
+		"port": 9030,
+		"slack_notify_URL": "",
+		"notify_suppress_time_secs": 1800,
 		"concurrency": 10,
-		"ipfs_rate_limit" :{
+		"ipfs_rate_limit": {
 			"req_per_sec": 10,
 			"burst": 10
 		},
-		"redis_pool_size":20,
+		"redis_pool_size": 20,
 		"run_interval_secs": 300,
-		"additional_projects_to_track_prefixes" :[
+		"additional_projects_to_track_prefixes": [
 			"uniswap_V2PairsSummarySnapshot",
 			"uniswap_V2TokensSummarySnapshot",
 			"uniswap_V2DailyStatsSnapshot"
 		],
 		"pruning_verification": false
 	},
-	"pruning":{
+	"pruning": {
 		"run_interval_mins": 600,
 		"segment_size": 720,
-		"concurrency":20,
-		"car_storage_path":"/tmp/",
-		"ipfs_rate_limit":{
-			"req_per_sec": 20,
-			"burst": 20
+		"concurrency": 1,
+		"car_storage_path": "/tmp/",
+		"ipfs_rate_limit": {
+			"req_per_sec": 10,
+			"burst": 10
 		},
 		"ipfs_timeout_secs": 300,
-		"perform_archival": true,
+		"perform_archival": false,
 		"perform_ipfs_unpin": true,
-		"prune_redis_zsets":true,
+		"prune_redis_zsets": true,
 		"backup_redis_zsets_to_file": false,
 		"oldest_project_index": "7d",
 		"pruning_height_behind_oldest_index": 100,
 		"summary_projects_prune_height_behind_head": 1000,
-		"web3_storage" : {
-			"timeout_secs":600,
-			"rate_limit" :{
+		"web3_storage": {
+			"timeout_secs": 600,
+			"rate_limit": {
 				"req_per_sec": 1,
 				"burst": 1
 			},
 			"upload_chunk_size_mb": 50
 		}
 	},
-	"token_aggregator":{
+	"use_consensus": true,
+	"consensus_config": {
+		"service_url": "https://consensus-url",
+		"rate_limit": {
+			"req_per_sec": 5,
+			"burst": 5
+		},
+		"timeout_secs": 30,
+		"max_idle_conns": 5,
+		"idle_conn_timeout": 0,
+		"finalization_wait_time_secs": 300,
+		"polling_interval_secs": 10
+	},
+	"token_aggregator": {
 		"port": 8000,
-		"run_interval_secs": 60
+		"run_interval_secs": 60,
+		"ap_host": "localhost"
 	}
 }

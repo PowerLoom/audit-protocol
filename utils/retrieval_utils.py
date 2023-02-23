@@ -2,7 +2,6 @@ from eth_utils import keccak
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils import helper_functions
-from utils import dag_utils
 from redis import asyncio as aioredis
 import json
 import logging
@@ -206,13 +205,19 @@ async def retrieve_block_data(
     #     retrieval_utils_logger.debug(r)
 
     block = await get_dag_block(block_dag_cid, project_id, ipfs_read_client=ipfs_read_client)
-    if data_flag == 0:
+    # handle case of no dag_block or null payload in dag_block
+    if data_flag == 0 or block is None or 'data' not in block:
         return block
     payload = dict()
     """ Get the payload Data """
-    payload_data = await retrieve_payload_data(block['data']['cid']['/'], project_id)
-
-    payload_data = json.loads(payload_data)
+    payload_data = await retrieve_payload_data(
+                    payload_cid=block['data']['cid']['/'],
+                    project_id=project_id,
+                    ipfs_read_client=ipfs_read_client
+    )
+    # handle case of null payload in dag_block
+    if payload_data:
+        payload_data = json.loads(payload_data)
     payload['payload'] = payload_data
     payload['cid'] = block['data']['cid']['/']
 
@@ -268,7 +273,10 @@ async def retrieve_payload_data(
         payload_cid,project_id)
         # Get the payload Data from ipfs
         _payload_data = await ipfs_read_client.cat(payload_cid)
-        payload_data = _payload_data.decode('utf-8')
+        if not isinstance(_payload_data,str):
+            payload_data = _payload_data.decode('utf-8')
+        else:
+            payload_data = _payload_data
 
     return payload_data
 
@@ -278,7 +286,6 @@ async def get_dag_block_by_height(
         ipfs_read_client: AsyncIPFSClient
         ):
     dag_block = {}
-
     dag_cid = await helper_functions.get_dag_cid(
         project_id=project_id,
         block_height=block_height,

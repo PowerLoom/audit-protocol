@@ -4,6 +4,14 @@ def get_payload_commit_key(payload_commit_id: str):
     return payload_commit_key
 
 
+def get_project_first_epoch_end_height(project_id):
+    return f'projectID:{project_id}:firstEpochEndHeight'
+
+
+def get_project_epoch_size(project_id):
+    return f'projectID:{project_id}:epochSize'
+
+
 def get_pending_retrieval_requests_key():
     pending_retrieval_requests_key = "pendingRetrievalRequests"
     return pending_retrieval_requests_key
@@ -191,61 +199,58 @@ def get_cached_containers_key(container_id: str):
 def get_projects_registered_for_cache_indexing_key():
     return 'cache:indexesRequested'
 
-
-#TODO: THIS IS REALLY BAD MAKE A REDIS KEY FILE like FpmmPooler and shift atleat below keys to it
-NAMESPACE = 'UNISWAPV2'
-
+def get_uniswap_pair_contract_tokens_data(pair_address, pooler_namespace):
+    return 'uniswap:pairContract:'+pooler_namespace+':{}:PairContractMetaData'.format(pair_address)
 
 
-def get_uniswap_pair_contract_tokens_data(pair_address):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:PairContractMetaData'.format(pair_address)
+def get_uniswap_pair_contract_V2_pair_data(pair_address, pooler_namespace):
+    return 'uniswap:pairContract:'+pooler_namespace+':{}:contractV2PairCachedData'.format(pair_address)
 
 
-def get_uniswap_pair_contract_V2_pair_data(pair_address):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:contractV2PairCachedData'.format(pair_address)
+def get_uniswap_pair_snapshot_last_block_height(pooler_namespace):
+    return 'uniswap:V2PairsSummarySnapshot:'+pooler_namespace+':lastBlockHeight'
 
 
-def get_uniswap_pair_snapshot_last_block_height():
-    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':lastBlockHeight'
+def get_uniswap_pair_snapshot_summary_zset(pooler_namespace):
+    return 'uniswap:V2PairsSummarySnapshot:'+pooler_namespace+':snapshotsZset'
+
+def get_uniswap_pair_snapshot_payload_at_blockheight(block_height, pooler_namespace):
+    return 'uniswap:V2PairsSummarySnapshot:'+pooler_namespace+f':snapshot:{block_height}'
+
+def get_uniswap_pair_daily_stats_snapshot_zset(pooler_namespace):
+    return 'uniswap:V2DailyStatsSnapshot:'+pooler_namespace+':snapshotsZset'
+
+def get_uniswap_pair_daily_stats_payload_at_blockheight(block_height, pooler_namespace):
+    return 'uniswap:V2DailyStatsSnapshot:'+pooler_namespace+f':snapshot:{block_height}'
 
 
-def get_uniswap_pair_snapshot_summary_zset():
-    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':snapshotsZset'
+def get_uniswap_pairs_summary_snapshot_project_id(pooler_namespace):
+    return 'uniswap_V2PairsSummarySnapshot_'+pooler_namespace
 
-def get_uniswap_pair_snapshot_payload_at_blockheight(block_height):
-    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+f':snapshot:{block_height}'
+def get_uniswap_pairs_v2_daily_snapshot_project_id(pooler_namespace):
+    return 'uniswap_V2DailyStatsSnapshot_'+pooler_namespace
 
-def get_uniswap_pair_daily_stats_snapshot_zset():
-    return 'uniswap:V2DailyStatsSnapshot:'+NAMESPACE+':snapshotsZset'
-
-def get_uniswap_pair_daily_stats_payload_at_blockheight(block_height):
-    return 'uniswap:V2DailyStatsSnapshot:'+NAMESPACE+f':snapshot:{block_height}'
+def get_uniswap_pair_snapshot_timestamp_zset(pooler_namespace):
+    return 'uniswap:V2PairsSummarySnapshot:'+pooler_namespace+':snapshotTimestampZset'
 
 
-def get_uniswap_pairs_summary_snapshot_project_id():
-    return 'uniswap_V2PairsSummarySnapshot_'+NAMESPACE
-
-def get_uniswap_pairs_v2_daily_snapshot_project_id():
-    return 'uniswap_V2DailyStatsSnapshot_'+NAMESPACE
-
-def get_uniswap_pair_snapshot_timestamp_zset():
-    return 'uniswap:V2PairsSummarySnapshot:'+NAMESPACE+':snapshotTimestampZset'
+def get_uniswap_pair_cached_token_price(pair_symbol, pooler_namespace):
+    return 'uniswap:pairContract:'+pooler_namespace+':{}:cachedPairPrice'.format(pair_symbol)
 
 
-def get_uniswap_pair_cached_token_price(pair_symbol):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:cachedPairPrice'.format(pair_symbol)
+def get_uniswap_pair_cached_recent_logs(pair_address, pooler_namespace):
+    return 'uniswap:pairContract:'+pooler_namespace+':{}:recentLogs'.format(pair_address)
 
 
-def get_uniswap_pair_cached_recent_logs(pair_address):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:recentLogs'.format(pair_address)
+def get_uniswap_pair_cache_daily_stats(pair_address, pooler_namespace):
+    return 'uniswap:pairContract:'+pooler_namespace+':{}:dailyCache'.format(pair_address)
 
 
-def get_uniswap_pair_cache_daily_stats(pair_address):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:dailyCache'.format(pair_address)
+def get_uniswap_pair_cache_sliding_window_data(pair_address, pooler_namespace):
+    return 'uniswap:pairContract:'+pooler_namespace+':{}:slidingWindowData'.format(pair_address)
 
+def get_uniswap_projects_dag_verifier_status():
+    return "projects:dagVerificationStatus"
 
-def get_uniswap_pair_cache_sliding_window_data(pair_address):
-    return 'uniswap:pairContract:'+NAMESPACE+':{}:slidingWindowData'.format(pair_address)
-
-def get_uniswap_projects_dag_verifier_status(current_namespace):
-    return "projects:"+current_namespace+":dagVerificationStatus"
+def get_projects_registered_for_cache_indexing_key_with_namespace(pooler_namespace):
+    return f'cache:indexesRequested:{pooler_namespace}'

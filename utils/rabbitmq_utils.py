@@ -22,6 +22,16 @@ stderr_handler.setFormatter(formatter)
 logger.addHandler(stdout_handler)
 logger.addHandler(stderr_handler)
 
+def get_rabbitmq_routing_key(queueType: str):
+    return settings.rabbitmq.setup.queues[queueType].routing_key_prefix + settings.instance_id
+
+def get_rabbitmq_queue_name(queueType: str):
+    return settings.rabbitmq.setup.queues[queueType].queue_name_prefix + settings.instance_id
+
+def get_rabbitmq_core_exchange():
+    return settings.rabbitmq.setup.core.exchange
+
+
 
 async def get_rabbitmq_connection():
     return await aio_pika.connect_robust(

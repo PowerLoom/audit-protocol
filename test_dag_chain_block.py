@@ -44,7 +44,7 @@ async def get_payload_cid_output(cid, ipfs_read_client: AsyncIPFSClient):
 
 
 async def verify_dag_block_calculations(dag_cid):
-    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs.url)
     await ipfs_client.init_session()
     aioredis_pool = RedisPool()
     await aioredis_pool.populate()
@@ -55,7 +55,12 @@ async def verify_dag_block_calculations(dag_cid):
     payload_cid = dagBlockData['data']['cid']
     payloadData = await get_payload_cid_output(payload_cid, ipfs_client)
 
-    pair_tokens_data = await redis_read_conn.hgetall(redis_keys.get_uniswap_pair_contract_tokens_data(Web3.toChecksumAddress(payloadData['contract'])))
+    pair_tokens_data = await redis_read_conn.hgetall(
+        redis_keys.get_uniswap_pair_contract_tokens_data(
+            Web3.toChecksumAddress(payloadData['contract']),
+            settings.pooler_namespace
+            )
+        )
     token0_symbol = pair_tokens_data[b"token0_symbol"].decode('utf-8') if pair_tokens_data else "Token0"
     token1_symbol = pair_tokens_data[b"token1_symbol"].decode('utf-8') if pair_tokens_data else "Token1"
 
@@ -73,9 +78,9 @@ async def verify_dag_block_calculations(dag_cid):
     for log in payloadData['recent_logs']:
         ts = int(round(datetime.now().timestamp())) - log["timestamp"]
         table.add_row(
-            log["event"], 
-            str(round(log["token0_amount"], 2)), 
-            str(round(log["token1_amount"], 2)), 
+            log["event"],
+            str(round(log["token0_amount"], 2)),
+            str(round(log["token1_amount"], 2)),
             str(round(log["trade_amount_usd"], 2)),
             pretty_relative_time(ts)
         )
@@ -91,9 +96,9 @@ async def verify_dag_block_calculations(dag_cid):
     console.print("[bold magenta]Timestamp:[/bold magenta]", str(payloadData['timestamp']))
     console.print("\n")
 
-        
+
 async def verify_trade_volume_cids(data_cid):
-    ipfs_client = AsyncIPFSClient(addr=settings.ipfs_url)
+    ipfs_client = AsyncIPFSClient(addr=settings.ipfs.url)
     await ipfs_client.init_session()
     data = await get_payload_cid_output(data_cid, ipfs_client)
     trade_volume_24h_cids = data['resultant']['trade_volume_24h_cids']

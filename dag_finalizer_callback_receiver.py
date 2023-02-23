@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Response, Header
-from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
+from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_core_exchange, get_rabbitmq_routing_key
 from config import settings
 from utils import dag_utils
 from aio_pika import ExchangeType, DeliveryMode, Message
@@ -72,7 +72,7 @@ async def handle_dag_cb(
                 # always ensure exchanges and queues are initialized as part of launch sequence,
                 # not to be checked here
                 exchange = await channel.get_exchange(
-                    name=settings.rabbitmq.setup['core']['exchange'],
+                    name=get_rabbitmq_core_exchange(),
                     ensure=False
                 )
                 event_data_obj = DAGFinalizerCallback.parse_obj(event_data)
@@ -82,7 +82,7 @@ async def handle_dag_cb(
                 )
                 await exchange.publish(
                     message=message,
-                    routing_key='dag-processing'
+                    routing_key=get_rabbitmq_routing_key('dag-processing')
                 )
                 rest_logger.debug(
                     'Published finalizer callback to rabbitmq %s',

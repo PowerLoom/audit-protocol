@@ -4,19 +4,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from eth_utils import keccak
 from async_ipfshttpclient.main import AsyncIPFSClientSingleton
-import utils.diffmap_utils
-from config import settings
 from uuid import uuid4
 from utils.redis_conn import RedisPool
-from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel
+from utils.rabbitmq_utils import get_rabbitmq_connection, get_rabbitmq_channel, get_rabbitmq_core_exchange, get_rabbitmq_routing_key
 from utils import helper_functions
 from utils import redis_keys
 from functools import partial
 from utils import retrieval_utils
-from utils.diffmap_utils import process_payloads_for_diff
-from data_models import PayloadCommit
+from data_models import PayloadCommit, PayloadCommitAPIRequest, PeerRegistrationRequest, ProjectRegistrationRequest, ProjectRegistrationRequestForIndexing
+from config import settings
+
 from pydantic import ValidationError
-from aio_pika import ExchangeType, DeliveryMode, Message
+from aio_pika import DeliveryMode, Message
 from aio_pika.pool import Pool
 import logging
 import sys
@@ -25,7 +24,7 @@ from redis import asyncio as aioredis
 import redis
 import time
 import asyncio
-
+import httpx
 
 formatter = logging.Formatter(u"%(levelname)-8s %(name)-4s %(asctime)s,%(msecs)d %(module)s-%(funcName)s: %(message)s")
 
@@ -57,28 +56,6 @@ app.add_middleware(
 app.mount('/static', StaticFiles(directory='static'), name='static')
 
 
-#
-STORAGE_CONFIG = {
-    "hot": {
-        "enabled": True,
-        "allowUnfreeze": True,
-        "ipfs": {
-            "addTimeout": 30
-        }
-    },
-    "cold": {
-        "enabled": True,
-        "filecoin": {
-            "repFactor": 1,
-            "dealMinDuration": 518400,
-            "renew": {
-            },
-            "addr": "placeholderstring"
-        }
-    }
-}
-
-
 @app.on_event('startup')
 async def startup_boilerplate():
     app.rmq_connection_pool = Pool(get_rabbitmq_connection, max_size=5, loop=asyncio.get_running_loop())
@@ -91,11 +68,6 @@ async def startup_boilerplate():
     app.reader_redis_pool = app.aioredis_pool.reader_redis_pool
     app.writer_redis_pool = app.aioredis_pool.writer_redis_pool
 
-    # app.evc = EVCore(verbose=True)
-    # app.contract = app.evc.generate_contract_sdk(
-    #     contract_address=settings.audit_contract,
-    #     app_name='auditrecords'
-    # )
     app.ipfs_singleton = AsyncIPFSClientSingleton()
     await app.ipfs_singleton.init_sessions()
     app.ipfs_read_client = app.ipfs_singleton._ipfs_read_client
@@ -122,64 +94,56 @@ async def create_retrieval_request(project_id: str, from_height: int, to_height:
     return request_id
 
 
+# Health check endpoint that returns 200 OK
+@app.get('/health')
+async def health_check():
+    return {'status': 'OK'}
+
 @app.post('/commit_payload')
 async def commit_payload(
         request: Request,
         response: Response
 ):
-    """
-        This endpoint handles the following cases
-        - If there are no pending dag block creations, then commit the payload
-        and return the snapshot-cid, tentative block height and the payload changed flag
-
-        - If there are any pending dag block creations that are left, then Queue up
-        the payload and let a background service handle it.
-
-        - If there are more than `N` no.of payloads pending, then trigger a mechanism to block
-        further calls to this endpoint until all the pending payloads are committed. This
-        number is specified in the settings.json file as 'max_pending_payload_commits'
-
-    """
-    req_args = await request.json()
+    req_json: dict = await request.json()
     try:
-        payload = req_args['payload']
-        project_id = req_args['projectId']
-        request_id = req_args.get('requestID',None)
-        rest_logger.debug(f"Extracted payload and projectId from the request: {payload} , Payload data type: {type(payload)} ProjectId: {project_id}")
-    except Exception as e:
-        return {'error': "Either payload or projectId"}
+        req_parsed: PayloadCommitAPIRequest = PayloadCommitAPIRequest.parse_obj(req_json)
+    except ValidationError as e:
+        response.status_code = 400
+        rest_logger.error('Got bad request: %s | Parsing error: %s', req_json, e, exc_info=True)
+        return {'error': 'Invalid request'}
 
+    project_id = req_parsed.projectId
     out = await helper_functions.check_project_exists(
         project_id=project_id, reader_redis_conn=request.app.reader_redis_pool
     )
     if out == 0:
         return {'error': 'The projectId provided does not exist'}
 
-    skip_anchor_proof_tx = req_args.get('skipAnchorProof', True)  # skip anchor tx by default, unless passed
-   # Create a unique identifier for this payload
+    skip_anchor_proof_tx = req_parsed.skipAnchorProof
+    """ Create a unique identifier for this payload """
+
     payload_data = {
-        'payload': payload,
+        'payload': req_parsed.payload,
         'projectId': project_id,
     }
     # salt with commit time
     payload_commit_id = '0x' + keccak(text=json.dumps(payload_data)+str(time.time())).hex()
     rest_logger.debug("Created the unique payload commit id:%s", payload_commit_id)
 
-    web3_storage_flag = req_args.get('web3Storage', False)
     payload_for_commit = PayloadCommit(**{
         'projectId': project_id,
         'commitId': payload_commit_id,
-        'payload': payload,
-        'requestID':request_id,
-        #'tentativeBlockHeight': last_tentative_block_height,
-        'web3Storage': web3_storage_flag,
-        'skipAnchorProof': skip_anchor_proof_tx
+        'payload': req_parsed.payload,
+        'web3Storage': req_parsed.web3Storage,
+        'skipAnchorProof': skip_anchor_proof_tx,
+        'sourceChainDetails': req_parsed.sourceChainDetails,
+        'requestID': req_parsed.requestID
     })
 
     # push payload for commit to rabbitmq queue
     async with request.app.rmq_channel_pool.acquire() as channel:
         exchange = await channel.get_exchange(
-            name=settings.rabbitmq.setup['core']['exchange'],
+            name=get_rabbitmq_core_exchange(),
             # always ensure exchanges and queues are initialized as part of launch sequence, not to be checked here
             ensure=False
         )
@@ -190,7 +154,7 @@ async def commit_payload(
 
         await exchange.publish(
             message=message,
-            routing_key='commit-payloads'
+            routing_key=get_rabbitmq_routing_key('commit-payloads')
         )
         rest_logger.debug(
             'Published payload against commit ID %s to RabbitMQ payload commit service queue', payload_commit_id
@@ -220,35 +184,8 @@ async def commit_payload(
     }
 
 
-@app.post('/{projectId:str}/diffRules')
-async def configure_project(
-        request: Request,
-        response: Response,
-        projectId: str
-):
-    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
-    req_args = await request.json()
-    """
-    {
-        "rules":
-            [
-                {
-                    "ruleType": "ignore",
-                    "field": "trail",
-                    "fieldType": "list",
-                    "listMemberType": "map",
-                    "ignoreMemberFields": ["chainHeight"]
-                }
-            ]
-    }
-    """
-    rules = req_args['rules']
-    await writer_redis_conn.set(redis_keys.get_diff_rules_key(projectId), json.dumps(rules))
-    rest_logger.debug(f'Set diff rules {rules} for project ID {projectId}')
-
-
 @app.post('/{projectId:str}/confirmations/callback')
-async def configure_project(
+async def register_confirmation_callback(
         request: Request,
         response: Response,
         projectId: str
@@ -258,185 +195,6 @@ async def configure_project(
     await writer_redis_conn.set(f'powerloom:project:{projectId}:callbackURL', req_json['callbackURL'])
     response.status_code = 200
     return {'success': True}
-
-
-@app.get('/{projectId:str}/getDiffRules')
-async def get_diff_rules(
-        request: Request,
-        response: Response,
-        projectId: str
-):
-    """ This endpoint returs the diffRules set against a projectId """
-    out = await helper_functions.check_project_exists(
-        project_id=projectId, reader_redis_conn=request.app.reader_redis_pool
-    )
-    if out == 0:
-        return {'error': 'The projectId provided does not exist'}
-
-    diff_rules_key = redis_keys.get_diff_rules_key(projectId)
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await reader_redis_conn.get(diff_rules_key)
-    if out is None:
-        """ For projectId's who dont have any diffRules, return empty dict"""
-        return dict()
-    rest_logger.debug(out)
-    rules = json.loads(out.decode('utf-8'))
-    return rules
-
-
-@app.get('/requests/{request_id:str}')
-async def request_status(
-        request: Request,
-        response: Response,
-        request_id: str
-):
-    """
-        Given a request_id, return either the status of that request or retrieve all the payloads for that
-    """
-
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    # Check if the request is already in the pending list
-    requests_list_key = f"pendingRetrievalRequests"
-    out = await reader_redis_conn.sismember(requests_list_key, request_id)
-    if out == 1:
-        return {'requestId': request_id, 'requestStatus': 'Pending'}
-
-    # Get all the retrieved files
-    retrieval_files_key = redis_keys.get_retrieval_request_files_key(request_id)
-    retrieved_files = await reader_redis_conn.zrange(
-        name=retrieval_files_key,
-        start=0,
-        end=-1,
-        withscores=True
-    )
-
-    if not retrieved_files:
-        response.status_code = 400
-        return {'error': 'Invalid requestId'}
-
-    data = {}
-    files = []
-    for file_, block_height in retrieved_files:
-        file_ = file_.decode('utf-8')
-        cid = file_.split('/')[-1]
-        block_height = int(block_height)
-
-        dag_block = {
-            'dagCid': cid,
-            'payloadFile': '/' + file_,
-            'height': block_height
-        }
-        files.append(dag_block)
-
-    data['requestId'] = request_id
-    data['requestStatus'] = 'Completed'
-    data['files'] = files
-    response.status_code = 200
-    return data
-
-
-# TODO: get API key/token specific updates corresponding to projects committed with those credentials
-@app.get('/projects/updates')
-async def get_latest_project_updates(
-        request: Request,
-        response: Response,
-        namespace: str = Query(default=None),
-        maxCount: int = Query(default=20)
-):
-    project_diffs_snapshots = list()
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    h = await reader_redis_conn.hgetall(redis_keys.get_last_seen_snapshots_key())
-    if len(h) < 1:
-        return {}
-    for i, d in h.items():
-        project_id = i.decode('utf-8')
-        diff_data = json.loads(d)
-        each_project_info = {
-            'projectId': project_id,
-            'diff_data': diff_data
-        }
-        if namespace and namespace in project_id:
-            project_diffs_snapshots.append(each_project_info)
-        if not namespace:
-            try:
-                project_id_int = int(project_id)
-            except:
-                pass
-            else:
-                project_diffs_snapshots.append(each_project_info)
-    sorted_project_diffs_snapshots = sorted(project_diffs_snapshots, key=lambda x: x['diff_data']['cur']['timestamp'],
-                                            reverse=True)
-    return sorted_project_diffs_snapshots[:maxCount]
-
-
-@app.get('/{projectId:str}/payloads/cachedDiffs/count')
-async def get_payloads_diff_counts(
-        request: Request,
-        response: Response,
-        projectId: str,
-        maxCount: int = Query(default=10)
-):
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
-    if out == 0:
-        return {'error': 'The projectId provided does not exist'}
-    diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
-    r = await reader_redis_conn.zcard(diff_snapshots_cache_zset)
-    if not r:
-        return {'count': 0}
-    else:
-        try:
-            return {'count': int(r)}
-        except:
-            return {'count': None}
-
-
-# TODO: get API key/token specific updates corresponding to projects committed with those credentials
-
-
-@app.get('/{projectId:str}/payloads/cachedDiffs')
-async def get_payloads_diffs(
-        request: Request,
-        response: Response,
-        projectId: str,
-        from_height: int = Query(default=1),
-        to_height: int = Query(default=-1),
-        maxCount: int = Query(default=10)
-):
-    reader_redis_conn: aioredis.Redis = request.app.reader_redis_pool
-    out = await helper_functions.check_project_exists(project_id=projectId, reader_redis_conn=reader_redis_conn)
-    if out == 0:
-        return {'error': 'The projectId provided does not exist'}
-
-    max_block_height = 0
-    max_block_height = await helper_functions.get_block_height(
-        project_id=projectId,
-        reader_redis_conn=reader_redis_conn
-    )
-
-    if to_height == -1:
-        to_height = max_block_height
-        rest_logger.debug("Max Block Height: %d",max_block_height)
-    if (from_height <= 0) or (to_height > max_block_height) or (from_height > to_height):
-        return {'error': 'Invalid Height'}
-    extracted_count = 0
-    diff_response = list()
-    diff_snapshots_cache_zset = redis_keys.get_diff_snapshots_key(projectId)
-    r = await reader_redis_conn.zrevrangebyscore(
-        name=diff_snapshots_cache_zset,
-        min=from_height,
-        max=to_height,
-        withscores=False
-    )
-    for diff in r:
-        if extracted_count >= maxCount:
-            break
-        diff_response.append(json.loads(diff))
-        extracted_count += 1
-    return {
-        'count': extracted_count,
-        'diffs': diff_response
-    }
 
 
 @app.get('/{projectId:str}/payloads')
@@ -682,3 +440,74 @@ async def get_block_data(
 
     """ Return the payload data """
     return {prev_dag_cid: payload}
+
+
+@app.post('/registerProjects')
+async def register_projects(
+        request: Request,
+        response: Response,
+):
+    req_json = await request.json()
+    try:
+        project_registration_request = ProjectRegistrationRequest.parse_obj(req_json)
+    except ValidationError:
+        response.status_code = 400
+        return {'error': 'Bad request'}
+
+
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
+
+    await writer_redis_conn.sadd(
+        redis_keys.get_stored_project_ids_key(),
+        *project_registration_request.projectIDs
+    )
+
+    client = httpx.AsyncClient(limits=httpx.Limits(
+        max_connections=20, max_keepalive_connections=20
+    ))
+
+    failed_tasks = []
+    # Skip summary and stats projectIDs
+    projects_for_consensus = filter(lambda project_id: "Summary" not in project_id and "Stats" not in project_id, project_registration_request.projectIDs)
+
+    tasks = []
+    for project_id in projects_for_consensus:
+        tasks.append(client.post(
+            url=settings.consensus_config.service_url + "/registerProjectPeer",
+            json=PeerRegistrationRequest(projectID = project_id, instanceID = settings.instance_id).dict()
+        ))
+
+    results = await asyncio.gather(*tasks)
+    for project_id, r in zip(projects_for_consensus, results):
+        if r.status_code != 200:
+            failed_tasks.append(project_id)
+
+    if len(failed_tasks) > 0:
+        response.status_code = 500
+        return {'error': f'Could not register all project peers, failed tasks: {failed_tasks}'}
+
+    return {'success': True}
+
+@app.post('/registerProjectsForIndexing')
+async def register_projects_for_indexing(
+        request: Request,
+        response: Response,
+):
+    req_json = await request.json()
+    try:
+        indexing_data = ProjectRegistrationRequestForIndexing.parse_obj(req_json)
+    except ValidationError:
+        response.status_code = 400
+        return {'error': 'Bad request'}
+
+
+    writer_redis_conn: aioredis.Redis = request.app.writer_redis_pool
+
+    project_ids = dict()
+    for project_indexer_data in indexing_data.projects:
+
+        project_ids.update({project_indexer_data.projectID: json.dumps(project_indexer_data.indexerConfig)})
+
+    await writer_redis_conn.hset(redis_keys.get_projects_registered_for_cache_indexing_key_with_namespace(indexing_data.namespace), mapping=project_ids)
+
+    return {'success': True}

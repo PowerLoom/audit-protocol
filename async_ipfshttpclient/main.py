@@ -47,19 +47,19 @@ class AsyncIPFSClient:
         )
         if r.status_code != 200:
             raise IPFSAsyncClientError(f"IPFS client error: add_bytes operation, response:{r}")
-        
+
         try:
             return json.loads(r.text)
         except json.JSONDecodeError:
             return r.text
-    
+
 
     async def add_json(self, json_obj, **kwargs):
         try:
             json_data = json.dumps(json_obj).encode('utf-8')
         except Exception as e:
             raise e
-        
+
         cid = await self.add_bytes(json_data, **kwargs)
         return cid['Hash']
 
@@ -83,8 +83,8 @@ class AsyncIPFSClient:
 
 class AsyncIPFSClientSingleton:
     def __init__(self):
-        self._ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs_url)
-        self._ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs_reader_url)
+        self._ipfs_write_client = AsyncIPFSClient(addr=settings.ipfs.url)
+        self._ipfs_read_client = AsyncIPFSClient(addr=settings.ipfs.reader_url)
         self._initialized = False
 
     async def init_sessions(self):

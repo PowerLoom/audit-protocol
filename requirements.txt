@@ -17,6 +17,7 @@ pycparser
 six
 urllib3
 gunicorn
+setproctitle
 loguru
 httptools
 uvloop

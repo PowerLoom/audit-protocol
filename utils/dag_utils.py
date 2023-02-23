@@ -2,9 +2,10 @@ from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils import helper_functions
-from data_models import PendingTransaction, DAGBlock, DAGFinalizerCallback
-from tenacity import retry, wait_random, wait_random_exponential, retry_if_exception_type, stop_after_attempt
+from data_models import PendingTransaction, DAGBlock, DAGFinalizerCallback, DAGBlockPayloadLinkedPath
+from tenacity import retry, wait_random_exponential, retry_if_exception_type, stop_after_attempt
 from typing import Tuple
+from httpx import AsyncClient
 import aiohttp
 import async_timeout
 import asyncio
@@ -35,12 +36,12 @@ logger.addHandler(stdout_handler)
 logger.addHandler(stderr_handler)
 
 
-async def send_commit_callback(aiohttp_session: aiohttp.ClientSession, url, payload):
+async def send_commit_callback(httpx_session: AsyncClient, url, payload):
     if type(url) is bytes:
         url = url.decode('utf-8')
-    async with aiohttp_session.post(url=url, json=payload) as resp:
-        json_response = await resp.json()
-        return json_response
+    resp = await httpx_session.post(url=url, json=payload)
+    json_response = resp.json()
+    return json_response
 
 
 async def update_pending_tx_block_touch(
@@ -100,7 +101,7 @@ async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPF
         logger.info("Failed to read dag-block with CID %s for project %s from local cache ",
         dag_cid,project_id)
         try:
-            async with async_timeout.timeout(settings.ipfs_timeout) as cm:
+            async with async_timeout.timeout(settings.ipfs.timeout) as cm:
                 try:
                     dag = await ipfs_read_client.dag.get(dag_cid)
                     dag = dag.as_json()
@@ -108,8 +109,6 @@ async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPF
                     e_obj = ex
         except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
             e_obj = err
-
-
         if e_obj or cm.expired:
             return {}
     else:
@@ -135,21 +134,18 @@ async def get_payload(payload_cid: str, project_id:str, ipfs_read_client: AsyncI
 
 
 # TODO: exception handling around dag block creation failures
-async def create_dag_block_update_project_state(
-        tx_hash,
-        request_id,
-        project_id,
-        payload_commit_id,
-        tentative_block_height_event_data,
-        snapshot_cid,
-        timestamp,
-        reader_redis_conn,
-        writer_redis_conn,
-        fetch_prev_cid_for_dag_block_creation,
-        ipfs_write_client,
-        aiohttp_client_session: aiohttp.ClientSession,
-        custom_logger_obj
-):
+async def create_dag_block_update_project_state(tx_hash, request_id, project_id, payload_commit_id,
+                                                tentative_block_height_event_data, snapshot_cid, timestamp,
+                                                reader_redis_conn, writer_redis_conn,
+                                                fetch_prev_cid_for_dag_block_creation, parent_cid_height_diff,
+                                                ipfs_write_client, httpx_client: AsyncClient,
+                                                custom_logger_obj):
+    # Safely assuming this check will work as snapshotCID shall not start with null unless we are trying to create an empty dag block.
+    # Need to be refined to come up with a more elegant way to represent empty dag-block.
+    if snapshot_cid.startswith('null'):
+        logger.info("Creating an DAG block with null payload for project %s !!!!",
+                    project_id)
+        snapshot_cid=""
     _dag_cid, dag_block = await create_dag_block(
         tx_hash=tx_hash,
         project_id=project_id,
@@ -159,6 +155,7 @@ async def create_dag_block_update_project_state(
         reader_redis_conn=reader_redis_conn,
         writer_redis_conn=writer_redis_conn,
         prev_cid_fetch=fetch_prev_cid_for_dag_block_creation,
+        parent_cid_height_diff=parent_cid_height_diff,
         ipfs_write_client=ipfs_write_client
     )
     custom_logger_obj.info('Created DAG block with CID %s at height %s', _dag_cid,
@@ -220,15 +217,11 @@ async def create_dag_block_update_project_state(
     # retrieve callback URL for project ID
     cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
     if cb_url:
-        await send_commit_callback(
-            aiohttp_session=aiohttp_client_session,
-            url=cb_url,
-            payload={
-                'commitID': payload_commit_id,
-                'projectID': project_id,
-                'status': True
-            }
-        )
+        await send_commit_callback(httpx_session=httpx_client, url=cb_url, payload={
+            'commitID': payload_commit_id,
+            'projectID': project_id,
+            'status': True
+        })
     return _dag_cid, dag_block
 
 
@@ -248,13 +241,14 @@ async def create_dag_block(
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
         ipfs_write_client: AsyncIPFSClient,
+        parent_cid_height_diff=1,
         prev_cid_fetch: bool = True
 ) -> Tuple[str, DAGBlock]:
     """ Get the last dag cid using the tentativeBlockHeight"""
     prev_root = None
     last_dag_cid = await helper_functions.get_dag_cid(
         project_id=project_id,
-        block_height=tentative_block_height - 1,
+        block_height=tentative_block_height - parent_cid_height_diff,
         reader_redis_conn=reader_redis_conn
     )
 
@@ -262,24 +256,29 @@ async def create_dag_block(
         prev_root = last_dag_cid
         last_dag_cid = None
     """ Fill up the dag """
-    dag = DAGBlock(
-        height=tentative_block_height,
-        prevCid={'/': last_dag_cid} if last_dag_cid else None,
-        data={'cid': {'/': payload_cid}},
-        txHash=tx_hash,
-        timestamp=timestamp,
-        prevRoot=prev_root
-    )
+    if payload_cid:
+        dag = DAGBlock(
+            height=tentative_block_height,
+            prevCid={'/': last_dag_cid} if last_dag_cid else None,
+            # data={'cid': {'/': payload_cid}},
+            data=DAGBlockPayloadLinkedPath(cid={'/': payload_cid}),
+            txHash=tx_hash,
+            timestamp=timestamp,
+            prevRoot=prev_root
+        )
+    else:
+        dag = DAGBlock(
+            height=tentative_block_height,
+            prevCid={'/': last_dag_cid} if last_dag_cid else None,
+            data=None,
+            txHash=tx_hash,
+            timestamp=timestamp,
+            prevRoot=prev_root
+        )
 
     """ Convert dag structure to json and put it on ipfs dag """
     try:
-        future_dag = put_dag_block(dag.json(exclude_none=True), project_id, ipfs_write_client)
-        dag_cid = await asyncio.wait_for(
-            future_dag,
-            # 80% of half life to account for worst case where delay is increased and subseq operations need to complete
-            timeout=settings.webhook_listener.redis_lock_lifetime / 2 * 0.8
-        )
-
+        dag_cid = await put_dag_block(dag.json(exclude_none=True), project_id, ipfs_write_client)
     except Exception as e:
         logger.error("Failed to put dag block on ipfs: %s | Exception: %s", dag, e, exc_info=True)
         raise IPFSDAGCreationException from e

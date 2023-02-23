@@ -9,6 +9,8 @@ __pycache__/
 *.swp
 files/
 .env
+out/
+static/cached_pair_addresses.json
 
 # Ignore dynaconf secret files
 .secrets.*
@@ -27,6 +29,8 @@ docker/settings.json
 test.py
 
 #ignore go binaries
-go-payload-commit-service/payloadCommitService
-go-pruning-archival-service/pruningArchivalService
-token-aggregator/uniswapTokenData
+go/payload-commit/payload-commit
+go/go-tester/go-tester
+go/pruning-archival/pruning-archival
+go/token-aggregator/token-aggregator
+go/dag-verifier/dag-verifier

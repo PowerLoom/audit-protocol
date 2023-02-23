@@ -1,7 +1,9 @@
 from functools import wraps
 from config import settings as settings_conf
+from typing import Optional
 # from redis import asyncio as aioredis
 from redis import asyncio as aioredis
+from settings_model import RedisConfig
 import traceback
 import redis
 import contextlib
@@ -25,45 +27,23 @@ stderr_handler.setFormatter(formatter)
 logger.addHandler(stdout_handler)
 logger.addHandler(stderr_handler)
 
-REDIS_CONN_CONF = {
-    "host": settings_conf.redis.host,
-    "port": settings_conf.redis.port,
-    "password": settings_conf.redis.password,
-    "db": settings_conf.redis.db,
-    "retry_on_error": [redis.exceptions.ReadOnlyError, ]
-}
 
-REDIS_WRITER_CONN_CONF = {
-    "host": settings_conf.redis.host,
-    "port": settings_conf.redis.port,
-    "password": settings_conf.redis.password,
-    "db": settings_conf.redis.db,
-    "retry_on_error": [redis.exceptions.ReadOnlyError, ]
-}
-
-REDIS_READER_CONN_CONF = {
-    "host": settings_conf.redis_reader.host,
-    "port": settings_conf.redis_reader.port,
-    "password": settings_conf.redis_reader.password,
-    "db": settings_conf.redis_reader.db,
-    "retry_on_error": [redis.exceptions.ReadOnlyError, ]
-}
+def inject_retry_exception_conf(redis_conf: dict):
+    redis_conf.update({"retry_on_error": [redis.exceptions.ReadOnlyError, ]})
 
 
-def construct_writer_redis_url():
-    if REDIS_WRITER_CONN_CONF["password"]:
-        return f'redis://{REDIS_WRITER_CONN_CONF["password"]}@{REDIS_WRITER_CONN_CONF["host"]}:{REDIS_WRITER_CONN_CONF["port"]}'\
-               f'/{REDIS_WRITER_CONN_CONF["db"]}'
+REDIS_CONN_CONF = settings_conf.redis.dict()
+
+REDIS_WRITER_CONN_CONF = settings_conf.redis.dict()
+
+REDIS_READER_CONN_CONF = settings_conf.redis_reader.dict()
+
+
+def construct_redis_url(redis_settings: RedisConfig):
+    if redis_settings.password:
+        return f'redis://{redis_settings.password}@{redis_settings.host}:{redis_settings.port}/{redis_settings.db}'
     else:
-        return f'redis://{REDIS_WRITER_CONN_CONF["host"]}:{REDIS_WRITER_CONN_CONF["port"]}/{REDIS_WRITER_CONN_CONF["db"]}'
-
-
-def construct_reader_redis_url():
-    if REDIS_READER_CONN_CONF["password"]:
-        return f'redis://{REDIS_READER_CONN_CONF["password"]}@{REDIS_READER_CONN_CONF["host"]}:{REDIS_READER_CONN_CONF["port"]}'\
-               f'/{REDIS_READER_CONN_CONF["db"]}'
-    else:
-        return f'redis://{REDIS_READER_CONN_CONF["host"]}:{REDIS_READER_CONN_CONF["port"]}/{REDIS_READER_CONN_CONF["db"]}'
+        return f'redis://{redis_settings.host}:{redis_settings.port}/{redis_settings.db}'
 
 
 @contextlib.contextmanager
@@ -92,6 +72,7 @@ def provide_redis_conn(fn):
             return fn(*args, **kwargs)
         else:
             # logging.debug('Found redis_conn not populated in %s', fn.__name__)
+            inject_retry_exception_conf(redis_conf=REDIS_CONN_CONF)
             connection_pool = redis.BlockingConnectionPool(**REDIS_CONN_CONF, max_connections=20)
             # logging.debug('Created Redis connection Pool')
             with get_redis_conn_from_pool(connection_pool) as redis_obj:
@@ -101,17 +82,9 @@ def provide_redis_conn(fn):
     return wrapper
 
 
-async def get_writer_redis_pool(pool_size=200):
+async def get_redis_pool(redis_settings: RedisConfig = settings_conf.redis, pool_size=200):
     return await aioredis.from_url(
-        url=construct_writer_redis_url(),
-        max_connections=pool_size,
-        retry_on_error=[redis.exceptions.ReadOnlyError, ]
-    )
-
-
-async def get_reader_redis_pool(pool_size=200):
-    return await aioredis.from_url(
-        url=construct_reader_redis_url(),
+        url=construct_redis_url(redis_settings),
         max_connections=pool_size,
         retry_on_error=[redis.exceptions.ReadOnlyError, ]
     )
@@ -143,17 +116,25 @@ async def get_reader_redis_conn():
 
 
 class RedisPool:
-    def __init__(self, pool_size=200, replication_mode=False):
+    def __init__(
+            self,
+            writer_redis_conf: RedisConfig = settings_conf.redis,
+            reader_redis_conf: Optional[RedisConfig] = settings_conf.redis_reader,
+            pool_size=200,
+            replication_mode=True
+    ):
         self.reader_redis_pool = None
         self.writer_redis_pool = None
+        self._writer_redis_conf = writer_redis_conf
+        self._reader_redis_conf = reader_redis_conf
         self._pool_size = pool_size
         self._replication_mode = replication_mode
 
     async def populate(self):
         if not self.writer_redis_pool:
-            self.writer_redis_pool: aioredis.Redis = await get_writer_redis_pool(self._pool_size)
-            if not self._replication_mode:
+            self.writer_redis_pool: aioredis.Redis = await get_redis_pool(self._writer_redis_conf, self._pool_size)
+            if self._replication_mode:
                 self.reader_redis_pool = self.writer_redis_pool
             else:
                 if not self.reader_redis_pool:
-                    self.reader_redis_pool: aioredis.Redis = await get_reader_redis_pool(self._pool_size)
+                    self.reader_redis_pool: aioredis.Redis = await get_redis_pool(self._reader_redis_conf, self._pool_size)

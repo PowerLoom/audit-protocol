@@ -1,0 +1,49 @@
+@startuml "Project Pruning Verification"
+autonumber
+
+participant "dag-verifier" as dagv
+database redis
+participant "IPFS-Node" as ipfs
+participant "web3.storage" as w3s
+participant "slack-notification-\nendpoint" as slack
+
+dagv <-> redis: Fetch projectsList storedProjectIds
+
+group periodic-processing
+    note over dagv: distribute all projects to number of go-routines based on concurrency configured.
+
+    group go-routine processing
+        dagv <-> redis: Fetch last Pruning VerificationState for the project projects:pruningVerificationStatus
+
+        loop over projects (assigned to the routine)
+            dagv <-> redis: Fetch project dag-segments *{projectID}:dagSegments
+
+            note over dagv: sort dag-segments based on dag-heights
+
+            loop over sorted-segments
+                alt if dagHeight > lastVerifiedHeight
+                    dagv <-> w3s: Fetch status of endDagCId /status
+                    alt if pins == 0 and deals == 0
+                        note over dagv: record as archivalFailed for this segment.\n this would be part of pruningCycleRunReport stored in redis
+                    end
+                    loop over dag-blocks in segment
+                        dagv <-> ipfs: Fetch dagBlock
+                        dagv <-> ipfs: Fetch payload
+                        note over dagv: Decode payload only to get chainHeightRange.
+                        alt if prevPayload.EndHeight != curPayload.StartHeight+1
+                            note over dagv: Record as issue in archived segment.
+                        end
+                    end
+                end
+            end
+
+            dagv <-> redis: Update PruningVerificationState to redis for the project.
+            dagv <-> redis: Update any segment errors to redis. {projectID}:pruningIssues
+        end
+
+    end
+
+    alt if verificationFailed
+        dagv <-> slack: Report pruningVerification Failure project count and success count.
+    end
+end

@@ -1,7 +1,7 @@
 from typing import Union, Iterable
 from time import time
 from web3 import Web3
-from httpx import AsyncClient, Timeout, Limits
+from httpx import AsyncClient
 from redis import asyncio as aioredis
 from async_ipfshttpclient.main import AsyncIPFSClient
 from gnosis.eth import EthereumClient
@@ -18,6 +18,7 @@ import logging.config
 import sys
 import os
 import cardinality
+from config import settings
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -33,7 +34,7 @@ stderr_handler.setLevel(logging.ERROR)
 logger.addHandler(stderr_handler)
 logger.debug("Initialized logger")
 
-NAMESPACE = 'UNISWAPV2'
+NAMESPACE = settings.pooler_namespace
 ethereum_client = EthereumClient(settings.rpc_url)
 
 # read all pair-contracts
@@ -41,7 +42,6 @@ PAIR_CONTRACTS = []
 if os.path.exists('static/cached_pair_addresses.json'):
     f = open('static/cached_pair_addresses.json', 'r')
     PAIR_CONTRACTS = json.loads(f.read())
-
 
 async def get_dag_blocks_in_range(
         project_id,
@@ -59,6 +59,9 @@ async def get_dag_blocks_in_range(
                 reader_redis_conn=reader_redis_conn,
                 ipfs_read_client=ipfs_read_client
             )
+            # handle case of null payloads in dag_blocks
+            if 'data' not in dag_block:
+                dag_block = {}
         except Exception as e:
             logger.error("Error: can't get dag block with msg: %s |"
                          "projectId:%s, block_height:%s",
@@ -69,7 +72,6 @@ async def get_dag_blocks_in_range(
             dag_block = {}
         if dag_block:
             dag_chain.append(dag_block)
-
     dag_chain.reverse()
     return dag_chain
 
@@ -159,7 +161,11 @@ async def get_pair_tokens_metadata(
 
         # check if cache exist
         pair_tokens_metadata_cache = await redis_conn.hgetall(
-            redis_keys.get_uniswap_pair_contract_tokens_data(pair_address))
+                redis_keys.get_uniswap_pair_contract_tokens_data(
+                    pair_address,
+                    settings.pooler_namespace
+                )
+            )
 
         # parse addresses cache or call eth rpc
         token0Addr = None
@@ -231,7 +237,10 @@ async def get_pair_tokens_metadata(
                 ] = ethereum_client.batch_call(tasks)
 
             await redis_conn.hset(
-                name=redis_keys.get_uniswap_pair_contract_tokens_data(pair_address),
+                name=redis_keys.get_uniswap_pair_contract_tokens_data(
+                    pair_address,
+                    settings.pooler_namespace
+                    ),
                 mapping={
                     "token0_name": token0_name,
                     "token0_symbol": token0_symbol,
@@ -335,7 +344,11 @@ async def store_recent_transactions_logs(writer_redis_conn: aioredis.Redis, dag_
     recent_logs = sorted(recent_logs, key=lambda log: log['blockNumber'], reverse=True)
 
     oldLogs = await writer_redis_conn.get(
-        redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"))
+                redis_keys.get_uniswap_pair_cached_recent_logs(
+                    f"{Web3.toChecksumAddress(pair_contract_address)}",
+                    settings.pooler_namespace
+                )
+            )
     if oldLogs:
         oldLogs = json.loads(oldLogs.decode('utf-8'))
         recent_logs = recent_logs + oldLogs
@@ -350,22 +363,30 @@ async def store_recent_transactions_logs(writer_redis_conn: aioredis.Redis, dag_
         len(recent_logs)
         )
     await writer_redis_conn.set(
-        redis_keys.get_uniswap_pair_cached_recent_logs(f"{Web3.toChecksumAddress(pair_contract_address)}"),
+            redis_keys.get_uniswap_pair_cached_recent_logs(
+                f"{Web3.toChecksumAddress(pair_contract_address)}",
+                settings.pooler_namespace
+            ),
         json.dumps(recent_logs))
     return recent_logs
 
 async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contract_address, snapshot):
     now = int(time())
     await writer_redis_conn.zadd(
-        name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+        name=redis_keys.get_uniswap_pair_cache_daily_stats(
+            Web3.toChecksumAddress(pair_contract_address),
+            settings.pooler_namespace
+            ),
         mapping={json.dumps(snapshot.json()): now}
     )
     await writer_redis_conn.zremrangebyscore(
-        name=redis_keys.get_uniswap_pair_cache_daily_stats(Web3.toChecksumAddress(pair_contract_address)),
+        name=redis_keys.get_uniswap_pair_cache_daily_stats(
+            Web3.toChecksumAddress(pair_contract_address),
+            settings.pooler_namespace
+            ),
         min=float('-inf'),
         max=float(now - 60 * 60 * 25)
     )
-
 
 async def process_pairs_trade_volume_and_reserves(
         writer_redis_conn: aioredis.Redis,
@@ -382,7 +403,10 @@ async def process_pairs_trade_volume_and_reserves(
             tail_marker_7d,
             head_marker_7d
         ] = await writer_redis_conn.mget([
-            redis_keys.get_uniswap_pair_cache_sliding_window_data(f"{Web3.toChecksumAddress(pair_contract_address)}"),
+            redis_keys.get_uniswap_pair_cache_sliding_window_data(
+                f"{Web3.toChecksumAddress(pair_contract_address)}",
+                settings.pooler_namespace
+            ),
             redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '24h'),
             redis_keys.get_sliding_window_cache_head_marker(project_id_trade_volume, '24h'),
             redis_keys.get_sliding_window_cache_tail_marker(project_id_trade_volume, '7d'),
@@ -490,6 +514,15 @@ async def process_pairs_trade_volume_and_reserves(
                     cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h - 1,
                     project_id_trade_volume
                 )
+
+            logger.debug(
+                "Starting to fetch 24h sliding window, front: {0} - {1}, back: {2} - {3} | projectId: {4}"
+                .format(
+                    cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h,
+                    cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h - 1,
+                    project_id_trade_volume
+                )
+            )
 
             # if 24h head moved ahead
             if head_marker_24h > cached_trade_volume_data["processed_head_marker_24h"]:
@@ -685,9 +718,9 @@ async def process_pairs_trade_volume_and_reserves(
         logger.debug('Adding calculated snapshot to daily stats zset and pruning it for just 24h data')
         await writer_redis_conn.mset({
             redis_keys.get_uniswap_pair_contract_V2_pair_data(
-                f"{Web3.toChecksumAddress(pair_contract_address)}"): prepared_snapshot.json(),
+                f"{Web3.toChecksumAddress(pair_contract_address)}", settings.pooler_namespace): prepared_snapshot.json(),
             redis_keys.get_uniswap_pair_cache_sliding_window_data(
-                f"{Web3.toChecksumAddress(pair_contract_address)}"): json.dumps(sliding_window_data)
+                f"{Web3.toChecksumAddress(pair_contract_address)}", settings.pooler_namespace): json.dumps(sliding_window_data)
         })
         logger.debug(
             "Calculated v2 pair data for contract: %s | symbol:%s-%s",
@@ -769,7 +802,11 @@ async def v2_pairs_data(
             summarized_result_l = [x.dict() for x in final_results]
             summarized_payload = {'data': summarized_result_l}
             # get last processed v2 pairs snapshot height
-            l_ = await redis_conn.get(redis_keys.get_uniswap_pair_snapshot_last_block_height())
+            l_ = await redis_conn.get(
+                redis_keys.get_uniswap_pair_snapshot_last_block_height(
+                    settings.pooler_namespace
+                    )
+                )
             if l_:
                 last_common_block_height = int(l_)
             else:
@@ -780,7 +817,7 @@ async def v2_pairs_data(
                     common_blockheight_reached, last_common_block_height
                 )
                 tentative_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
-                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id()
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace)
                 ))
                 tentative_audit_project_block_height  = int(tentative_audit_project_block_height) if tentative_audit_project_block_height else 0
 
@@ -788,10 +825,10 @@ async def v2_pairs_data(
                 # send to audit protocol for snapshot to be committed
                 try:
                     response = await helper_functions.commit_payload(
-                        project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                        project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
                         report_payload=summarized_payload,
                         session=async_httpx_client,
-                        skipAnchorProof=False
+                        skipAnchorProof=settings.txn_config.skip_summary_projects_anchor_proof
                     )
                 except Exception as exc:
                     logger.error(
@@ -823,7 +860,7 @@ async def v2_pairs_data(
                 await asyncio.sleep(10)
 
                 block_status = await retrieval_utils.retrieve_block_status(
-                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(),
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
                     project_block_height=0,
                     block_height=updated_audit_project_block_height,
                     reader_redis_conn=redis_conn,
@@ -832,7 +869,7 @@ async def v2_pairs_data(
                 )
                 if block_status is None:
                     logger.error("block_status is returned as None at height %s for project %s",
-                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id())
+                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace))
                     break
                 if block_status.status < 3:
                     continue
@@ -860,29 +897,35 @@ async def v2_pairs_data(
                 # store in snapshots zset
                 result = await asyncio.gather(
                     redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(settings.pooler_namespace),
                         mapping={snapshot_zset_entry.json(): common_blockheight_reached}),
                     redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                        name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
                         mapping={block_status.payload_cid: common_block_timestamp}),
                     redis_conn.set(
-                        name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(common_blockheight_reached),
+                        name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(
+                            common_blockheight_reached,
+                            settings.pooler_namespace
+                            ),
                         value=json.dumps(summarized_payload),
                         ex=1800  # TTL of 30 minutes?
                     ),
                     redis_conn.set(
-                        redis_keys.get_uniswap_pair_snapshot_last_block_height(),
+                        redis_keys.get_uniswap_pair_snapshot_last_block_height(settings.pooler_namespace),
                         common_blockheight_reached),
-
                 )
                 logger.debug("Updated snapshot details in redis, ops results: %s", result)
 
                 # prune zset
-                block_height_zset_len = await redis_conn.zcard(name=redis_keys.get_uniswap_pair_snapshot_summary_zset())
+                block_height_zset_len = await redis_conn.zcard(
+                    name=redis_keys.get_uniswap_pair_snapshot_summary_zset(
+                        settings.pooler_namespace
+                        )
+                    )
 
                 if block_height_zset_len > 20:
                     _ = await redis_conn.zremrangebyrank(
-                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(),
+                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(settings.pooler_namespace),
                         min=0,
                         max=-1 * (block_height_zset_len - 20) + 1
                     )
@@ -890,7 +933,7 @@ async def v2_pairs_data(
 
                 pruning_timestamp = int(time()) - (60 * 60 * 24 + 60 * 60 * 2)  # now - 26 hours
                 _ = await redis_conn.zremrangebyscore(
-                    name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(),
+                    name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
                     min=0,
                     max=pruning_timestamp
                 )

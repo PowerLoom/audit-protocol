@@ -15,6 +15,10 @@ class ProjectStateMetadata(BaseModel):
     projectID: str
     dagChains: List[ProjectDAGChainSegmentMetadata]
 
+class SourceChainDetails(BaseModel):
+    chainID: int
+    epochStartHeight: int
+    epochEndHeight: int
 
 class AuditRecordTxEventData(BaseModel):
     txHash: str
@@ -22,7 +26,7 @@ class AuditRecordTxEventData(BaseModel):
     apiKeyHash: str
     timestamp: float
     payloadCommitId: str
-    snapshotCid: str
+    snapshotCid: Optional[str]
     tentativeBlockHeight: int
     skipAnchorProof: bool = True
 
@@ -32,6 +36,16 @@ class PendingTransaction(BaseModel):
     requestID: str
     lastTouchedBlock: int = 0
     event_data: Optional[AuditRecordTxEventData] = dict()
+
+
+class PayloadCommitAPIRequest(BaseModel):
+    projectId: str
+    payload: dict
+    web3Storage: bool = False
+    # skip anchor tx by default, unless passed
+    skipAnchorProof: bool = True
+    sourceChainDetails: Optional[SourceChainDetails] = None
+    requestID: Optional[str] = None
 
 
 class PayloadCommit(BaseModel):
@@ -47,7 +61,7 @@ class PayloadCommit(BaseModel):
     resubmissionBlock: int = 0  # corresponds to lastTouchedBlock in PendingTransaction model
     web3Storage: bool = False
     skipAnchorProof: bool = True
-
+    sourceChainDetails: Optional[SourceChainDetails] = None
 
 class DAGBlockRange(BaseModel):
     head_block_cid: str
@@ -86,7 +100,7 @@ class DAGBlock(BaseModel):
     height: int
     prevCid: Optional[Dict[str, str]]
     prevRoot: Optional[str] = None
-    data: DAGBlockPayloadLinkedPath
+    data: Optional[DAGBlockPayloadLinkedPath]
     txHash: str
     timestamp: int
 
@@ -95,7 +109,7 @@ class DAGFinalizerCBEventData(BaseModel):
     apiKeyHash: str
     tentativeBlockHeight: int
     projectId: str
-    snapshotCid: str
+    snapshotCid: Optional[str]
     payloadCommitId: str
     timestamp: int
 
@@ -104,16 +118,6 @@ class DAGFinalizerCallback(BaseModel):
     txHash: str
     requestID: str
     event_data: DAGFinalizerCBEventData
-
-
-class DiffCalculationRequest(BaseModel):
-    project_id: str
-    dagCid: str
-    lastDagCid: Optional[str] = None
-    payloadCid: str
-    txHash: str
-    tentative_block_height: int
-    timestamp: int
 
 
 class uniswapPairsSnapshotZset(BaseModel):
@@ -160,3 +164,90 @@ class ProjectBlockHeightStatus(BaseModel):
     payload_cid: Optional[str] = None
     tx_hash: Optional[str] = None
     status: int = 1 #BLOCK_STATUS_SNAPSHOT_COMMIT_PENDING
+
+
+class SnapshotterIssueSeverity(str, Enum):
+    high = 'HIGH'
+    medium = 'MEDIUM'
+    low = 'LOW'
+    cleared = 'CLEARED'
+
+
+class SnapshotterIssueType(str, Enum):
+    snapshotting_fallen_behind = 'SNAPSHOTTING_FALLEN_BEHIND'
+    missed_snapshot = 'MISSED_SNAPSHOT'
+    infra_issue = 'INFRA_ISSUE'
+    skip_epoch = 'SKIP_EPOCH'
+    dag_chain_stuck = 'DAG_CHAIN_STUCK'
+    pruning_failed = 'PRUNING_FAILED'
+
+
+class SnapshotterIssue(BaseModel):
+    instanceID: str
+    namespace: Optional[str]
+    severity: SnapshotterIssueSeverity
+    issueType: str
+    projectID: str
+    epochs: Optional[List[int]]
+    timeOfReporting: int
+    noOfEpochsBehind: Optional[int]
+    extra: Optional[dict]
+    serviceName: str
+
+
+class PeerRegistrationRequest(BaseModel):
+    projectID: str
+    instanceID: str
+
+class ProjectRegistrationRequest(BaseModel):
+    projectIDs: List[str]
+
+
+class IndexingRegistrationData(BaseModel):
+    projectID: str
+    indexerConfig: Dict
+
+class ProjectRegistrationRequestForIndexing(BaseModel):
+    projects: List[IndexingRegistrationData]
+    namespace: str
+
+
+class EpochConsensusStatus(str, Enum):
+    consensus_achieved = 'CONSENSUS_ACHIEVED'
+    no_consensus = 'NO_CONSENSUS'
+
+
+class SubmissionAcceptanceStatus(str, Enum):
+    accepted = 'ACCEPTED'
+    finalized = 'FINALIZED'
+    # if the peer never submitted yet comes around checking for status, trying to work around the system
+    notsubmitted = 'NOTSUBMITTED'
+    # if all peers have submitted their snapshots and 2/3 consensus has not been reached
+    # if submission deadline has passed, all peers have not submitted and 2/3 not reached
+    indeterminate = 'INDETERMINATE'
+
+
+class SubmissionResponse(BaseModel):
+    status: Union[SubmissionAcceptanceStatus, EpochConsensusStatus]
+    delayedSubmission: bool
+    finalizedSnapshotCID: Optional[str] = None
+
+
+class EpochBase(BaseModel):
+    begin: int
+    end: int
+
+
+class SnapshotBase(BaseModel):
+    epoch: EpochBase
+    projectID: str
+    instanceID: str
+
+
+class SnapshotSubmission(SnapshotBase):
+    snapshotCID: str
+
+
+class SubmissionDataStoreEntry(BaseModel):
+    snapshotCID: str
+    submittedTS: int
