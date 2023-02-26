@@ -1,10 +1,14 @@
+import bz2
+import io
+import typer
 from itertools import cycle
 from textwrap import wrap
 from typing import Optional
+from collections import defaultdict
 from settings_model import Settings
 from utils import redis_conn
 from utils import redis_keys
-import typer
+from data_models import ProtocolState, ProjectSpecificProtocolState, ProjectDAGChainSegmentMetadata, PruningCycleForProjectDetails
 import redis
 import json
 from rich.console import Console
@@ -195,6 +199,119 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
     console.print("[bold red]Failure counts:[/bold red]", f"[bold red]{cycleDetails.get('projectsProcessFailedCount', None)}[/bold red]")
     console.print("[bold yellow]Unprocessed Project count:[/bold yellow]", f"[bold yellow]{cycleDetails.get('projectsNotProcessedCount', None)}[/bold yellow]\n\n")
 
+
+@app.command(name='exportState')
+def export_state():
+    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True, decode_responses=True)
+    # TODO: incrementally byte stream the final state JSON into the bz2 compressor to achieve better memory efficiency
+    # references: https://docs.python.org/3/glossary.html#term-bytes-like-object
+    # https://docs.python.org/3/library/io.html#binary-i-o
+    # https://pymotw.com/3/bz2/#incremental-compression-and-decompression
+    # compressor = bz2.BZ2Compressor()
+    console.log("Exporting state to file")
+    state = ProtocolState.construct()
+    exceptions = defaultdict(list)  # collect excs while iterating over projects
+    
+    state.projectSpecificStates = dict()
+    all_projects = r.smembers(redis_keys.get_stored_project_ids_key())
+    for project_id in all_projects:
+        console.log(f'Exporting state for project {project_id}')
+        project_specific_state = ProjectSpecificProtocolState.construct()
+        try:
+            project_specific_state.lastFinalizedDAgBlockHeight = int(r.get(redis_keys.get_block_height_key(project_id)))
+        except Exception as e:
+            exceptions[project_id].append({'lastFinalizedDAgBlockHeight': str(e)})
+        else:
+            console.log('\t Exported lastFinalizedDAgBlockHeight')
+
+        try:
+            project_specific_state.firstEpochEndHeight = int(r.get(redis_keys.get_project_first_epoch_end_height(project_id)))
+        except Exception as e:
+            exceptions[project_id].append({'firstEpochEndHeight': str(e)})
+        else:
+            console.log('\t Exported firstEpochEndHeight')
+
+        try:
+            project_specific_state.epochSize = int(r.get(redis_keys.get_project_epoch_size(project_id)))
+        except Exception as e:
+            exceptions[project_id].append({'epochSize': str(e)})
+        else:
+            console.log('\t Exported epochSize')
+
+        project_dag_cids = r.zrangebyscore(
+            name=redis_keys.get_dag_cids_key(project_id),
+            min='-inf',
+            max='+inf',
+            withscores=True,
+        )
+
+        if len(project_dag_cids) > 0:
+            project_specific_state.dagCidsZset = {k[1]: k[0] for k in project_dag_cids}
+            console.log('\t Exported dagCidsZset of length ', len(project_specific_state.dagCidsZset))
+        else:
+            project_specific_state.dagCidsZset = dict()
+            exceptions[project_id].append({'dagCidsZset': 'empty'})
+
+        snapshot_cids = r.zrangebyscore(
+            name=redis_keys.get_payload_cids_key(project_id),
+            min='-inf',
+            max='+inf',
+            withscores=True,
+        )
+        if len(snapshot_cids) > 0:
+            project_specific_state.snapshotCidsZset = {k[1]: k[0] for k in snapshot_cids}
+            console.log('\t Exported snapshotCidsZset of length ', len(project_specific_state.snapshotCidsZset))
+        else:
+            project_specific_state.snapshotCidsZset = dict()
+            exceptions[project_id].append({'snapshotCidsZset': 'empty'})
+
+        project_dag_segments = r.hgetall(redis_keys.get_project_dag_segments_key(project_id))
+        if len(project_dag_segments) > 0:
+            project_specific_state.dagSegments = {k: ProjectDAGChainSegmentMetadata.parse_raw(v) for k, v in project_dag_segments.items()}
+        else:
+            project_specific_state.dagSegments = dict()
+            exceptions[project_id].append({'dagSegments': 'empty'})
+        state.projectSpecificStates[project_id] = project_specific_state
+        
+        # # # project ID specific state end, now incrementally bz compress
+    pruning_project_status = r.hgetall(redis_keys.get_pruning_status_key())
+    if len(pruning_project_status) > 0:
+        state.pruningProjectStatus = {k: int(v) for k, v in pruning_project_status.items()}
+        console.log('Backed up last pruned DAG height for projects: ', ', '.join(state.pruningProjectStatus.keys()))
+    else:
+        state.pruningProjectStatus = dict()
+        exceptions['pruning'].append({'pruningProjectStatus': 'empty'})
+
+    state.pruningCycleRunStatus = dict()
+    pruning_cycle_run_stats = r.zrangebyscore(
+        name=redis_keys.get_all_pruning_cycles_status_key(),
+        min='-inf',
+        max='+inf',
+        withscores=True,
+    )
+    if len(pruning_cycle_run_stats) > 0:
+        state.pruningCycleRunStatus = {k[0]: k[1] for k in pruning_cycle_run_stats}
+    else:
+        state.pruningCycleRunStatus = dict()
+        exceptions['pruning'].append({'pruningCycleRunStats': 'empty'})
+
+    exceptions['pruning'].append({'detailedRunStats': defaultdict(list)})
+    state.pruningProjectDetails = dict()
+    for detailed_pruning_run_stats_key in r.scan_iter(match=redis_keys.get_specific_pruning_cycle_run_information_pattern()):
+        detailed_pruning_run_stats = r.hgetall(detailed_pruning_run_stats_key)
+        cycle_id = detailed_pruning_run_stats_key.split(':')[-1]
+        state.pruningProjectDetails[cycle_id] = dict()
+        if len(detailed_pruning_run_stats) > 0:
+             state.pruningProjectDetails[cycle_id] = {k: PruningCycleForProjectDetails.parse_raw(v) for k, v in detailed_pruning_run_stats.items()}
+             console.log('Exported pruning cycle details for cycle ', cycle_id)
+        else:
+            state.pruningProjectDetails[cycle_id] = dict()
+            exceptions['pruning']['detailedRunStats'].append({cycle_id: 'empty'})
+    state_json = state.json()
+    with bz2.open('state.json.bz2', 'wb') as f:
+        with io.TextIOWrapper(f, encoding='utf-8') as enc:
+            enc.write(state_json)
+    console.log('Exported state.json.bz2')
 
 @app.command()
 def skip_pair_projects_verified_heights():

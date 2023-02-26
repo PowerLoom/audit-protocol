@@ -26,6 +26,12 @@ def get_pruning_status_key():
     last_pruned_key = "projects:pruningStatus"
     return last_pruned_key
 
+def get_all_pruning_cycles_status_key():
+    return 'pruningRunStatus'
+
+
+def get_specific_pruning_cycle_run_information_pattern():
+    return 'pruningProjectDetails:*'
 
 def get_dag_cids_key(project_id: str):
     dag_cids_key = "projectID:{}:Cids".format(project_id)
@@ -107,36 +113,6 @@ def get_project_dag_segments_key(project_id: str):
     return f'projectID:{project_id}:dagSegments'
 
 
-def get_target_dags_key(project_id: str):
-    target_dags_key = "projectID:{}:targetDags".format(project_id)
-    return target_dags_key
-
-
-def get_prune_from_height_key(project_id: str):
-    prune_from_height_key = "projectID:{}:pruneFromHeight".format(project_id)
-    return prune_from_height_key
-
-
-def get_prune_to_height_key(project_id: str):
-    prune_to_height_key = "projectID:{}:pruneToHeight".format(project_id)
-    return prune_to_height_key
-
-
-def get_to_unpin_projects_key():
-    to_unpin_projects_key = "toUnpinProjects"
-    return to_unpin_projects_key
-
-
-def get_filecoin_token_key(project_id: str):
-    filecoin_token_key = "filecoinToken:{}".format(project_id)
-    return filecoin_token_key
-
-
-def get_executing_containers_key():
-    executing_containers_key = "executingContainers"
-    return executing_containers_key
-
-
 def get_payload_commit_id_process_logs_zset_key(project_id, payload_commit_id):
     return f'projectID:{project_id}:payloadCommitID:{payload_commit_id}:processingLogs'
 
@@ -144,11 +120,6 @@ def get_payload_commit_id_process_logs_zset_key(project_id, payload_commit_id):
 def get_hits_dag_block_key():
     hits_dag_block_key = "hitsDagBlock"
     return hits_dag_block_key
-
-
-def get_hits_payload_data_key():
-    hits_payload_data_key = "hitsPayloadData"
-    return hits_payload_data_key
 
 
 def get_last_snapshot_cid_key(project_id: str):

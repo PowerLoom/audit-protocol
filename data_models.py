@@ -10,10 +10,34 @@ class ProjectDAGChainSegmentMetadata(BaseModel):
     endDAGCID: str
     storageType: str
 
+class PruningCycleForProjectDetails(BaseModel):
+    Host: str
+    projectID: str
+    DAGSegmentsProcessed: int
+    DAGSegmentsArchived: int
+    CIDsUnPinned: int
+
+
+class ProjectSpecificProtocolState(BaseModel):
+    firstEpochEndHeight: int  # genesis block's epoch end height
+    epochSize: int  # epoch size in blocks
+    lastFinalizedDAgBlockHeight: int  # last finalized DAG block height
+    dagCidsZset: Dict[int, str] # DAG block height to DAG block CID mapping
+    snapshotCidsZset: Dict[int, str] # DAG block height to snapshot CID mapping
+    dagSegments: Dict[int, ProjectDAGChainSegmentMetadata]  # epoch end height to DAG segment metadata mapping
+
+
+class ProtocolState(BaseModel):
+    projectSpecificStates: Dict[str, ProjectSpecificProtocolState]  # projectID to project specific protocol state mapping
+    pruningProjectStatus: Dict[str, int]  # project ID -> last pruned DAG block height htable
+    pruningCycleRunStatus: Dict[int, dict]  # millisecond timestamp -> pruning cycle run status mapping
+    pruningProjectDetails: Dict[str, Dict[str, PruningCycleForProjectDetails]]  # cycleID -> project ID -> pruning cycle run details mapping
+
 
 class ProjectStateMetadata(BaseModel):
     projectID: str
     dagChains: List[ProjectDAGChainSegmentMetadata]
+
 
 class SourceChainDetails(BaseModel):
     chainID: int
