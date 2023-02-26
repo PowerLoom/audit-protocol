@@ -22,7 +22,6 @@ RUN pip3 install -r requirements.txt
 
 EXPOSE 9000
 EXPOSE 9002
-EXPOSE 9030
 
 COPY . .
 RUN ./build.sh
