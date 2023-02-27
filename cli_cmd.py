@@ -1,6 +1,7 @@
 import bz2
 import io
 import typer
+import concurrent.futures
 from itertools import cycle
 from textwrap import wrap
 from typing import Optional
@@ -8,7 +9,7 @@ from collections import defaultdict
 from settings_model import Settings
 from utils import redis_conn
 from utils import redis_keys
-from data_models import ProtocolState, ProjectSpecificProtocolState, ProjectDAGChainSegmentMetadata, PruningCycleForProjectDetails
+from data_models import ProtocolState, ProjectSpecificProtocolState, ProjectDAGChainSegmentMetadata, PruningCycleForProjectDetails, PruningCycleOverallDetails
 import redis
 import json
 from rich.console import Console
@@ -200,9 +201,83 @@ def pruning_cycle_project_report(cycleId: str = typer.Option(None, "--cycleId"))
     console.print("[bold yellow]Unprocessed Project count:[/bold yellow]", f"[bold yellow]{cycleDetails.get('projectsNotProcessedCount', None)}[/bold yellow]\n\n")
 
 
+def export_project_state(project_id: str, r: redis.Redis):
+    console.log(f'Exporting state for project {project_id}')
+    local_exceptions = list()
+    project_specific_state = ProjectSpecificProtocolState.construct()
+    try:
+        project_specific_state.lastFinalizedDAgBlockHeight = int(r.get(redis_keys.get_block_height_key(project_id)))
+    except Exception as e:
+        local_exceptions.append({'lastFinalizedDAgBlockHeight': str(e)})
+    else:
+        console.log('\t Exported lastFinalizedDAgBlockHeight')
+
+    try:
+        project_specific_state.firstEpochEndHeight = int(r.get(redis_keys.get_project_first_epoch_end_height(project_id)))
+    except Exception as e:
+        local_exceptions.append({'firstEpochEndHeight': str(e)})
+    else:
+        console.log('\t Exported firstEpochEndHeight')
+
+    try:
+        project_specific_state.epochSize = int(r.get(redis_keys.get_project_epoch_size(project_id)))
+    except Exception as e:
+        local_exceptions.append({'epochSize': str(e)})
+    else:
+        console.log('\t Exported epochSize')
+
+    project_dag_cids = r.zrangebyscore(
+        name=redis_keys.get_dag_cids_key(project_id),
+        min='-inf',
+        max='+inf',
+        withscores=True,
+    )
+
+    if len(project_dag_cids) > 0:
+        project_specific_state.dagCidsZset = {k[1]: k[0] for k in project_dag_cids}
+        console.log('\t Exported dagCidsZset of length ', len(project_specific_state.dagCidsZset))
+    else:
+        project_specific_state.dagCidsZset = dict()
+        local_exceptions.append({'dagCidsZset': 'empty'})
+
+    snapshot_cids = r.zrangebyscore(
+        name=redis_keys.get_payload_cids_key(project_id),
+        min='-inf',
+        max='+inf',
+        withscores=True,
+    )
+    if len(snapshot_cids) > 0:
+        project_specific_state.snapshotCidsZset = {k[1]: k[0] for k in snapshot_cids}
+        console.log('\t Exported snapshotCidsZset of length ', len(project_specific_state.snapshotCidsZset))
+    else:
+        project_specific_state.snapshotCidsZset = dict()
+        local_exceptions.append({'snapshotCidsZset': 'empty'})
+
+    project_dag_segments = r.hgetall(redis_keys.get_project_dag_segments_key(project_id))
+    if len(project_dag_segments) > 0:
+        project_specific_state.dagSegments = {k: ProjectDAGChainSegmentMetadata.parse_raw(v) for k, v in project_dag_segments.items()}
+    else:
+        project_specific_state.dagSegments = dict()
+        local_exceptions.append({'dagSegments': 'empty'})
+    return project_specific_state, local_exceptions
+
+
+def export_pruning_cycle_details(cycle_id: str, r: redis.Redis):
+    console.log(f'Exporting pruning cycle details for cycle {cycle_id}')
+    cycle_state = dict()
+    local_exceptions = list()
+    detailed_pruning_run_stats = r.hgetall(redis_keys.get_specific_pruning_cycle_run_information(cycle_id))
+    if len(detailed_pruning_run_stats) > 0:
+        cycle_state = {k: PruningCycleForProjectDetails.parse_raw(v) for k, v in detailed_pruning_run_stats.items()}
+        console.log('Exported pruning cycle details for cycle ', cycle_id)
+    else:
+        local_exceptions.append({'detailed_pruning_run_stats': 'empty'})
+    return cycle_state, local_exceptions
+
+
 @app.command(name='exportState')
 def export_state():
-    r = redis.Redis(**REDIS_CONN_CONF, single_connection_client=True, decode_responses=True)
+    r = redis.Redis(**REDIS_CONN_CONF, max_connections=20, decode_responses=True)
     # TODO: incrementally byte stream the final state JSON into the bz2 compressor to achieve better memory efficiency
     # references: https://docs.python.org/3/glossary.html#term-bytes-like-object
     # https://docs.python.org/3/library/io.html#binary-i-o
@@ -211,78 +286,31 @@ def export_state():
     console.log("Exporting state to file")
     state = ProtocolState.construct()
     exceptions = defaultdict(list)  # collect excs while iterating over projects
-    
+    exceptions['project'] = dict()
+    exceptions['pruning'] = dict()
+
     state.projectSpecificStates = dict()
     all_projects = r.smembers(redis_keys.get_stored_project_ids_key())
-    for project_id in all_projects:
-        console.log(f'Exporting state for project {project_id}')
-        project_specific_state = ProjectSpecificProtocolState.construct()
-        try:
-            project_specific_state.lastFinalizedDAgBlockHeight = int(r.get(redis_keys.get_block_height_key(project_id)))
-        except Exception as e:
-            exceptions[project_id].append({'lastFinalizedDAgBlockHeight': str(e)})
-        else:
-            console.log('\t Exported lastFinalizedDAgBlockHeight')
-
-        try:
-            project_specific_state.firstEpochEndHeight = int(r.get(redis_keys.get_project_first_epoch_end_height(project_id)))
-        except Exception as e:
-            exceptions[project_id].append({'firstEpochEndHeight': str(e)})
-        else:
-            console.log('\t Exported firstEpochEndHeight')
-
-        try:
-            project_specific_state.epochSize = int(r.get(redis_keys.get_project_epoch_size(project_id)))
-        except Exception as e:
-            exceptions[project_id].append({'epochSize': str(e)})
-        else:
-            console.log('\t Exported epochSize')
-
-        project_dag_cids = r.zrangebyscore(
-            name=redis_keys.get_dag_cids_key(project_id),
-            min='-inf',
-            max='+inf',
-            withscores=True,
-        )
-
-        if len(project_dag_cids) > 0:
-            project_specific_state.dagCidsZset = {k[1]: k[0] for k in project_dag_cids}
-            console.log('\t Exported dagCidsZset of length ', len(project_specific_state.dagCidsZset))
-        else:
-            project_specific_state.dagCidsZset = dict()
-            exceptions[project_id].append({'dagCidsZset': 'empty'})
-
-        snapshot_cids = r.zrangebyscore(
-            name=redis_keys.get_payload_cids_key(project_id),
-            min='-inf',
-            max='+inf',
-            withscores=True,
-        )
-        if len(snapshot_cids) > 0:
-            project_specific_state.snapshotCidsZset = {k[1]: k[0] for k in snapshot_cids}
-            console.log('\t Exported snapshotCidsZset of length ', len(project_specific_state.snapshotCidsZset))
-        else:
-            project_specific_state.snapshotCidsZset = dict()
-            exceptions[project_id].append({'snapshotCidsZset': 'empty'})
-
-        project_dag_segments = r.hgetall(redis_keys.get_project_dag_segments_key(project_id))
-        if len(project_dag_segments) > 0:
-            project_specific_state.dagSegments = {k: ProjectDAGChainSegmentMetadata.parse_raw(v) for k, v in project_dag_segments.items()}
-        else:
-            project_specific_state.dagSegments = dict()
-            exceptions[project_id].append({'dagSegments': 'empty'})
-        state.projectSpecificStates[project_id] = project_specific_state
-        
-        # # # project ID specific state end, now incrementally bz compress
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_project = {executor.submit(export_project_state, project_id, r): project_id for project_id in all_projects}
+        for future in concurrent.futures.as_completed(future_to_project):
+            project_id = future_to_project[future]
+            try:
+                project_specific_state, local_exceptions = future.result()
+            except Exception as exc:
+                exceptions['project'].update({project_id: str(exc)})
+            else:
+                state.projectSpecificStates[project_id] = project_specific_state
+                if local_exceptions:
+                    exceptions['project'].update({project_id: local_exceptions})
     pruning_project_status = r.hgetall(redis_keys.get_pruning_status_key())
     if len(pruning_project_status) > 0:
         state.pruningProjectStatus = {k: int(v) for k, v in pruning_project_status.items()}
         console.log('Backed up last pruned DAG height for projects: ', ', '.join(state.pruningProjectStatus.keys()))
     else:
         state.pruningProjectStatus = dict()
-        exceptions['pruning'].append({'pruningProjectStatus': 'empty'})
+        exceptions['pruning'].update({'pruningProjectStatus': 'empty'})
 
-    state.pruningCycleRunStatus = dict()
     pruning_cycle_run_stats = r.zrangebyscore(
         name=redis_keys.get_all_pruning_cycles_status_key(),
         min='-inf',
@@ -290,24 +318,28 @@ def export_state():
         withscores=True,
     )
     if len(pruning_cycle_run_stats) > 0:
-        state.pruningCycleRunStatus = {k[0]: k[1] for k in pruning_cycle_run_stats}
+        state.pruningCycleRunStatus = {int(k[1]): PruningCycleOverallDetails.parse_raw(k[0]) for k in pruning_cycle_run_stats}
     else:
         state.pruningCycleRunStatus = dict()
-        exceptions['pruning'].append({'pruningCycleRunStats': 'empty'})
+        exceptions['pruning'].update({'pruningCycleRunStats': 'empty'})
 
-    exceptions['pruning'].append({'detailedRunStats': defaultdict(list)})
+    exceptions['pruning'].update({'detailedRunStats': dict()})
     state.pruningProjectDetails = dict()
-    for detailed_pruning_run_stats_key in r.scan_iter(match=redis_keys.get_specific_pruning_cycle_run_information_pattern()):
-        detailed_pruning_run_stats = r.hgetall(detailed_pruning_run_stats_key)
-        cycle_id = detailed_pruning_run_stats_key.split(':')[-1]
-        state.pruningProjectDetails[cycle_id] = dict()
-        if len(detailed_pruning_run_stats) > 0:
-             state.pruningProjectDetails[cycle_id] = {k: PruningCycleForProjectDetails.parse_raw(v) for k, v in detailed_pruning_run_stats.items()}
-             console.log('Exported pruning cycle details for cycle ', cycle_id)
-        else:
-            state.pruningProjectDetails[cycle_id] = dict()
-            exceptions['pruning']['detailedRunStats'].append({cycle_id: 'empty'})
+    cycles_collected = [k.pruningCycleID for k in state.pruningCycleRunStatus.values()]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_cycle = {executor.submit(export_pruning_cycle_details, cycle_id, r): cycle_id for cycle_id in cycles_collected}
+        for future in concurrent.futures.as_completed(future_to_cycle):
+            cycle_id = future_to_cycle[future]
+            try:
+                cycle_specific_state, local_exceptions = future.result()
+            except Exception as exc:
+                exceptions['pruning']['detailedRunStats'].update({cycle_id: str(exc)})
+            else:
+                state.pruningProjectDetails[cycle_id] = cycle_specific_state
+                exceptions['pruning']['detailedRunStats'].update({cycle_id: local_exceptions})
     state_json = state.json()
+    console.log('Collected exceptions while processing: ')
+    console.print_json(json.dumps(exceptions))
     with bz2.open('state.json.bz2', 'wb') as f:
         with io.TextIOWrapper(f, encoding='utf-8') as enc:
             enc.write(state_json)

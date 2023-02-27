@@ -10,12 +10,24 @@ class ProjectDAGChainSegmentMetadata(BaseModel):
     endDAGCID: str
     storageType: str
 
+
 class PruningCycleForProjectDetails(BaseModel):
     Host: str
     projectID: str
     DAGSegmentsProcessed: int
     DAGSegmentsArchived: int
     CIDsUnPinned: int
+
+
+class PruningCycleOverallDetails(BaseModel):
+    pruningCycleID: str
+    cycleStartTime: int
+    cycleEndTime: int
+    projectsCount: int
+    projectsProcessSuccessCount: int
+    projectsProcessFailedCount: int
+    projectsNotProcessedCount: int
+    hostName: str
 
 
 class ProjectSpecificProtocolState(BaseModel):
@@ -30,7 +42,7 @@ class ProjectSpecificProtocolState(BaseModel):
 class ProtocolState(BaseModel):
     projectSpecificStates: Dict[str, ProjectSpecificProtocolState]  # projectID to project specific protocol state mapping
     pruningProjectStatus: Dict[str, int]  # project ID -> last pruned DAG block height htable
-    pruningCycleRunStatus: Dict[int, dict]  # millisecond timestamp -> pruning cycle run status mapping
+    pruningCycleRunStatus: Dict[int, PruningCycleOverallDetails]  # millisecond timestamp -> pruning cycle run status mapping
     pruningProjectDetails: Dict[str, Dict[str, PruningCycleForProjectDetails]]  # cycleID -> project ID -> pruning cycle run details mapping
 
 

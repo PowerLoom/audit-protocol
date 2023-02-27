@@ -30,8 +30,8 @@ def get_all_pruning_cycles_status_key():
     return 'pruningRunStatus'
 
 
-def get_specific_pruning_cycle_run_information_pattern():
-    return 'pruningProjectDetails:*'
+def get_specific_pruning_cycle_run_information(cycle_id):
+    return f'pruningProjectDetails:{cycle_id}'
 
 def get_dag_cids_key(project_id: str):
     dag_cids_key = "projectID:{}:Cids".format(project_id)
