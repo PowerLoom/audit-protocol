@@ -1,10 +1,11 @@
 import bz2
 import io
+import pydantic
 import typer
 import concurrent.futures
 from itertools import cycle
 from textwrap import wrap
-from typing import Optional
+from typing import Dict, Optional
 from collections import defaultdict
 from settings_model import Settings
 from utils import redis_conn
@@ -216,6 +217,8 @@ def export_project_state(project_id: str, r: redis.Redis):
         project_specific_state.firstEpochEndHeight = int(r.get(redis_keys.get_project_first_epoch_end_height(project_id)))
     except Exception as e:
         local_exceptions.append({'firstEpochEndHeight': str(e)})
+        if 'Summary' in project_id:
+            project_specific_state.firstEpochEndHeight = 0
     else:
         console.log('\t Exported firstEpochEndHeight')
 
@@ -223,6 +226,8 @@ def export_project_state(project_id: str, r: redis.Redis):
         project_specific_state.epochSize = int(r.get(redis_keys.get_project_epoch_size(project_id)))
     except Exception as e:
         local_exceptions.append({'epochSize': str(e)})
+        if 'Summary' in project_id:
+            project_specific_state.epochSize = 0
     else:
         console.log('\t Exported epochSize')
 
@@ -234,7 +239,7 @@ def export_project_state(project_id: str, r: redis.Redis):
     )
 
     if len(project_dag_cids) > 0:
-        project_specific_state.dagCidsZset = {k[1]: k[0] for k in project_dag_cids}
+        project_specific_state.dagCidsZset = {int(k[1]): k[0] for k in project_dag_cids}
         console.log('\t Exported dagCidsZset of length ', len(project_specific_state.dagCidsZset))
     else:
         project_specific_state.dagCidsZset = dict()
@@ -247,7 +252,7 @@ def export_project_state(project_id: str, r: redis.Redis):
         withscores=True,
     )
     if len(snapshot_cids) > 0:
-        project_specific_state.snapshotCidsZset = {k[1]: k[0] for k in snapshot_cids}
+        project_specific_state.snapshotCidsZset = {int(k[1]): k[0] for k in snapshot_cids}
         console.log('\t Exported snapshotCidsZset of length ', len(project_specific_state.snapshotCidsZset))
     else:
         project_specific_state.snapshotCidsZset = dict()
@@ -300,9 +305,10 @@ def export_state():
             except Exception as exc:
                 exceptions['project'].update({project_id: str(exc)})
             else:
-                state.projectSpecificStates[project_id] = project_specific_state
                 if local_exceptions:
                     exceptions['project'].update({project_id: local_exceptions})
+                else:
+                    state.projectSpecificStates[project_id] = project_specific_state
     pruning_project_status = r.hgetall(redis_keys.get_pruning_status_key())
     if len(pruning_project_status) > 0:
         state.pruningProjectStatus = {k: int(v) for k, v in pruning_project_status.items()}
@@ -344,6 +350,80 @@ def export_state():
         with io.TextIOWrapper(f, encoding='utf-8') as enc:
             enc.write(state_json)
     console.log('Exported state.json.bz2')
+
+
+def load_project_specific_state(project_id: str, project_state: ProjectSpecificProtocolState, r: redis.Redis):
+    console.log('Loading project specific state for project ', project_id)
+    r.sadd(redis_keys.get_stored_project_ids_key(), project_id)
+    console.log('\tLoaded project id in all projects set')
+    r.set(redis_keys.get_block_height_key(project_id), project_state.lastFinalizedDAgBlockHeight)
+    console.log('\tLoaded last finalized DAG block height')
+    r.set(redis_keys.get_project_first_epoch_end_height(project_id), project_state.firstEpochEndHeight)
+    console.log('\tLoaded first epoch end height')
+    r.set(redis_keys.get_project_epoch_size(project_id), project_state.epochSize)
+    console.log('\tLoaded epoch size')
+    # transform to element-score mapping for easy addition to zset
+    dag_cid_map = {v: k for k, v in project_state.dagCidsZset.items()}
+    r.zadd(name=redis_keys.get_dag_cids_key(project_id), mapping=dag_cid_map)
+    console.log('\tLoaded DAG CIDs')
+    snapshot_cid_map = {v: k for k, v in project_state.snapshotCidsZset.items()}
+    r.zadd(name=redis_keys.get_payload_cids_key(project_id), mapping=snapshot_cid_map)
+    console.log('\tLoaded snapshot CIDs')
+    r.hset(
+        name=redis_keys.get_project_dag_segments_key(project_id),
+        mapping={k: v.json() for k, v in project_state.dagSegments.items()}
+    )
+    console.log('\tLoaded DAG segments')
+
+def load_pruning_detailed_stats(cycle_id: int, project_id_cycle_details_map: Dict[str, PruningCycleForProjectDetails], r: redis.Redis):
+    console.log('Loading pruning cycle details for cycle ', cycle_id)
+    r.hset(
+        name=redis_keys.get_specific_pruning_cycle_run_information(cycle_id),
+        mapping={k: v.json() for k, v in project_id_cycle_details_map.items()}
+    )
+    console.log('\tLoaded pruning cycle details for cycle ', cycle_id, ' with ', len(project_id_cycle_details_map), ' projects')
+
+@app.command(name='loadState')
+def load_state_from_file(file_name: Optional[str] = typer.Argument('state.json.bz2')):
+    r = redis.Redis(**REDIS_CONN_CONF, max_connections=20, decode_responses=True)
+    console.log('Loading state from file ', file_name)
+    with bz2.open(file_name, 'rb') as f:
+        state_json = f.read()
+    try:
+        state = ProtocolState.parse_raw(state_json)
+    except pydantic.ValidationError as e:
+        console.log('Error while parsing state file: ', e)
+        with open('state_parse_error.json', 'w') as f:
+            json.dump(e.errors(), f)
+    console.log(state.pruningCycleRunStatus)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_project = {executor.submit(load_project_specific_state, project_id, project_state, r): project_id for project_id, project_state in state.projectSpecificStates.items()}
+        for future in concurrent.futures.as_completed(future_to_project):
+            project_id = future_to_project[future]
+            try:
+                future.result()
+            except Exception as exc:
+                console.log('Error while loading project state: ', project_id, exc)
+            else:
+                console.log('Loaded project state: ', project_id)
+    r.hset(
+        name=redis_keys.get_pruning_status_key(), 
+        mapping=state.pruningProjectStatus
+    )
+    console.log('Loaded pruning project status in key ', redis_keys.get_pruning_status_key())
+    r.zadd(
+        name=redis_keys.get_all_pruning_cycles_status_key(),
+        mapping={v.json(): k for k, v in state.pruningCycleRunStatus.items()}
+    )
+    console.log('Loaded pruning run cycle status in key ', redis_keys.get_all_pruning_cycles_status_key())
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_cycle = {executor.submit(load_pruning_detailed_stats, cycle_id, project_id_cycle_details_map, r): cycle_id for cycle_id, project_id_cycle_details_map in state.pruningProjectDetails.items()}
+        for future in concurrent.futures.as_completed(future_to_cycle):
+            cycle_id = future_to_cycle[future]
+            try:
+                future.result()
+            except Exception as exc:
+                console.log('Error while loading pruning cycle details: ', cycle_id, exc)
 
 @app.command()
 def skip_pair_projects_verified_heights():
