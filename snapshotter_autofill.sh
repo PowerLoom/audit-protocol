@@ -37,7 +37,7 @@ sed -i "s|https://rpc-url|$RPC_URL|" settings.json
 
 sed -i "s|generated-uuid|$UUID|" settings.json
 
-sed -i "s|https://consensus-url|$consensus_url|" settings.json
+sed -i "s|http://offchain-consensus:9030|$consensus_url|" settings.json
 
 sed -i "s|web3-storage-token|$WEB3_STORAGE_TOKEN|" settings.json
 
