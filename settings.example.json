@@ -83,7 +83,7 @@
 	"web3_storage": {
 		"url": "https://api.web3.storage",
 		"upload_url_suffix": "/upload",
-		"api_token": "web3-storage-token",
+		"api_token": "",
 		"timeout_secs": 30,
 		"max_idle_conns": 5,
 		"idle_conn_timeout": 0,
