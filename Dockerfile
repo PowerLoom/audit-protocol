@@ -11,6 +11,7 @@ RUN pip3 install --no-cache --upgrade pip setuptools
 RUN apk update && apk add --no-cache ethtool nodejs npm bash gcc musl-dev libc-dev python3-dev curl libffi-dev vim nano
 
 RUN npm install pm2 -g
+RUN pm2 install pm2-logrotate && pm2 set pm2-logrotate:compress true && pm2 set pm2-logrotate:retain 7
 
 WORKDIR /src
 COPY go/go.mod go/go.sum ./
@@ -19,11 +20,8 @@ RUN go mod download
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt
 
-RUN pm2 install pm2-logrotate && pm2 set pm2-logrotate:compress true && pm2 set pm2-logrotate:retain 7
-
 EXPOSE 9000
 EXPOSE 9002
-EXPOSE 9030
 
 COPY . .
 RUN ./build.sh

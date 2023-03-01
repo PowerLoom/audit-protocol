@@ -139,7 +139,7 @@
 	},
 	"use_consensus": true,
 	"consensus_config": {
-		"service_url": "https://consensus-url",
+		"service_url": "http://offchain-consensus:9030",
 		"rate_limit": {
 			"req_per_sec": 5,
 			"burst": 5
