@@ -10,10 +10,11 @@ import (
 
 	shell "github.com/ipfs/go-ipfs-api"
 	ma "github.com/multiformats/go-multiaddr"
-	"audit-protocol/goutils/datamodel"
-	"audit-protocol/goutils/settings"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
+
+	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/settings"
 )
 
 type IpfsClient struct {
@@ -21,16 +22,16 @@ type IpfsClient struct {
 	ipfsClientRateLimiter *rate.Limiter
 }
 
-func (client *IpfsClient) Init(url string, poolSize int, rateLimiter *settings.RateLimiter_, timeoutSecs int) {
-	_url := url
-	_, err := ma.NewMultiaddr(_url)
-	if err == nil {
-		// Convert the URL from /ip4/<IPAddress>/tcp/<Port> to IP:Port format.
-		url = strings.Split(_url, "/")[2] + ":" + strings.Split(_url, "/")[4]
+// InitClient initializes the IPFS client.
+// Init functions should not be treated as methods, they are just functions that return a pointer to the struct.
+func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, timeoutSecs int) *IpfsClient {
+	// no need to use underscore for _url, it is just a local variable
+	// _url := url
+	if _, err := ma.NewMultiaddr(url); err == nil {
+		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
 	}
 
-	t := http.Transport{
-		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+	transport := http.Transport{
 		MaxIdleConns:        poolSize,
 		MaxConnsPerHost:     poolSize,
 		MaxIdleConnsPerHost: poolSize,
@@ -38,19 +39,26 @@ func (client *IpfsClient) Init(url string, poolSize int, rateLimiter *settings.R
 		DisableCompression:  true,
 	}
 
-	ipfsHttpClient := http.Client{
+	ipfsHTTPClient := http.Client{
 		Timeout:   time.Duration(timeoutSecs * int(time.Second)),
-		Transport: &t,
+		Transport: &transport,
 	}
+
 	log.Debug("Initializing the IPFS client with IPFS Daemon URL:", url)
-	client.ipfsClient = shell.NewShellWithClient(url, &ipfsHttpClient)
+
+	client := new(IpfsClient)
+	client.ipfsClient = shell.NewShellWithClient(url, &ipfsHTTPClient)
 	timeout := time.Duration(timeoutSecs * int(time.Second))
 	client.ipfsClient.SetTimeout(timeout)
-	log.Debugf("Setting IPFS timeout of %d seconds", timeout.Seconds())
-	tps := rate.Limit(10) //10 TPS
+
+	log.Debugf("Setting IPFS timeout of %f seconds", timeout.Seconds())
+
+	tps := rate.Limit(10) // 10 TPS
 	burst := 10
+
 	if rateLimiter != nil {
 		burst = rateLimiter.Burst
+
 		if rateLimiter.RequestsPerSec == -1 {
 			tps = rate.Inf
 			burst = 0
@@ -58,8 +66,11 @@ func (client *IpfsClient) Init(url string, poolSize int, rateLimiter *settings.R
 			tps = rate.Limit(rateLimiter.RequestsPerSec)
 		}
 	}
+
 	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
 	client.ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
+
+	return client
 }
 
 func (client *IpfsClient) GetDagBlock(dagCid string) (datamodel.DagBlock, error) {
