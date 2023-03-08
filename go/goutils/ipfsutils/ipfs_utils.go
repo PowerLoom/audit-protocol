@@ -205,6 +205,7 @@ func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string, retryIntervalSec
 
 func (client *IpfsClient) UnPinCidsFromIPFS(projectId string, cids *map[int]string) int {
 	errorCount := 0
+
 	for height, cid := range *cids {
 		i := 0
 		for ; i < 3; i++ {
@@ -212,28 +213,38 @@ func (client *IpfsClient) UnPinCidsFromIPFS(projectId string, cids *map[int]stri
 			if err != nil {
 				log.Warnf("IPFSClient Rate Limiter wait timeout with error %+v", err)
 				time.Sleep(1 * time.Second)
+
 				continue
 			}
+
 			log.Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectId)
+
 			err = client.ipfsClient.Unpin(cid)
 			if err != nil {
-				//CID has already been unpinned
+				// CID has already been unpinned.
 				if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
 					log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
 					break
 				}
+
 				log.Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, i)
 				time.Sleep(5 * time.Second)
+
 				continue
 			}
+
 			log.Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectId)
+
 			break
 		}
+
 		if i == 3 {
 			log.Errorf("Failed to unpin CID %s at height %d from ipfs for project %s after max retries", cid, height, projectId)
 			errorCount++
+
 			continue
 		}
 	}
+
 	return errorCount
 }

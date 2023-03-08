@@ -24,6 +24,7 @@ type caching struct {
 
 func (c *caching) GetDAGCidsFromRedis(cycleID string, projectId string, startScore int, endScore int) *map[int]string {
 	cids := make(map[int]string, endScore-startScore)
+
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_CIDS, projectId)
 	for i := 0; i < 5; i++ {
 		res := c.redisClient.ZRangeByScoreWithScores(context.Background(), key, &redis.ZRangeBy{
@@ -247,57 +248,76 @@ func (c *caching) UpdatePruningProjectReportInRedis(cycleDetails *models.Pruning
 	log.Errorf("Failed to update projectPruningReport %+v for cycle %+v in redis after max retries.", *projectPruningReport, cycleDetails)
 }
 
+// FetchProjectMetaData fetches the project's dag segments with their prune status from redis
+// can be named as FetchProjectDagSegments
 func (c *caching) FetchProjectMetaData(cycleID, projectId string) *models.ProjectMetaData {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_METADATA, projectId)
-	for i := 0; i < 3; i++ {
+
+	// sort of retry logic
+	// can be improved by using exponential backoff
+	for retry := 0; retry < 3; retry++ {
 		res := c.redisClient.HGetAll(context.Background(), key)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
 				return nil
 			}
+
 			log.WithField("CycleID", cycleID).Warnf("Could not fetch key %s due to error %+v. Retrying %d.",
-				key, res.Err(), i)
+				key, res.Err(), retry)
+
 			time.Sleep(5 * time.Second)
+
 			continue
 		}
+
 		log.WithField("CycleID", cycleID).Debugf("Successfully fetched project metaData from redis for projectId %s with value %s",
 			projectId, res.Val())
-		var projectMetaData models.ProjectMetaData
+
+		projectMetaData := new(models.ProjectMetaData)
 		projectMetaData.DagChains = res.Val()
-		return &projectMetaData
+
+		return projectMetaData
 	}
+
 	log.WithField("CycleID", cycleID).Errorf("Failed to fetch metaData for project %s from redis after max retries.", projectId)
+
 	return nil
 }
 
+// GetOldestIndexedProjectHeight returns the oldest indexed project height
 func (c *caching) GetOldestIndexedProjectHeight(cycleID string, projectPruneState *models.ProjectPruneState, settingsObj *settings.SettingsObj) int {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TAIL_INDEX, projectPruneState.ProjectId, settingsObj.PruningServiceSettings.OldestProjectIndex)
+
 	lastIndexHeight := -1
+
 	res := c.redisClient.Get(context.Background(), key)
 	err := res.Err()
 
-	if err != nil {
-		if err == redis.Nil {
-			log.WithField("CycleID", cycleID).Infof("Key %s does not exist", key)
-			//For summary projects hard-code it to curBlockHeight-1000 as of now which gives safe values till 24hrs
-			key = fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_FINALIZED_HEIGHT, projectPruneState.ProjectId)
-			res = c.redisClient.Get(context.Background(), key)
-			err := res.Err()
-			if err != nil {
-				if err == redis.Nil {
-					log.WithField("CycleID", cycleID).Errorf("Key %s does not exist", key)
-					return 0
-				}
-			}
-			projectFinalizedHeight, err := strconv.Atoi(res.Val())
-			if err != nil {
-				log.WithField("CycleID", cycleID).Fatalf("Unable to convert retrieved projectFinalizedHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
-				return -1
-			}
-			lastIndexHeight = projectFinalizedHeight - settingsObj.PruningServiceSettings.SummaryProjectsPruneHeightBehindHead
+	if err != nil && err == redis.Nil {
+		log.WithField("CycleID", cycleID).Infof("Key %s does not exist", key)
 
-			return lastIndexHeight
+		// For summary projects hard-code it to curBlockHeight-1000 as of now which gives safe values till 24hrs.
+		key = fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_FINALIZED_HEIGHT, projectPruneState.ProjectId)
+
+		res = c.redisClient.Get(context.Background(), key)
+
+		err = res.Err()
+		if err != nil {
+			if err == redis.Nil {
+				log.WithField("CycleID", cycleID).Errorf("Key %s does not exist", key)
+
+				return 0
+			}
 		}
+
+		projectFinalizedHeight, err := strconv.Atoi(res.Val())
+		if err != nil {
+			log.WithField("CycleID", cycleID).Fatalf("Unable to convert retrieved projectFinalizedHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
+			return -1
+		}
+		lastIndexHeight = projectFinalizedHeight - settingsObj.PruningServiceSettings.SummaryProjectsPruneHeightBehindHead
+
+		return lastIndexHeight
 	}
 
 	lastIndexHeight, err = strconv.Atoi(res.Val())
@@ -309,4 +329,79 @@ func (c *caching) GetOldestIndexedProjectHeight(cycleID string, projectPruneStat
 	log.WithField("CycleID", cycleID).Debugf("Fetched oldest index height %d for project %s from redis ", lastIndexHeight, projectPruneState.ProjectId)
 
 	return lastIndexHeight
+}
+
+func (c *caching) GetProjectsListFromRedis() map[string]*models.ProjectPruneState {
+	ctx := context.Background()
+	key := redisutils.REDIS_KEY_STORED_PROJECTS
+
+	log.Debugf("Fetching stored Projects from redis at key: %s", key)
+
+	for i := 0; ; i++ {
+		res := c.redisClient.SMembers(ctx, key)
+		if res.Err() != nil {
+			if res.Err() == redis.Nil {
+				log.Warnf("Stored Projects key doesn't exist..retrying")
+				time.Sleep(5 * time.Minute)
+				continue
+			}
+			log.Errorf("Failed to fetch stored projects from redis due to err %+v. Retrying %d", res.Err(), i)
+			time.Sleep(5 * time.Second)
+
+			continue
+		}
+
+		projectList := make(map[string]*models.ProjectPruneState, len(res.Val()))
+		//projectList = make(map[string]*ProjectPruneState, 375)
+		for index := range res.Val() {
+			projectId := res.Val()[index]
+			//if strings.Contains(projectId, "uniswap_V2PairsSummarySnapshot_UNISWAPV2") {
+			projectPruneState := &models.ProjectPruneState{ProjectId: projectId}
+			projectList[projectId] = projectPruneState
+			//	break
+			//}
+		}
+
+		log.Infof("Retrieved %d storedProjects %+v from redis", len(res.Val()), projectList)
+
+		return projectList
+	}
+}
+
+// GetLastPrunedStatusFromRedis gets the last pruned height for each project from redis
+func (c *caching) GetLastPrunedStatusFromRedis(projectList map[string]*models.ProjectPruneState, cycleDetails *models.PruningCycleDetails) map[string]*models.ProjectPruneState {
+	log.WithField("CycleID", cycleDetails.CycleID).Debug("Fetching Last Pruned Status at key:", redisutils.REDIS_KEY_PRUNING_STATUS)
+
+	res := c.redisClient.HGetAll(context.Background(), redisutils.REDIS_KEY_PRUNING_STATUS)
+
+	if len(res.Val()) == 0 {
+		log.WithField("CycleID", cycleDetails.CycleID).Info("Failed to fetch Last Pruned Status  from redis for the projects.")
+		//Key doesn't exist.
+		log.WithField("CycleID", cycleDetails.CycleID).Info("Key doesn't exist..hence proceed from start of the block.")
+
+		return projectList
+	}
+	err := res.Err()
+	if err != nil {
+		log.WithField("CycleID", cycleDetails.CycleID).Error("Ideally should not come here, which means there is some other redis error. To debug:", err)
+
+		return projectList
+	}
+
+	// TODO: Need to handle dynamic addition of projects.
+	for projectId, lastHeight := range res.Val() {
+		if project, ok := projectList[projectId]; ok {
+			project.LastPrunedHeight, err = strconv.Atoi(lastHeight)
+			if err != nil {
+				log.WithField("CycleID", cycleDetails.CycleID).Errorf("lastPrunedHeight corrupt for project %s. It will be set to 0", projectId)
+				continue
+			}
+		} else {
+			projectList[projectId] = &models.ProjectPruneState{ProjectId: projectId, LastPrunedHeight: 0}
+		}
+	}
+
+	log.WithField("CycleID", cycleDetails.CycleID).Debugf("Fetched Last Pruned Status from redis %+v", projectList)
+
+	return projectList
 }
