@@ -284,6 +284,13 @@ class SnapshotSubmission(SnapshotBase):
     snapshotCID: str
 
 
+class EpochStatusRequest(BaseModel):
+    projectID: str
+    instanceID: str
+    epochs: List[EpochBase]
+
+
+
 class SubmissionDataStoreEntry(BaseModel):
     snapshotCID: str
     submittedTS: int

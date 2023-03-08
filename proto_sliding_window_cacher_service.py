@@ -263,7 +263,11 @@ async def build_primary_indexes(ipfs_read_client):
         sliding_cacher_logger.warning('Can\'t find projects max height for some projects, sleeping till next cycle | error_objs: %s', res_exceptions)
         return
 
-    smallest_source_height = project_source_height_map[next(iter(project_source_height_map))]["source_height"]
+    try:
+        smallest_source_height = project_source_height_map[next(iter(project_source_height_map))]["source_height"]
+    except StopIteration:
+        sliding_cacher_logger.error("Can\'t find smallest source height for projects, sleeping till next cycle")
+        return
     for project_map_id, project_map in project_source_height_map.items():
         smallest_source_height = int(project_map["source_height"]) if int(project_map["source_height"]) < int(smallest_source_height) else int(smallest_source_height)
 
