@@ -20,7 +20,7 @@ type TaskMgr interface {
 	// in http webhook, we need to create a new http server listening on a port and configured path, etc.
 	// we need workerType to identify which worker is consuming the tasks and depending on the worker type,
 	// we can create configure for consumer initialization.
-	Consume(ctx context.Context, workerType worker.Type, msgChan chan TaskHandler) error
+	Consume(ctx context.Context, workerType worker.Type, msgChan chan TaskHandler, errChan chan error) error
 }
 
 type TaskHandler interface {

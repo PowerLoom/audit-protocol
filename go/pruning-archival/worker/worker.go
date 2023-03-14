@@ -29,22 +29,39 @@ func (w worker) ConsumeTask() error {
 	// start consuming messages in separate go routine.
 	// messages will be sent back over taskChan.
 	go func() {
-		err := w.taskmgr.Consume(context.Background(), worker2.TypePruningServiceWorker, taskChan)
-		if err != nil {
-			log.Fatalf("Failed to consume the message: %v", err)
+		// improve
+		errChan := make(chan error)
+		maxRetries := 0
+		for maxRetries < 3 {
+			err := w.taskmgr.Consume(context.Background(), worker2.TypePruningServiceWorker, taskChan, errChan)
+			if err != nil {
+				log.Fatalf("Failed to consume the message: %v", err)
+			}
+
+			err = <-errChan
+			if err != nil {
+				log.Fatalf("Failed to consume the message: %v, retrying again", err)
+			}
+			maxRetries++
 		}
+
+		log.Fatalf("Failed to consume messages, max retries reached")
 	}()
 
-	// create a wait group to wait for all the tasks to finish.
+	// create a wait group to wait for previous the tasks to finish.
+	// limit number of concurrent tasks per worker
 	swg := sizedwaitgroup.New(w.settings.PruningServiceSettings.Concurrency)
 
 	for {
 		swg.Add()
-		go func() {
-			// as task chan is buffered channel, we can use it as a semaphore to limit the number of concurrent tasks.
-			taskHandler := <-taskChan
 
+		// as task chan is buffered channel, we can use it as a semaphore to limit the number of concurrent tasks.
+		taskHandler := <-taskChan
+
+		go func(taskHandler taskmgr.TaskHandler) {
 			msgBody := taskHandler.GetBody()
+
+			log.Debug("Received message: ", string(msgBody))
 
 			err := w.service.Run(msgBody)
 			if err != nil {
@@ -54,19 +71,17 @@ func (w worker) ConsumeTask() error {
 				if err != nil {
 					log.Errorf("Failed to nack the message: %v", err)
 				}
-
-				// TODO: put the msg in dead letter queue.
-			}
-
-			err = taskHandler.Ack()
-			if err != nil {
-				log.Errorf("Failed to ack the message: %v", err)
+			} else {
+				err = taskHandler.Ack()
+				if err != nil {
+					log.Errorf("Failed to ack the message: %v", err)
+				}
 			}
 
 			swg.Done()
-		}()
+		}(taskHandler)
 
-		// wait till all the tasks previous are finished.
+		// wait till all the previous tasks are finished.
 		swg.Wait()
 	}
 }

@@ -209,52 +209,35 @@ func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string, retryIntervalSec
 	return &payload, nil
 }
 
-func (client *IpfsClient) UnPinCidsFromIPFS(projectId string, cids *map[int]string) int {
-	errorCount := 0
-	maxRetry := 3
-
-	for height, cid := range *cids {
-		retry := 0
-		for ; retry < 3; retry++ {
-			err := client.ipfsClientRateLimiter.Wait(context.Background())
-			if err != nil {
-				log.Warnf("IPFSClient Rate Limiter wait timeout with error %+v", err)
-				time.Sleep(1 * time.Second)
-
-				continue
-			}
-
-			log.Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectId)
-
-			err = client.ipfsClient.Unpin(cid)
-			if err != nil {
-				// CID has already been unpinned.
-				if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
-					log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
-					retry = maxRetry
-					break
-				}
-
-				log.Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, retry)
-				time.Sleep(5 * time.Second)
-
-				continue
-			}
-
-			log.Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectId)
-
-			break
-		}
-
-		if retry == 3 {
-			log.Errorf("Failed to unpin CID %s at height %d from ipfs for project %s after max retries", cid, height, projectId)
-			errorCount++
+func (client *IpfsClient) UnPinCidsFromIPFS(projectID string, cids map[int]string) error {
+	for height, cid := range cids {
+		err := client.ipfsClientRateLimiter.Wait(context.Background())
+		if err != nil {
+			log.Warnf("IPFSClient Rate Limiter wait timeout with error %+v", err)
 
 			continue
 		}
+
+		log.Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectID)
+
+		err = client.ipfsClient.Unpin(cid)
+		if err != nil {
+			// CID has already been unpinned.
+			if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
+				log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectID, height)
+
+				continue
+			}
+
+			log.Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v", cid, projectID, height, err)
+
+			return err
+		}
+
+		log.Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectID)
 	}
 
-	return errorCount
+	return nil
 }
 
 // testing and simulation methods

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/remeh/sizedwaitgroup"
@@ -154,6 +155,10 @@ func (m *migrator) fill() {
 			dummyCID := m.createDummyDagCID([]byte(projectID + strconv.Itoa(int(cid.Score))))
 
 			cidMembers[index] = &redis.Z{Score: cid.Score, Member: dummyCID}
+
+			if index%500 == 0 {
+				time.Sleep(1 * time.Second)
+			}
 		}
 
 		err = m.follower.ZAdd(context.Background(), fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_CIDS, projectID), cidMembers...).Err()
@@ -167,6 +172,10 @@ func (m *migrator) fill() {
 			dummyCID := m.createDummyDagCID([]byte(projectID + "pcid" + strconv.Itoa(int(cid.Score))))
 
 			payloadCIDMembers[index] = &redis.Z{Score: cid.Score, Member: dummyCID}
+
+			if index%500 == 0 {
+				time.Sleep(1 * time.Second)
+			}
 		}
 
 		err = m.follower.ZAdd(context.Background(), fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), payloadCIDMembers...).Err()

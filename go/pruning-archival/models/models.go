@@ -38,14 +38,14 @@ type ProjectPruningReport struct {
 	LocalCacheDeletionsFailed int    `json:"localCacheDeletionsFailed,omitempty"`
 }
 
-type PruningCycleDetails struct {
-	CycleID                     string `json:"pruningCycleID"`
-	CycleStartTime              int64  `json:"cycleStartTime"`
-	CycleEndTime                int64  `json:"cycleEndTime"`
-	ProjectsCount               uint64 `json:"projectsCount"`
-	ProjectsProcessSuccessCount uint64 `json:"projectsProcessSuccessCount"`
-	ProjectsProcessFailedCount  uint64 `json:"projectsProcessFailedCount"`
-	ProjectsNotProcessedCount   uint64 `json:"projectsNotProcessedCount"`
-	HostName                    string `json:"hostName"`
-	ErrorInLastcycle            bool   `json:"-"`
+type PruningTaskDetails struct {
+	TaskID    string `json:"pruningTaskID"`
+	StartTime int64  `json:"cycleStartTime"`
+	EndTime   int64  `json:"cycleEndTime"`
+	HostName  string `json:"hostName"`
+}
+
+type ZSets struct {
+	PayloadCids map[int]string `json:"payloadCids"`
+	DagCids     map[int]string `json:"dagCids"`
 }

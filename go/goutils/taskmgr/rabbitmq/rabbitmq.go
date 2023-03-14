@@ -35,47 +35,77 @@ func (r RabbitmqTaskMgr) Publish(ctx context.Context) error {
 	panic("implement me")
 }
 
-func (r RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, msgChan chan taskmgr.TaskHandler) error {
+// getChannel returns a channel from the connection
+// this method is also used to create a new channel if channel is closed
+func (r RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, error) {
 	channel, err := r.conn.Channel()
 	if err != nil {
 		log.Errorf("Failed to open a channel on rabbitmq: %v", err)
 
-		return taskmgr.ErrConsumerInitFailed
+		return nil, taskmgr.ErrConsumerInitFailed
 	}
-
-	defer func(channel *amqp.Channel) {
-		err = channel.Close()
-		if err != nil {
-			log.Errorf("Failed to close channel on rabbitmq: %v", err)
-		}
-	}(channel)
 
 	exchange := r.getExchange(workerType)
 	err = channel.ExchangeDeclare(exchange, "direct", true, false, false, false, nil)
 	if err != nil {
 		log.Errorf("Failed to declare an exchange on rabbitmq: %v", err)
 
-		return taskmgr.ErrConsumerInitFailed
+		return nil, taskmgr.ErrConsumerInitFailed
+	}
+
+	// dead letter exchange
+	err = channel.ExchangeDeclare(r.settings.Rabbitmq.Setup.Core.DLX, "direct", true, false, false, false, nil)
+	if err != nil {
+		log.Errorf("Failed to declare an exchange on rabbitmq: %v", err)
+
+		return nil, taskmgr.ErrConsumerInitFailed
 	}
 
 	// declare the queue
-	queue, err := channel.QueueDeclare(r.getQueue(workerType), true, false, false, false, nil)
+	queue, err := channel.QueueDeclare(r.getQueue(workerType), true, false, false, false, map[string]interface{}{
+		"x-dead-letter-exchange":    r.settings.Rabbitmq.Setup.Core.DLX,
+		"x-dead-letter-routing-key": r.getRoutingKey(workerType),
+	})
 	if err != nil {
 		log.Errorf("Failed to declare a queue on rabbitmq: %v", err)
 
-		return taskmgr.ErrConsumerInitFailed
+		return nil, taskmgr.ErrConsumerInitFailed
 	}
 
 	err = channel.QueueBind(queue.Name, r.getRoutingKey(workerType), exchange, false, nil)
 	if err != nil {
 		log.Errorf("Failed to bind a queue on rabbitmq: %v", err)
 
-		return taskmgr.ErrConsumerInitFailed
+		return nil, taskmgr.ErrConsumerInitFailed
 	}
 
+	return channel, nil
+}
+
+func (r RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, msgChan chan taskmgr.TaskHandler, errChan chan error) error {
+	channel, err := r.getChannel(workerType)
+	if err != nil {
+		return err
+	}
+
+	defer func(channel *amqp.Channel) {
+		err = channel.Close()
+		if err != nil && err != amqp.ErrClosed {
+			log.Errorf("Failed to close channel on rabbitmq: %v", err)
+		}
+	}(channel)
+
+	defer func() {
+		err = r.conn.Close()
+		if err != nil && err != amqp.ErrClosed {
+			log.Errorf("Failed to close connection on rabbitmq: %v", err)
+		}
+	}()
+
+	queueName := r.getQueue(workerType)
 	// consume messages
 	msgs, err := channel.Consume(
-		queue.Name,
+		queueName,
 		"",
 		false,
 		false,
@@ -89,19 +119,29 @@ func (r RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, ms
 		return err
 	}
 
-	log.Infof("RabbitmqTaskMgr: consuming messages from queue %s", queue.Name)
+	log.Infof("RabbitmqTaskMgr: consuming messages from queue %s", queueName)
 
-	forever := make(chan bool)
+	forever := make(chan *amqp.Error)
 
-	for msg := range msgs {
-		log.Infof("received new message")
+	forever = channel.NotifyClose(forever)
 
-		task := taskmgr.Task{Msg: msg}
+	go func() {
+		for msg := range msgs {
+			log.Infof("received new message")
 
-		msgChan <- task
+			task := taskmgr.Task{Msg: msg}
+
+			msgChan <- task
+		}
+	}()
+
+	err = <-forever
+	if err != nil {
+		log.Errorf("RabbitmqTaskMgr: connection closed while consuming messages from queue %s: %s", queueName, err)
 	}
 
-	<-forever
+	// send back error due to rabbitmq channel closed
+	errChan <- err
 
 	return nil
 }

@@ -80,6 +80,7 @@ type SettingsObj struct {
 		Setup    struct {
 			Core struct {
 				Exchange string `json:"exchange"`
+				DLX      string `json:"dlx"`
 			} `json:"core"`
 			Queues struct {
 				CommitPayloads struct {

@@ -3,7 +3,7 @@ package service
 // moved to models/models.go
 /*type ProjectPruningReport struct {
 	HostName                  string `json:"Host"`
-	ProjectID                 string `json:"projectID"`
+	ProjectID                 string `json:"ProjectID"`
 	DAGSegmentsProcessed      int    `json:"DAGSegmentsProcessed"`
 	DAGSegmentsArchived       int    `json:"DAGSegmentsArchived"`
 	DAGSegmentsArchivalFailed int    `json:"DAGSegmentsArchivalFailed,omitempty"`
@@ -14,9 +14,9 @@ package service
 }
 
 type PruningCycleDetails struct {
-	CycleID                     string `json:"pruningCycleID"`
-	CycleStartTime              int64  `json:"cycleStartTime"`
-	CycleEndTime                int64  `json:"cycleEndTime"`
+	TaskID                     string `json:"pruningCycleID"`
+	StartTime              int64  `json:"cycleStartTime"`
+	EndTime                int64  `json:"cycleEndTime"`
 	ProjectsCount               uint64 `json:"projectsCount"`
 	ProjectsProcessSuccessCount uint64 `json:"projectsProcessSuccessCount"`
 	ProjectsProcessFailedCount  uint64 `json:"projectsProcessFailedCount"`
@@ -28,7 +28,7 @@ type PruningCycleDetails struct {
 //func UpdatePruningCycleDetailsInRedis(cycleDetails *models.PruningCycleDetails, redisClient *redis.Client) {
 //	cycleDetailsStr, _ := json.Marshal(cycleDetails)
 //	for i := 0; i < 3; i++ {
-//		res := redisClient.ZAdd(context.Background(), redisutils.REDIS_KEY_PRUNING_CYCLE_DETAILS, &redis.Z{Score: float64(cycleDetails.CycleStartTime), Member: cycleDetailsStr})
+//		res := redisClient.ZAdd(context.Background(), redisutils.REDIS_KEY_PRUNING_CYCLE_DETAILS, &redis.Z{Score: float64(cycleDetails.StartTime), Member: cycleDetailsStr})
 //		if res.Err() != nil {
 //			log.Warnf("Failed to update PruningCycleDetails in redis due to error %+v. Retrying %d", res.Err(), i)
 //			time.Sleep(5 * time.Second)
@@ -45,7 +45,7 @@ type PruningCycleDetails struct {
 //				log.Debugf("Pruned %d entries from pruningCycleDetails Zset", res.Val())
 //			}
 //		}
-//		key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_CYCLE_PROJECT_DETAILS, cycleDetails.CycleID)
+//		key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_CYCLE_PROJECT_DETAILS, cycleDetails.TaskID)
 //		redisClient.Expire(ctx, key, time.Duration(25*settingsObj.PruningServiceSettings.RunIntervalMins*int(time.Minute)))
 //		//TODO: Migrate to using slack App.
 //
@@ -68,7 +68,7 @@ type PruningCycleDetails struct {
 //}
 //
 //func UpdatePruningProjectReportInRedis(projectPruningReport *ProjectPruningReport, projectPruneState *ProjectPruneState) {
-//	key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_CYCLE_PROJECT_DETAILS, cycleDetails.CycleID)
+//	key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_CYCLE_PROJECT_DETAILS, cycleDetails.TaskID)
 //	projectReportStr, _ := json.Marshal(projectPruningReport)
 //	for i := 0; i < 3; i++ {
 //		res := redisClient.HSet(ctx, key, projectPruningReport.ProjectID, projectReportStr)
