@@ -1,12 +1,16 @@
 package main
 
 import (
+	log "github.com/sirupsen/logrus"
+
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/slackutils"
+	taskmgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	ps "audit-protocol/pruning-archival/service"
+	"audit-protocol/pruning-archival/worker"
 )
 
 // using global context can be awful.
@@ -39,13 +43,13 @@ func main() {
 	settingsObj := settings.ParseSettings()
 	settingsObj.PruningServiceSettings = settingsObj.GetDefaultPruneConfig()
 
-	ipfsUrl := settingsObj.IpfsConfig.ReaderURL
-	if ipfsUrl == "" {
-		ipfsUrl = settingsObj.IpfsConfig.URL
+	ipfsURL := settingsObj.IpfsConfig.ReaderURL
+	if ipfsURL == "" {
+		ipfsURL = settingsObj.IpfsConfig.URL
 	}
 
 	ipfsClient := ipfsutils.InitClient(
-		ipfsUrl,
+		ipfsURL,
 		settingsObj.PruningServiceSettings.Concurrency,
 		settingsObj.PruningServiceSettings.IPFSRateLimiter,
 		settingsObj.PruningServiceSettings.IpfsTimeout,
@@ -57,13 +61,22 @@ func main() {
 		settingsObj.Redis.Db,
 		settingsObj.DagVerifierSettings.RedisPoolSize,
 		settingsObj.Redis.Password,
+		0,
 	)
 
 	pruningService := ps.InitPruningService(settingsObj, redisClient, ipfsClient)
 
 	slackutils.InitSlackWorkFlowClient(settingsObj.DagVerifierSettings.SlackNotifyURL)
 
-	pruningService.Run()
+	// this rabbitmq task manager
+	taskMgr := taskmgr.NewRabbitmqTaskMgr(settingsObj)
+
+	// init worker and start consuming tasks
+	worker := worker.NewWorker(pruningService, settingsObj, taskMgr)
+
+	if err := worker.ConsumeTask(); err != nil {
+		log.Errorf("Error while consuming task: %v", err)
+	}
 }
 
 // improvements needed

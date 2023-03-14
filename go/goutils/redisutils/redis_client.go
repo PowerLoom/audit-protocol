@@ -12,15 +12,16 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func InitRedisClient(redisHost string, port int, redisDb int, poolSize int, password string) *redis.Client {
+func InitRedisClient(redisHost string, port int, redisDb int, poolSize int, password string, timeout time.Duration) *redis.Client {
 	redisURL := redisHost + ":" + strconv.Itoa(port)
 
 	log.Info("Connecting to redis at:", redisURL)
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:     redisURL,
-		Password: password,
-		DB:       redisDb,
-		PoolSize: poolSize,
+		Addr:        redisURL,
+		Password:    password,
+		DB:          redisDb,
+		PoolSize:    poolSize,
+		ReadTimeout: timeout,
 	})
 	pong, err := redisClient.Ping(context.Background()).Result()
 	if err != nil {

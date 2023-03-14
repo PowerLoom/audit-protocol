@@ -143,17 +143,18 @@ func main() {
 
 	logger.InitLogger()
 	ParseSettings()
-	ipfsClient.Init(
+	ipfsutils.InitClient(
 		settingsObj.IpfsConfig.URL,
 		settingsObj.PayloadCommit.Concurrency,
 		settingsObj.IpfsConfig.IPFSRateLimiter,
 		settingsObj.IpfsConfig.Timeout)
+
 	redisClient = redisutils.InitRedisClient(
 		settingsObj.Redis.Host,
 		settingsObj.Redis.Port,
 		settingsObj.Redis.Db,
 		settingsObj.PayloadCommit.Concurrency,
-		settingsObj.Redis.Password)
+		settingsObj.Redis.Password, 0)
 
 	InitTxManagerClient()
 	InitDAGFinalizerCallbackClient()

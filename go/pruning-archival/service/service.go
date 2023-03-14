@@ -14,10 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/alanshaw/go-carbites"
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/goutils/commonutils"
 	"audit-protocol/goutils/httpclient"
@@ -25,12 +22,21 @@ import (
 	"audit-protocol/goutils/settings"
 	"audit-protocol/pruning-archival/constants"
 	"audit-protocol/pruning-archival/models"
+
+	"github.com/alanshaw/go-carbites"
+	"github.com/go-redis/redis/v8"
+	log "github.com/sirupsen/logrus"
 )
 
 type PruningService struct {
 	settingsObj *settings.SettingsObj
 	caching     *caching
 	ipfsClient  *ipfsutils.IpfsClient
+}
+
+// PruningTask is the task that is sent task manager
+type PruningTask struct {
+	projectID string
 }
 
 func InitPruningService(settingsObj *settings.SettingsObj, redisClient *redis.Client, ipfsClient *ipfsutils.IpfsClient) *PruningService {
@@ -41,9 +47,16 @@ func InitPruningService(settingsObj *settings.SettingsObj, redisClient *redis.Cl
 	}
 }
 
-func (p *PruningService) Run() {
-	// not sure why this is getting called twice.
-	// GetProjectsListFromRedis()
+func (p *PruningService) Run(msgBody []byte) error {
+	task := new(PruningTask)
+
+	err := json.Unmarshal(msgBody, task)
+	if err != nil {
+		log.Errorf("Failed to unmarshal task: %v", err)
+
+		return err
+	}
+
 	for {
 		// db/cache query in infinite for loop is not a good practice.
 		// But as this is waiting for cycle to complete, it is fine.
@@ -54,6 +67,7 @@ func (p *PruningService) Run() {
 			!p.settingsObj.PruningServiceSettings.PruneRedisZsets {
 			log.Infof("None of the pruning features enabled. Not doing anything in current cycle")
 			time.Sleep(time.Duration(p.settingsObj.PruningServiceSettings.RunIntervalMins) * time.Minute)
+
 			continue
 		}
 
@@ -68,7 +82,8 @@ func (p *PruningService) Run() {
 		p.verifyAndPruneDAGChains(projectList, cycleDetails)
 
 		log.WithField("CycleID", cycleDetails.CycleID).Infof("Completed cycle")
-		//TODO: Cleanup storage path if it has old files.
+
+		// TODO: Cleanup storage path if it has old files.
 		time.Sleep(time.Duration(p.settingsObj.PruningServiceSettings.RunIntervalMins) * time.Minute)
 	}
 }
@@ -171,6 +186,8 @@ func (p *PruningService) processProject(projectId string, projectList map[string
 			return -1
 		}
 
+		// there can be multiple dag segments in pending state, so we need to process all of them
+		// start with the dag segment with the lowest end height first
 		if dagSegmentEndHeight < heightToPrune {
 			dagSegment := new(models.ProjectDAGSegment)
 
@@ -183,6 +200,7 @@ func (p *PruningService) processProject(projectId string, projectList map[string
 
 			log.WithField("CycleID", cycleDetails.CycleID).Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, projectId)
 
+			// if the dag segment is in pending state, perform archival/pruning
 			if dagSegment.StorageType == constants.DAG_CHAIN_STORAGE_TYPE_PENDING {
 				log.WithField("CycleID", cycleDetails.CycleID).Infof("Performing Archival for project %s segment with endHeight %d", projectId, dagSegmentEndHeight)
 
@@ -276,6 +294,7 @@ func (p *PruningService) processProject(projectId string, projectList map[string
 	return 1
 }
 
+// BackupZsetsToFile backs up the zsets from redis to a file
 func (p *PruningService) BackupZsetsToFile(projectId, cycleID string, startScore int, endScore int, payloadCids *map[int]string, dagCids *map[int]string) {
 	path := p.settingsObj.PruningServiceSettings.CARStoragePath
 	fileName := fmt.Sprintf("%s%s__%d_%d.json", path, projectId, startScore, endScore)
@@ -306,6 +325,7 @@ func (p *PruningService) BackupZsetsToFile(projectId, cycleID string, startScore
 	}
 }
 
+// FindPruningHeight  finds next height of dag chain to prune.
 func (p *PruningService) FindPruningHeight(cycleID string, projectPruneState *models.ProjectPruneState) int {
 	heightToPrune := projectPruneState.LastPrunedHeight
 
@@ -320,6 +340,7 @@ func (p *PruningService) FindPruningHeight(cycleID string, projectPruneState *mo
 	return heightToPrune
 }
 
+// ArchiveDAG archives the DAG from IPFS and uploads it to Web3 Storage.
 func (p *PruningService) ArchiveDAG(projectId, cycleID string, startScore int, endScore int, lastDagCid string) (bool, error) {
 	var errToReturn error
 
@@ -349,14 +370,17 @@ func (p *PruningService) ArchiveDAG(projectId, cycleID string, startScore int, e
 	return opStatus, errToReturn
 }
 
+// ExportDAGFromIPFS exports the DAG from IPFS as CAR file.
 func (p *PruningService) ExportDAGFromIPFS(projectId, cycleID string, fromHeight int, toHeight int, dagCID string) (string, bool) {
 	log.WithField("CycleID", cycleID).Debugf("Exporting DAG for project %s from height %d to height %d with last DAG CID %s", projectId, fromHeight, toHeight, dagCID)
 
 	dagExportSuffix := "/api/v0/dag/export"
 
+	host := ipfsutils.ParseMultiAddrUrl(p.settingsObj.IpfsConfig.ReaderURL)
+
 	// TODO: not really sure, where ipfsHTTPURL is coming from. Improve this
 	// reqURL := "http://" + ipfsHTTPURL + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
-	reqURL := "http://" + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
+	reqURL := "http://" + host + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
 	log.WithField("CycleID", cycleID).Debugf("Sending request to URL %s", reqURL)
 
 	for retryCount := 0; retryCount < 3; {
@@ -383,21 +407,19 @@ func (p *PruningService) ExportDAGFromIPFS(projectId, cycleID string, fromHeight
 		res, err := ipfsHTTPClient.Do(req)
 		if err != nil {
 			retryCount++
-			log.WithField("CycleID", cycleID).Warnf("Failed to send request %+v towards IPFS URL %s for project %s at height %d with error %+v.  Retrying %d",
+			log.WithField("CycleID", cycleID).Warnf("Failed to send request %+v towards IPFS URL %s for project %s at height %d with error %+v. Retrying %d",
 				req, reqURL, projectId, fromHeight, err, retryCount)
 
 			continue
 		}
 
-		defer res.Body.Close()
-
-		if err != nil {
-			retryCount++
-			log.WithField("CycleID", cycleID).Warnf("Failed to read response body for project %s at height %d from IPFS with error %+v. Retrying %d",
-				projectId, fromHeight, err, retryCount)
-
-			continue
-		}
+		//if res.ContentLength < 0 {
+		//	retryCount++
+		//	log.WithField("CycleID", cycleID).Warnf("Received invalid content length for request %+v towards IPFS URL %s for project %s at height %d with error %+v. Retrying %d",
+		//		req, reqURL, projectId, fromHeight, err, retryCount)
+		//
+		//	continue
+		//}
 
 		if res.StatusCode == http.StatusOK {
 			log.WithField("CycleID", cycleID).Debugf("Received 200 OK from IPFS for project %s at height %d",
@@ -413,7 +435,6 @@ func (p *PruningService) ExportDAGFromIPFS(projectId, cycleID string, fromHeight
 				return "", false
 			}
 
-			defer file.Close()
 			fileWriter := bufio.NewWriter(file)
 
 			// TODO: optimize for larger files.
@@ -426,11 +447,25 @@ func (p *PruningService) ExportDAGFromIPFS(projectId, cycleID string, fromHeight
 				continue
 			}
 
-			fileWriter.Flush()
+			err = file.Close()
+			if err != nil {
+				log.WithField("CycleID", cycleID).Errorf("Failed to close file %s due to error %+v", fileName, err)
+			}
+
+			err = fileWriter.Flush()
+			if err != nil {
+				log.WithField("CycleID", cycleID).Errorf("Failed to flush file %s due to error %+v", fileName, err)
+			}
 
 			log.WithField("CycleID", cycleID).Debugf("Wrote %d bytes CAR to local file %s successfully", bytesWritten, fileName)
 
 			return fileName, true
+		}
+
+		err = res.Body.Close()
+		if err != nil {
+			log.WithField("CycleID", cycleID).Errorf("Failed to close response body for project %s at height %d from IPFS with error %+v",
+				projectId, fromHeight, err)
 		}
 
 		retryCount++
@@ -448,6 +483,7 @@ func (p *PruningService) ExportDAGFromIPFS(projectId, cycleID string, fromHeight
 	return "", false
 }
 
+// UploadFileToWeb3Storage uploads the file to web3 storage.
 func (p *PruningService) UploadFileToWeb3Storage(fileName, cycleID string) (string, bool) {
 	file, err := os.Open(fileName)
 	if err != nil {
@@ -506,6 +542,7 @@ func (p *PruningService) UploadFileToWeb3Storage(fileName, cycleID string) (stri
 	return p.UploadChunkToWeb3Storage(fileName, cycleID, fileReader)
 }
 
+// UploadChunkToWeb3Storage uploads the chunk to web3 storage.
 func (p *PruningService) UploadChunkToWeb3Storage(fileName, cycleID string, fileReader io.Reader) (string, bool) {
 	reqURL := p.settingsObj.Web3Storage.URL + "/car"
 

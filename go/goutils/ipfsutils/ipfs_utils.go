@@ -27,9 +27,7 @@ type IpfsClient struct {
 func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, timeoutSecs int) *IpfsClient {
 	// no need to use underscore for _url, it is just a local variable
 	// _url := url
-	if _, err := ma.NewMultiaddr(url); err == nil {
-		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
-	}
+	url = ParseMultiAddrUrl(url)
 
 	transport := http.Transport{
 		MaxIdleConns:        poolSize,
@@ -71,6 +69,14 @@ func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, tim
 	client.ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
 
 	return client
+}
+
+func ParseMultiAddrUrl(url string) string {
+	if _, err := ma.NewMultiaddr(url); err == nil {
+		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+	}
+
+	return url
 }
 
 func (client *IpfsClient) GetDagBlock(dagCid string) (datamodel.DagBlock, error) {
@@ -205,10 +211,11 @@ func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string, retryIntervalSec
 
 func (client *IpfsClient) UnPinCidsFromIPFS(projectId string, cids *map[int]string) int {
 	errorCount := 0
+	maxRetry := 3
 
 	for height, cid := range *cids {
-		i := 0
-		for ; i < 3; i++ {
+		retry := 0
+		for ; retry < 3; retry++ {
 			err := client.ipfsClientRateLimiter.Wait(context.Background())
 			if err != nil {
 				log.Warnf("IPFSClient Rate Limiter wait timeout with error %+v", err)
@@ -224,10 +231,11 @@ func (client *IpfsClient) UnPinCidsFromIPFS(projectId string, cids *map[int]stri
 				// CID has already been unpinned.
 				if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
 					log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectId, height)
+					retry = maxRetry
 					break
 				}
 
-				log.Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, i)
+				log.Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v. Retrying %d", cid, projectId, height, err, retry)
 				time.Sleep(5 * time.Second)
 
 				continue
@@ -238,7 +246,7 @@ func (client *IpfsClient) UnPinCidsFromIPFS(projectId string, cids *map[int]stri
 			break
 		}
 
-		if i == 3 {
+		if retry == 3 {
 			log.Errorf("Failed to unpin CID %s at height %d from ipfs for project %s after max retries", cid, height, projectId)
 			errorCount++
 
@@ -247,4 +255,16 @@ func (client *IpfsClient) UnPinCidsFromIPFS(projectId string, cids *map[int]stri
 	}
 
 	return errorCount
+}
+
+// testing and simulation methods
+
+// AddFileToIPFS adds a file to IPFS and returns the CID of the file
+func (client *IpfsClient) AddFileToIPFS(data []byte) (string, error) {
+	cid, err := client.ipfsClient.Add(bytes.NewReader(data), shell.CidVersion(1))
+	if err != nil {
+		return "", err
+	}
+
+	return cid, nil
 }

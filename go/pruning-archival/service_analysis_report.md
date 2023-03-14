@@ -49,3 +49,7 @@
 - Pass less/precise arguments to functions (than passing complete struct which contains all the variables but only single is used inside function)
 - Linting the code
 - There are multiple retry logic in the code, can be used centralized retry mechanism
+- defer is being called inside a for loop at multiple places (must improve can cause resource leak)
+- Upload file to web3 can be done in batches/concurrently (currently it is done one by one)
+- IPFS Unpin can be done in batches 
+- Currently if project has multiple segments to pruned (PENDING STATE).. it will processProject() only pruning on segment at a time, and waiting for another cycle 

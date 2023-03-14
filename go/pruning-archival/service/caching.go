@@ -9,19 +9,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	log "github.com/sirupsen/logrus"
-
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/slackutils"
 	"audit-protocol/pruning-archival/models"
+
+	"github.com/go-redis/redis/v8"
+	log "github.com/sirupsen/logrus"
 )
 
 type caching struct {
 	redisClient *redis.Client
 }
 
+// GetDAGCidsFromRedis fetches the DAGCids from redis for a given project
 func (c *caching) GetDAGCidsFromRedis(cycleID string, projectId string, startScore int, endScore int) *map[int]string {
 	cids := make(map[int]string, endScore-startScore)
 
@@ -124,7 +125,7 @@ func (c *caching) PruneZSetInRedis(cycleID, key string, startScore, endScore int
 	for ; i < 3; i++ {
 		res := c.redisClient.ZRemRangeByScore(
 			context.Background(), key,
-			"-inf", //Always prune from start
+			"-inf", // Always prune from start
 			strconv.Itoa(endScore),
 		)
 		if res.Err() != nil {
@@ -313,8 +314,10 @@ func (c *caching) GetOldestIndexedProjectHeight(cycleID string, projectPruneStat
 		projectFinalizedHeight, err := strconv.Atoi(res.Val())
 		if err != nil {
 			log.WithField("CycleID", cycleID).Fatalf("Unable to convert retrieved projectFinalizedHeight for project %s to int due to error %+v ", projectPruneState.ProjectId, err)
+
 			return -1
 		}
+
 		lastIndexHeight = projectFinalizedHeight - settingsObj.PruningServiceSettings.SummaryProjectsPruneHeightBehindHead
 
 		return lastIndexHeight
