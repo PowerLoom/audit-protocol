@@ -4,6 +4,10 @@ import json
 from enum import Enum
 
 
+class TimeSeriesIndex(BaseModel):
+    head: int
+    tail: Optional[int]
+
 class ProjectDAGChainSegmentMetadata(BaseModel):
     beginHeight: int
     endHeight: int
@@ -30,6 +34,41 @@ class PruningCycleOverallDetails(BaseModel):
     hostName: str
 
 
+class PairsSummaryState(BaseModel):
+    lastCachedBlock: int
+    tentativeBlockHeight: int
+    blockHeightSummaryMap: Dict[int, str]  # block height to summary mapping, should be reversed for loading into redis
+    sildingWindowData: Dict[str, str]  # pair contract address -> sliding window data
+    recentLogs: Dict[str, str]  # pair contract address -> recent tx logs
+    timestampSummaryMap: Dict[int, str]  # time stamp to summary mapping, should be reversed for loading into redis
+
+
+class DailyStatSummaryState(BaseModel):
+    tentativeBlockHeight: int
+    blockHeightSummaryMap: Dict[int, str]
+    # contract address -> time stamp -> daily stats summary. load in zset in reverse order summary(element) -> timestamp(score)
+    dailyCache: Dict[str, Dict[int, str]]
+
+class TokensSummaryState(BaseModel):
+    tentativeBlockHeight: int
+    # pair contract address -> each token contract's ERC 20 metadata field -> value
+    contractTokenMetadata: Dict[str, Dict[str, str]]
+    # token contract address -> time stamp -> token price JSON. load in zset in reverse order price(element) -> timestamp(score)
+    contractTokenPriceHistory: Dict[str, Dict[int, str]]
+    # pair contract address -> token contract address mapping for both token0 and token1
+    contractTokenAddresses: Dict[str, Dict[str, str]]
+    # pair contract address -> block height -> pair price JSON. load in zset in reverse order price(element) -> timestamp(score)
+    pairContractPriceHistory: Dict[str, Dict[int, str]]
+    blockHeightSummaryMap: Dict[int, str]  # block height to summary mapping, should be reversed for loading into redis
+
+
+class AggregateState(BaseModel):
+    singlePairsSummary: Dict[str, str]
+    pairsSummary: PairsSummaryState
+    dailyStatsSummary: DailyStatSummaryState
+    tokensSummary: TokensSummaryState
+
+
 class ProjectSpecificProtocolState(BaseModel):
     firstEpochEndHeight: int  # genesis block's epoch end height
     epochSize: int  # epoch size in blocks
@@ -37,6 +76,7 @@ class ProjectSpecificProtocolState(BaseModel):
     dagCidsZset: Dict[int, str] # DAG block height to DAG block CID mapping
     snapshotCidsZset: Dict[int, str] # DAG block height to snapshot CID mapping
     dagSegments: Dict[int, ProjectDAGChainSegmentMetadata]  # epoch end height to DAG segment metadata mapping
+    timeSeriesData: Dict[str, TimeSeriesIndex]  # time series data for the project
 
 
 class ProtocolState(BaseModel):
@@ -44,6 +84,7 @@ class ProtocolState(BaseModel):
     pruningProjectStatus: Dict[str, int]  # project ID -> last pruned DAG block height htable
     pruningCycleRunStatus: Dict[int, PruningCycleOverallDetails]  # millisecond timestamp -> pruning cycle run status mapping
     pruningProjectDetails: Dict[str, Dict[str, PruningCycleForProjectDetails]]  # cycleID -> project ID -> pruning cycle run details mapping
+    aggregates: AggregateState
 
 
 class ProjectStateMetadata(BaseModel):
