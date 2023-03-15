@@ -12,7 +12,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/alanshaw/go-carbites"
+	"github.com/cenkalti/backoff/v4"
+	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/goutils/commonutils"
 	"audit-protocol/goutils/httpclient"
@@ -20,10 +24,6 @@ import (
 	"audit-protocol/goutils/settings"
 	"audit-protocol/pruning-archival/constants"
 	"audit-protocol/pruning-archival/models"
-
-	"github.com/alanshaw/go-carbites"
-	"github.com/go-redis/redis/v8"
-	log "github.com/sirupsen/logrus"
 )
 
 type PruningService struct {
@@ -52,6 +52,7 @@ func (p *PruningService) Run(msgBody []byte) error {
 	taskDetails.TaskID = uuid.New().String()
 
 	log.WithField("TaskID", taskDetails.TaskID).WithField("task", string(msgBody)).Infof("received task")
+
 	task := new(PruningTask)
 
 	err := json.Unmarshal(msgBody, task)
@@ -175,6 +176,7 @@ func (p *PruningService) pruneProjectSegments(projectID string, lastPrunedHeight
 	return nil
 }
 
+// archiveAndPruneSegment performs archival and pruning for the given dag segment
 func (p *PruningService) archiveAndPruneSegment(projectID string, taskDetails *models.PruningTaskDetails, dagSegment *models.ProjectDAGSegment, projectReport *models.ProjectPruningReport) error {
 	l := log.WithField("TaskID", taskDetails.TaskID).WithField("ProjectID", projectID)
 	dagSegmentEndHeight := dagSegment.EndHeight
@@ -186,10 +188,10 @@ func (p *PruningService) archiveAndPruneSegment(projectID string, taskDetails *m
 	// if archival is enabled, perform archival and after success update the storage type to cold
 	// else prune the dag segment
 	if p.settingsObj.PruningServiceSettings.PerformArchival {
-		opStatus, err := p.ArchiveDAG(projectID, taskDetails.TaskID, dagSegment.BeginHeight,
+		err := p.ArchiveDAG(projectID, taskDetails.TaskID, dagSegment.BeginHeight,
 			dagSegment.EndHeight, dagSegment.EndDAGCID)
 
-		if opStatus {
+		if err == nil {
 			dagSegment.StorageType = constants.DAG_CHAIN_STORAGE_TYPE_COLD
 		} else {
 			l.Errorf("Failed to Archive DAG for project %s at height %d due to error.", projectID, dagSegmentEndHeight)
@@ -227,21 +229,26 @@ func (p *PruningService) archiveAndPruneSegment(projectID string, taskDetails *m
 
 	log.WithField("TaskID", taskDetails.TaskID).Infof("Unpinning DAG CIDS from IPFS for project %s segment with endheight %d", projectID, dagSegmentEndHeight)
 
+	bkoff := backoff.WithMaxRetries(backoff.NewConstantBackOff(1*time.Second), uint64(*p.settingsObj.RetryCount))
+
 	// remove cids from ipfs AKA unpin
 	// TBD: if unpin fails (not because it was not pinned), task should be marked as failed
-	err = p.ipfsClient.UnPinCidsFromIPFS(projectID, dagCids)
+	err = backoff.Retry(func() error { return p.ipfsClient.UnPinCidsFromIPFS(projectID, dagCids) }, bkoff)
 	if err != nil {
 		return err
 	}
 
 	log.WithField("TaskID", taskDetails.TaskID).Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", projectID, dagSegmentEndHeight)
 
-	err = p.ipfsClient.UnPinCidsFromIPFS(projectID, payloadCids)
+	err = backoff.Retry(func() error { return p.ipfsClient.UnPinCidsFromIPFS(projectID, payloadCids) }, bkoff)
 	if err != nil {
 		return err
 	}
 
-	p.caching.UpdateDagSegmentStatusToRedis(taskDetails.TaskID, projectID, dagSegmentEndHeight, dagSegment)
+	err = p.caching.UpdateDagSegmentStatusToRedis(taskDetails.TaskID, projectID, dagSegmentEndHeight, dagSegment)
+	if err != nil {
+		return err
+	}
 
 	if p.settingsObj.PruningServiceSettings.PruneRedisZsets {
 		if p.settingsObj.PruningServiceSettings.BackUpRedisZSets {
@@ -264,7 +271,7 @@ func (p *PruningService) archiveAndPruneSegment(projectID string, taskDetails *m
 		return err
 	}
 
-	err = p.caching.DeleteContentFromLocalCache(projectID, p.settingsObj.PayloadCachePath, dagCids, payloadCids)
+	err = p.caching.DeleteContentFromLocalDrive(projectID, p.settingsObj.PayloadCachePath, dagCids, payloadCids)
 	if err != nil {
 		return err
 	}
@@ -274,158 +281,6 @@ func (p *PruningService) archiveAndPruneSegment(projectID string, taskDetails *m
 
 	return nil
 }
-
-// processProject processes a single project for pruning
-//func (p *PruningService) processProject(ProjectID string, projectList map[string]*models.ProjectPruneState, cycleDetails *models.PruningTaskDetails) int {
-//	projectReport := &models.ProjectPruningReport{ProjectID: ProjectID}
-//
-//	// Fetch project dagSegments from redis
-//	projectMetaData := p.caching.FetchProjectDagSegments(cycleDetails.TaskID, ProjectID)
-//
-//	if projectMetaData == nil {
-//		log.WithField("TaskID", cycleDetails.TaskID).Debugf("No state metaData available for project %s, skipping this cycle.", ProjectID)
-//
-//		return 1
-//	}
-//
-//	// dagSegment info
-//	projectPruneState := projectList[ProjectID]
-//	startScore := projectPruneState.LastPrunedHeight
-//
-//	// have last pruning height for this project in projectPruneState
-//	heightToPrune := p.FindPruningHeight(cycleDetails.TaskID, projectPruneState)
-//
-//	if heightToPrune <= startScore {
-//		log.WithField("TaskID", cycleDetails.TaskID).Debugf("Nothing to Prune for project %s", ProjectID)
-//		p.caching.UpdatePruningProjectReportInRedis(cycleDetails, projectReport, projectPruneState)
-//
-//		return 1
-//	}
-//
-//	log.WithField("TaskID", cycleDetails.TaskID).Debugf("Height to Prune is %d for project %s", heightToPrune, ProjectID)
-//
-//	projectProcessed := false
-//
-//	// gets the dagSegments end height in sorted order
-//	dagSegments := commonutils.SortKeysAsNumber(&projectMetaData.DagChains)
-//
-//	for _, dagSegmentEndHeightStr := range *dagSegments {
-//		dagChainSegment := projectMetaData.DagChains[dagSegmentEndHeightStr]
-//
-//		dagSegmentEndHeight, err := strconv.Atoi(dagSegmentEndHeightStr)
-//		if err != nil {
-//			log.WithField("TaskID", cycleDetails.TaskID).Errorf("dagSegmentEndHeight %s is not an integer.", dagSegmentEndHeightStr)
-//
-//			return -1
-//		}
-//
-//		// there can be multiple dag segments in pending state, so we need to process all of them
-//		// start with the dag segment with the lowest end height first
-//		if dagSegmentEndHeight < heightToPrune {
-//			dagSegment := new(models.ProjectDAGSegment)
-//
-//			err = json.Unmarshal([]byte(dagChainSegment), dagSegment)
-//			if err != nil {
-//				log.WithField("TaskID", cycleDetails.TaskID).Errorf("Unable to unmarshal dagChainSegment data due to error %+v", err)
-//
-//				continue
-//			}
-//
-//			log.WithField("TaskID", cycleDetails.TaskID).Debugf("Processing DAG Segment at height %d for project %s", dagSegment.BeginHeight, ProjectID)
-//
-//			// if the dag segment is in pending state, perform archival/pruning
-//			if dagSegment.StorageType == constants.DAG_CHAIN_STORAGE_TYPE_PENDING {
-//				log.WithField("TaskID", cycleDetails.TaskID).Infof("Performing Archival for project %s segment with endHeight %d", ProjectID, dagSegmentEndHeight)
-//
-//				projectReport.DAGSegmentsProcessed++
-//
-//				// if archival is enabled, perform archival and after success update the storage type to cold
-//				// else prune the dag segment
-//				if p.settingsObj.PruningServiceSettings.PerformArchival {
-//					opStatus, err := p.ArchiveDAG(ProjectID, cycleDetails.TaskID, dagSegment.BeginHeight,
-//						dagSegment.EndHeight, dagSegment.EndDAGCID)
-//
-//					if opStatus {
-//						dagSegment.StorageType = constants.DAG_CHAIN_STORAGE_TYPE_COLD
-//					} else {
-//						log.WithField("TaskID", cycleDetails.TaskID).Errorf("Failed to Archive DAG for project %s at height %d due to error.", ProjectID, dagSegmentEndHeight)
-//						projectReport.DAGSegmentsArchivalFailed++
-//						projectReport.ArchivalFailureCause = err.Error()
-//						p.caching.UpdatePruningProjectReportInRedis(cycleDetails, projectReport, projectPruneState)
-//
-//						return -2
-//					}
-//				} else {
-//					log.Infof("Archival disabled, hence proceeding with pruning")
-//					dagSegment.StorageType = constants.DAG_CHAIN_STORAGE_TYPE_PRUNED
-//				}
-//
-//				startScore = dagSegment.BeginHeight
-//
-//				// get all cid's for the project from range of startScore and dagSegmentEndHeight
-//				payloadCids, err := p.caching.GetPayloadCidsFromRedis(cycleDetails.TaskID, ProjectID, startScore, dagSegmentEndHeight)
-//
-//				if payloadCids == nil {
-//					projectReport.UnPinFailed += dagSegment.EndHeight - dagSegment.BeginHeight
-//					projectReport.ArchivalFailureCause = "Failed to fetch payloadCids from Redis"
-//					p.caching.UpdatePruningProjectReportInRedis(cycleDetails, projectReport, projectPruneState)
-//
-//					return -2
-//				}
-//
-//				dagCids, err := p.caching.GetDAGCidsFromRedis(cycleDetails.TaskID, ProjectID, startScore, dagSegmentEndHeight)
-//				if dagCids == nil {
-//					projectReport.UnPinFailed += dagSegment.EndHeight - dagSegment.BeginHeight
-//					projectReport.ArchivalFailureCause = "Failed to fetch DAGCids from Redis"
-//					p.caching.UpdatePruningProjectReportInRedis(cycleDetails, projectReport, projectPruneState)
-//
-//					return -2
-//				}
-//
-//				log.WithField("TaskID", cycleDetails.TaskID).Infof("Unpinning DAG CIDS from IPFS for project %s segment with endheight %d", ProjectID, dagSegmentEndHeight)
-//
-//				errCount := p.ipfsClient.UnPinCidsFromIPFS(ProjectID, dagCids)
-//				projectReport.UnPinFailed += errCount
-//
-//				log.WithField("TaskID", cycleDetails.TaskID).Infof("Unpinning payload CIDS from IPFS for project %s segment with endheight %d", ProjectID, dagSegmentEndHeight)
-//
-//				errCount = p.ipfsClient.UnPinCidsFromIPFS(ProjectID, payloadCids)
-//				projectReport.UnPinFailed += errCount
-//
-//				p.caching.UpdateDagSegmentStatusToRedis(cycleDetails.TaskID, ProjectID, dagSegmentEndHeight, dagSegment)
-//
-//				projectPruneState.LastPrunedHeight = dagSegmentEndHeight
-//
-//				if p.settingsObj.PruningServiceSettings.PruneRedisZsets {
-//					if p.settingsObj.PruningServiceSettings.BackUpRedisZSets {
-//						p.BackupZsetsToFile(ProjectID, cycleDetails.TaskID, startScore, dagSegmentEndHeight, payloadCids, dagCids)
-//					}
-//
-//					log.WithField("TaskID", cycleDetails.TaskID).Infof("Pruning redis Zsets from IPFS for project %s segment with endheight %d", ProjectID, dagSegmentEndHeight)
-//
-//					p.caching.PruneProjectCIDsInRedis(cycleDetails.TaskID, ProjectID, startScore, dagSegmentEndHeight)
-//				}
-//
-//				p.caching.UpdatePrunedStatusToRedis(cycleDetails.TaskID, projectList, projectPruneState)
-//
-//				errCount = p.caching.DeleteContentFromLocalCache(ProjectID, p.settingsObj.PayloadCachePath, dagCids, payloadCids)
-//
-//				projectReport.LocalCacheDeletionsFailed += errCount
-//				projectReport.DAGSegmentsArchived++
-//				projectReport.CIDsUnPinned += len(*payloadCids) + len(*dagCids)
-//				projectProcessed = true
-//			}
-//		}
-//	}
-//
-//	if projectProcessed {
-//		p.caching.UpdatePruningProjectReportInRedis(cycleDetails, projectReport, projectPruneState)
-//
-//		return 0
-//	}
-//
-//	return 1
-//}
 
 // BackupZsetsToFile backs up the zsets from redis to a file
 func (p *PruningService) BackupZsetsToFile(projectID, taskID string, startScore int, endScore int, payloadCids, dagCids map[int]string) error {
@@ -479,23 +334,45 @@ func (p *PruningService) FindPruningHeight(lastPrunedHeight int, projectID, task
 }
 
 // ArchiveDAG archives the DAG from IPFS and uploads it to Web3 Storage.
-func (p *PruningService) ArchiveDAG(projectID, cycleID string, startScore int, endScore int, lastDagCid string) (bool, error) {
+func (p *PruningService) ArchiveDAG(projectID, cycleID string, startScore int, endScore int, lastDagCid string) error {
 	var errToReturn error
 
 	// Export DAG from IPFS.
-	fileName, opStatus := p.ExportDAGFromIPFS(projectID, cycleID, startScore, endScore, lastDagCid)
-	if !opStatus {
+	fileName := ""
+	bkoff := backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(*p.settingsObj.RetryCount))
+
+	err := backoff.Retry(func() error {
+		var err error
+
+		fileName, err = p.ExportDAGFromIPFS(projectID, cycleID, startScore, endScore, lastDagCid)
+		if err != nil {
+			return err
+		}
+
+		return err
+	}, bkoff)
+	if err != nil {
 		log.WithField("TaskID", cycleID).Errorf("Unable to export DAG for project %s at height %d. Will retry in next cycle", projectID, endScore)
-		return opStatus, errors.New("failed to export CAR File from IPFS at height " + strconv.Itoa(endScore))
+
+		return errors.New("failed to export CAR File from IPFS at height " + strconv.Itoa(endScore))
 	}
 
+	CID := ""
 	// Can be Optimized: Consider batch upload of files if sizes are too small.
-	CID, opStatus := p.UploadFileToWeb3Storage(fileName, cycleID)
-	if opStatus {
-		log.WithField("TaskID", cycleID).Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
-	} else {
+	err = backoff.Retry(func() error {
+		CID, err = p.UploadFileToWeb3Storage(fileName, cycleID)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, bkoff)
+
+	if err != nil {
 		log.WithField("TaskID", cycleID).Debugf("Failed to upload CAR file %s to web3.storage", fileName)
 		errToReturn = errors.New("failed to upload CAR File to web3.storage" + fileName)
+	} else {
+		log.WithField("TaskID", cycleID).Debugf("CID of CAR file %s uploaded to web3.storage is %s", fileName, CID)
 	}
 
 	// Delete file from local storage.
@@ -505,146 +382,114 @@ func (p *PruningService) ArchiveDAG(projectID, cycleID string, startScore int, e
 
 	log.WithField("TaskID", cycleID).Debugf("Deleted file %s successfully from local storage", fileName)
 
-	return opStatus, errToReturn
+	return errToReturn
 }
 
 // ExportDAGFromIPFS exports the DAG from IPFS as CAR file.
-func (p *PruningService) ExportDAGFromIPFS(projectID, cycleID string, fromHeight int, toHeight int, dagCID string) (string, bool) {
+func (p *PruningService) ExportDAGFromIPFS(projectID, cycleID string, fromHeight int, toHeight int, dagCID string) (string, error) {
 	log.WithField("TaskID", cycleID).Debugf("Exporting DAG for project %s from height %d to height %d with last DAG CID %s", projectID, fromHeight, toHeight, dagCID)
 
 	dagExportSuffix := "/api/v0/dag/export"
-
 	host := ipfsutils.ParseMultiAddrUrl(p.settingsObj.IpfsConfig.ReaderURL)
 
-	// TODO: not really sure, where ipfsHTTPURL is coming from. Improve this
-	// reqURL := "http://" + ipfsHTTPURL + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
 	reqURL := "http://" + host + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
 	log.WithField("TaskID", cycleID).Debugf("Sending request to URL %s", reqURL)
 
-	for retryCount := 0; retryCount < 3; {
-		if retryCount == *p.settingsObj.RetryCount {
-			log.WithField("TaskID", cycleID).Errorf("CAR export failed for project %s at height %d after max-retry of %d",
-				projectID, fromHeight, p.settingsObj.RetryCount)
+	req, err := http.NewRequest(http.MethodPost, reqURL, nil)
+	if err != nil {
+		log.WithField("TaskID", cycleID).Fatalf("Failed to create new HTTP Req with URL %s with error %+v",
+			reqURL, err)
 
-			return "", false
-		}
+		return "", err
+	}
 
-		req, err := http.NewRequest(http.MethodPost, reqURL, nil)
-		if err != nil {
-			log.WithField("TaskID", cycleID).Fatalf("Failed to create new HTTP Req with URL %s with error %+v",
-				reqURL, err)
+	log.WithField("TaskID", cycleID).Debugf("Sending Req to IPFS URL %s for project %s at height %d ",
+		reqURL, projectID, fromHeight)
 
-			return "", false
-		}
+	ipfsHTTPClient := httpclient.GetIPFSHTTPClient(p.settingsObj)
 
-		log.WithField("TaskID", cycleID).Debugf("Sending Req to IPFS URL %s for project %s at height %d ",
-			reqURL, projectID, fromHeight)
+	res, err := ipfsHTTPClient.Do(req)
+	if err != nil {
+		log.WithField("TaskID", cycleID).Warnf("Failed to send request %+v towards IPFS URL %s for project %s at height %d with error %+v", req, reqURL, projectID, fromHeight, err)
 
-		ipfsHTTPClient := httpclient.GetIPFSHTTPClient(p.settingsObj)
+		return "", err
+	}
 
-		res, err := ipfsHTTPClient.Do(req)
-		if err != nil {
-			retryCount++
-			log.WithField("TaskID", cycleID).Warnf("Failed to send request %+v towards IPFS URL %s for project %s at height %d with error %+v. Retrying %d",
-				req, reqURL, projectID, fromHeight, err, retryCount)
-
-			continue
-		}
-
-		//if res.ContentLength < 0 {
-		//	retryCount++
-		//	log.WithField("TaskID", cycleID).Warnf("Received invalid content length for request %+v towards IPFS URL %s for project %s at height %d with error %+v. Retrying %d",
-		//		req, reqURL, ProjectID, fromHeight, err, retryCount)
-		//
-		//	continue
-		//}
-
-		if res.StatusCode == http.StatusOK {
-			log.WithField("TaskID", cycleID).Debugf("Received 200 OK from IPFS for project %s at height %d",
-				projectID, fromHeight)
-
-			path := p.settingsObj.PruningServiceSettings.CARStoragePath
-			fileName := fmt.Sprintf("%s%s_%d_%d.car", path, projectID, fromHeight, toHeight)
-
-			file, err := os.Create(fileName)
-			if err != nil {
-				log.WithField("TaskID", cycleID).Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
-
-				return "", false
-			}
-
-			fileWriter := bufio.NewWriter(file)
-
-			// TODO: optimize for larger files.
-			bytesWritten, err := io.Copy(fileWriter, res.Body)
-			if err != nil {
-				retryCount++
-				log.WithField("TaskID", cycleID).Warnf("Failed to write to %s due to error %+v. Retrying %d", fileName, err, retryCount)
-				time.Sleep(time.Duration(p.settingsObj.RetryIntervalSecs) * time.Minute)
-
-				continue
-			}
-
-			err = file.Close()
-			if err != nil {
-				log.WithField("TaskID", cycleID).Errorf("Failed to close file %s due to error %+v", fileName, err)
-			}
-
-			err = fileWriter.Flush()
-			if err != nil {
-				log.WithField("TaskID", cycleID).Errorf("Failed to flush file %s due to error %+v", fileName, err)
-			}
-
-			log.WithField("TaskID", cycleID).Debugf("Wrote %d bytes CAR to local file %s successfully", bytesWritten, fileName)
-
-			return fileName, true
-		}
-
-		err = res.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err = Body.Close()
 		if err != nil {
 			log.WithField("TaskID", cycleID).Errorf("Failed to close response body for project %s at height %d from IPFS with error %+v",
 				projectID, fromHeight, err)
 		}
+	}(res.Body)
 
-		retryCount++
+	if res.StatusCode == http.StatusOK {
+		log.WithField("TaskID", cycleID).Debugf("Received 200 OK from IPFS for project %s at height %d",
+			projectID, fromHeight)
 
-		log.WithField("TaskID", cycleID).Warnf("Received Error response from IPFS for project %s at height %d with statusCode %d and status : %s ",
-			projectID, fromHeight, res.StatusCode, res.Status)
+		path := p.settingsObj.PruningServiceSettings.CARStoragePath
+		fileName := fmt.Sprintf("%s%s_%d_%d.car", path, projectID, fromHeight, toHeight)
 
-		time.Sleep(time.Duration(p.settingsObj.RetryIntervalSecs) * time.Minute)
+		file, err := os.Create(fileName)
+		if err != nil {
+			log.WithField("TaskID", cycleID).Errorf("Unable to create file %s in specified path due to errro %+v", fileName, err)
 
-		continue
+			return "", err
+		}
+
+		fileWriter := bufio.NewWriter(file)
+
+		// this reads 32kb at a time
+		bytesWritten, err := io.Copy(fileWriter, res.Body)
+		if err != nil {
+			log.WithField("TaskID", cycleID).Warnf("Failed to write to %s due to error %+v", fileName, err)
+
+			return "", err
+		}
+
+		err = file.Close()
+		if err != nil {
+			log.WithField("TaskID", cycleID).Errorf("Failed to close file %s due to error %+v", fileName, err)
+		}
+
+		err = fileWriter.Flush()
+		if err != nil {
+			log.WithField("TaskID", cycleID).Errorf("Failed to flush file %s due to error %+v", fileName, err)
+		}
+
+		log.WithField("TaskID", cycleID).Debugf("Wrote %d bytes CAR to local file %s successfully", bytesWritten, fileName)
+
+		return fileName, nil
 	}
 
-	log.WithField("TaskID", cycleID).Debugf("Failed to export DAG from ipfs for project %s at height %d after max retries.", projectID, toHeight)
+	log.WithField("TaskID", cycleID).Warnf("Received Error response from IPFS for project %s at height %d with statusCode %d and status : %s ",
+		projectID, fromHeight, res.StatusCode, res.Status)
 
-	return "", false
+	return "", err
 }
 
 // UploadFileToWeb3Storage uploads the file to web3 storage.
-func (p *PruningService) UploadFileToWeb3Storage(fileName, cycleID string) (string, bool) {
+func (p *PruningService) UploadFileToWeb3Storage(fileName, cycleID string) (string, error) {
 	file, err := os.Open(fileName)
 	if err != nil {
 		log.WithField("TaskID", cycleID).Errorf("Unable to open file %s due to error %+v", fileName, err)
 
-		return "", false
+		return "", err
 	}
 
 	fileStat, err := file.Stat()
 	if err != nil {
 		log.WithField("TaskID", cycleID).Errorf("Unable to stat file %s due to error %+v", fileName, err)
 
-		return "", false
+		return "", err
 	}
 
 	targetSize := p.settingsObj.PruningServiceSettings.Web3Storage.UploadChunkSizeMB * 1024 * 1024 // 100MiB chunks
-
 	fileReader := bufio.NewReader(file)
 
 	if fileStat.Size() > int64(targetSize) {
 		log.WithField("TaskID", cycleID).Infof("File size greater than targetSize %d bytes..doing chunking", targetSize)
 		var lastCID string
-		var opStatus bool
 
 		// Need to chunk CAR files more than 100MB as web3.storage has size limit right now.
 		// Use code from carbites mentioned here https://web3.storage/docs/how-tos/work-with-car-files/
@@ -660,114 +505,113 @@ func (p *PruningService) UploadFileToWeb3Storage(fileName, cycleID string) (stri
 
 				log.WithField("TaskID", cycleID).Fatalf("Failed to split car file %s due to error %+v", fileName, err)
 
-				return "", false
+				return "", err
 			}
 
-			lastCID, opStatus = p.UploadChunkToWeb3Storage(fileName, cycleID, car)
-
-			if !opStatus {
+			lastCID, err = p.UploadChunkToWeb3Storage(fileName, cycleID, car)
+			if err != nil {
 				log.WithField("TaskID", cycleID).Errorf("Failed to upload chunk %d for file %s. aborting complete file.", i, fileName)
 
-				return "", false
+				return "", err
 			}
 
 			log.WithField("TaskID", cycleID).Debugf("Uploaded chunk %d of file %s to web3.storage successfully", i, fileName)
 		}
 
-		return lastCID, true
+		return lastCID, nil
 	}
 
 	return p.UploadChunkToWeb3Storage(fileName, cycleID, fileReader)
 }
 
 // UploadChunkToWeb3Storage uploads the chunk to web3 storage.
-func (p *PruningService) UploadChunkToWeb3Storage(fileName, cycleID string, fileReader io.Reader) (string, bool) {
+func (p *PruningService) UploadChunkToWeb3Storage(fileName, cycleID string, fileReader io.Reader) (string, error) {
 	reqURL := p.settingsObj.Web3Storage.URL + "/car"
 
-	for retryCount := 0; retryCount < 3; {
-		if retryCount == *p.settingsObj.RetryCount {
-			log.WithField("TaskID", cycleID).Errorf("web3.storage upload failed for file %s after max-retry of %d",
-				fileName, *p.settingsObj.RetryCount)
+	req, err := http.NewRequest(http.MethodPost, reqURL, fileReader)
+	if err != nil {
+		log.WithField("TaskID", cycleID).Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
+			reqURL, err)
 
-			return "", false
-		}
-
-		req, err := http.NewRequest(http.MethodPost, reqURL, fileReader)
-		if err != nil {
-			log.WithField("TaskID", cycleID).Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
-				reqURL, err)
-			return "", false
-		}
-
-		req.Header.Add("Authorization", "Bearer "+p.settingsObj.Web3Storage.APIToken)
-		req.Header.Add("accept", "application/vnd.ipld.car")
-
-		w3sHTTPClient, web3StorageClientRateLimiter := httpclient.GetW3sClient(p.settingsObj)
-
-		err = web3StorageClientRateLimiter.Wait(context.Background())
-		if err != nil {
-			log.WithField("TaskID", cycleID).Warnf("Web3Storage Rate Limiter wait timeout with error %+v", err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		log.WithField("TaskID", cycleID).Debugf("Sending Req to web3.storage URL %s for file %s",
-			reqURL, fileName)
-
-		res, err := w3sHTTPClient.Do(req)
-		if err != nil {
-			retryCount++
-			log.WithField("TaskID", cycleID).Warnf("Failed to send request %+v towards web3.storage URL %s for fileName %s with error %+v.  Retrying %d",
-				req, reqURL)
-
-			continue
-		}
-
-		defer res.Body.Close()
-
-		var resp models.Web3StoragePostResponse
-
-		respBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			retryCount++
-			log.WithField("TaskID", cycleID).Warnf("Failed to read response body for fileName %s from web3.storage with error %+v. Retrying %d",
-				err, retryCount)
-
-			continue
-		}
-
-		if res.StatusCode == http.StatusOK {
-			err = json.Unmarshal(respBody, &resp)
-			if err != nil {
-				retryCount++
-				log.WithField("TaskID", cycleID).Warnf("Failed to unmarshal response %+v for fileName %s towards web3.storage with error %+v. Retrying %d",
-					respBody, fileName, err, retryCount)
-				time.Sleep(time.Duration(p.settingsObj.RetryIntervalSecs) * time.Second)
-				continue
-			}
-			log.WithField("TaskID", cycleID).Debugf("Received 200 OK from web3.storage for fileName %s with CID %s ",
-				fileName, resp.CID)
-			return resp.CID, true
-		} else {
-			if res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusForbidden ||
-				res.StatusCode == http.StatusUnauthorized {
-				log.WithField("TaskID", cycleID).Warnf("Failed to upload to web3.storage due to error %+v with statusCode %d", resp, res.StatusCode)
-				return "", false
-			}
-			retryCount++
-			var resp models.Web3StorageErrResponse
-			err = json.Unmarshal(respBody, &resp)
-			if err != nil {
-				log.WithField("TaskID", cycleID).Errorf("Failed to unmarshal error response %+v for fileName %s towards web3.storage with error %+v. Retrying %d",
-					respBody, fileName, err, retryCount)
-			} else {
-				log.WithField("TaskID", cycleID).Warnf("Received Error response %+v from web3.storage for fileName %s with statusCode %d and status : %s ",
-					resp, fileName, res.StatusCode, res.Status)
-			}
-			time.Sleep(time.Duration(p.settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
+		return "", err
 	}
+
+	req.Header.Add("Authorization", "Bearer "+p.settingsObj.Web3Storage.APIToken)
+	req.Header.Add("accept", "application/vnd.ipld.car")
+
+	w3sHTTPClient, web3StorageClientRateLimiter := httpclient.GetW3sClient(p.settingsObj)
+
+	err = web3StorageClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		log.WithField("TaskID", cycleID).Warnf("Web3Storage Rate Limiter wait timeout with error %+v", err)
+
+		return "", err
+	}
+
+	log.WithField("TaskID", cycleID).Debugf("Sending Req to web3.storage URL %s for file %s",
+		reqURL, fileName)
+
+	res, err := w3sHTTPClient.Do(req)
+	if err != nil {
+		log.WithField("TaskID", cycleID).Warnf("Failed to send request %+v towards web3.storage URL %s for fileName %s with error %+v.  Retrying %d",
+			req, reqURL)
+
+		return "", err
+	}
+
+	defer func(Body io.ReadCloser) {
+		err = Body.Close()
+		if err != nil {
+			log.WithField("TaskID", cycleID).Errorf("Failed to close response body for fileName %s from web3.storage with error %+v",
+				fileName, err)
+		}
+	}(res.Body)
+
+	resp := new(models.Web3StoragePostResponse)
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.WithError(err).WithField("TaskID", cycleID).Warnf("Failed to read response body for fileName %s from web3.storage", fileName)
+
+		return "", err
+	}
+
+	if res.StatusCode == http.StatusOK {
+		err = json.Unmarshal(respBody, resp)
+		if err != nil {
+			log.WithError(err).WithField("TaskID", cycleID).Warnf("Failed to unmarshal response %+v for fileName %s towards web3.storage", respBody, fileName)
+
+			return "", err
+		}
+
+		log.WithField("TaskID", cycleID).Debugf("Received 200 OK from web3.storage for fileName %s with CID %s ",
+			fileName, resp.CID)
+
+		return resp.CID, nil
+	}
+	if res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusForbidden ||
+		res.StatusCode == http.StatusUnauthorized {
+		log.WithField("TaskID", cycleID).Warnf("Failed to upload to web3.storage due to error %+v with statusCode %d", resp, res.StatusCode)
+
+		return "", errors.New("failed to upload to web3.storage")
+	}
+
+	errResp := new(models.Web3StorageErrResponse)
+
+	err = json.Unmarshal(respBody, errResp)
+	if err != nil {
+		log.
+			WithError(err).
+			WithField("TaskID", cycleID).
+			Errorf("Failed to unmarshal error response %+v for fileName %s towards web3.storage", respBody, fileName)
+
+		return "", err
+	}
+
+	log.WithField("TaskID", cycleID).Warnf("Received Error response %+v from web3.storage for fileName %s with statusCode %d and status : %s ",
+		errResp, fileName, res.StatusCode, res.Status)
+
 	log.WithField("TaskID", cycleID).Errorf("Failed to upload file %s to web3.storage after max retries", fileName)
-	return "", false
+
+	return "", errors.New("failed to upload chunk to web3.storage")
 }

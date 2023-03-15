@@ -9,12 +9,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+	log "github.com/sirupsen/logrus"
+
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
 	"audit-protocol/pruning-archival/models"
-
-	"github.com/go-redis/redis/v8"
-	log "github.com/sirupsen/logrus"
 )
 
 type caching struct {
@@ -56,6 +56,7 @@ func (c *caching) GetDAGCidsFromRedis(projectID, taskID string, startScore int, 
 	return cids, nil
 }
 
+// UpdatePrunedStatusToRedis updates the last pruned height of the project in redis
 func (c *caching) UpdatePrunedStatusToRedis(projectID, taskID string, lastPrunedHeight int) error {
 	l := log.WithField("TaskID", taskID).WithField("ProjectID", projectID)
 
@@ -73,6 +74,7 @@ func (c *caching) UpdatePrunedStatusToRedis(projectID, taskID string, lastPruned
 	return nil
 }
 
+// UpdateDagSegmentStatusToRedis updates the dag segment status to redis
 func (c *caching) UpdateDagSegmentStatusToRedis(cycleID string, projectID string, height int, dagSegment *models.ProjectDAGSegment) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_METADATA, projectID)
 
@@ -97,6 +99,7 @@ func (c *caching) UpdateDagSegmentStatusToRedis(cycleID string, projectID string
 	return nil
 }
 
+// GetPayloadCidsFromRedis fetches the payloadCids from redis for a given project
 func (c *caching) GetPayloadCidsFromRedis(projectID, taskID string, startScore int, endScore int) (map[int]string, error) {
 	cids := make(map[int]string, endScore-startScore)
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID)
@@ -131,6 +134,7 @@ func (c *caching) GetPayloadCidsFromRedis(projectID, taskID string, startScore i
 	return cids, nil
 }
 
+// PruneProjectCIDsInRedis prunes the given cids (ZSET) from redis
 func (c *caching) PruneProjectCIDsInRedis(cycleID, projectId string, startScore int, endScore int) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_CIDS, projectId)
 
@@ -149,6 +153,7 @@ func (c *caching) PruneProjectCIDsInRedis(cycleID, projectId string, startScore 
 	return nil
 }
 
+// PruneZSetInRedis prunes the given zset from redis
 func (c *caching) PruneZSetInRedis(cycleID, key string, startScore, endScore int) error {
 	val, err := c.redisClient.ZRemRangeByScore(
 		context.Background(), key,
@@ -169,7 +174,8 @@ func (c *caching) PruneZSetInRedis(cycleID, key string, startScore, endScore int
 	return nil
 }
 
-func (c *caching) DeleteContentFromLocalCache(projectId, cachePath string, dagCids map[int]string, payloadCids map[int]string) error {
+// DeleteContentFromLocalDrive deletes the content from local drive
+func (c *caching) DeleteContentFromLocalDrive(projectId, cachePath string, dagCids map[int]string, payloadCids map[int]string) error {
 	for _, cid := range dagCids {
 		fileName := fmt.Sprintf("%s/%s/%s.json", cachePath, projectId, cid)
 		if _, err := os.Stat(fileName); errors.Is(err, os.ErrNotExist) {
@@ -205,6 +211,7 @@ func (c *caching) DeleteContentFromLocalCache(projectId, cachePath string, dagCi
 	return nil
 }
 
+// UpdatePruningCycleDetailsInRedis updates the pruning cycle details in redis
 func (c *caching) UpdatePruningCycleDetailsInRedis(taskDetails *models.PruningTaskDetails, intervalMins int) error {
 	cycleDetailsStr, _ := json.Marshal(taskDetails)
 
@@ -236,23 +243,10 @@ func (c *caching) UpdatePruningCycleDetailsInRedis(taskDetails *models.PruningTa
 
 	//TODO: Migrate to using slack App.
 
-	//if taskDetails.ProjectsProcessFailedCount > 0 {
-	//	taskDetails.HostName, _ = os.Hostname()
-	//	report, _ := json.MarshalIndent(taskDetails, "", "\t")
-	//	slackutils.NotifySlackWorkflow(string(report), "Low", "PruningService")
-	//	taskDetails.ErrorInLastcycle = true
-	//} else {
-	//	if taskDetails.ErrorInLastcycle {
-	//		taskDetails.ErrorInLastcycle = false
-	//		//Send clear status
-	//		report, _ := json.MarshalIndent(taskDetails, "", "\t")
-	//		slackutils.NotifySlackWorkflow(string(report), "Cleared", "PruningService")
-	//	}
-	//}
-
 	return nil
 }
 
+// UpdatePruningProjectReportInRedis updates the project pruning report in redis
 func (c *caching) UpdatePruningProjectReportInRedis(taskDetails *models.PruningTaskDetails, projectPruningReport *models.ProjectPruningReport) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_CYCLE_PROJECT_DETAILS, taskDetails.TaskID)
 	projectReportStr, _ := json.Marshal(projectPruningReport)
@@ -367,81 +361,6 @@ func (c *caching) GetOldestIndexedProjectHeight(projectID, taskID string, settin
 
 	return lastIndexHedeight
 }
-
-func (c *caching) GetProjectsListFromRedis() map[string]*models.ProjectPruneState {
-	ctx := context.Background()
-	key := redisutils.REDIS_KEY_STORED_PROJECTS
-
-	log.Debugf("Fetching stored Projects from redis at key: %s", key)
-
-	for i := 0; ; i++ {
-		res := c.redisClient.SMembers(ctx, key)
-		if res.Err() != nil {
-			if res.Err() == redis.Nil {
-				log.Warnf("Stored Projects key doesn't exist..retrying")
-				time.Sleep(5 * time.Minute)
-				continue
-			}
-			log.Errorf("Failed to fetch stored projects from redis due to err %+v. Retrying %d", res.Err(), i)
-			time.Sleep(5 * time.Second)
-
-			continue
-		}
-
-		projectList := make(map[string]*models.ProjectPruneState, len(res.Val()))
-		//projectList = make(map[string]*ProjectPruneState, 375)
-		for index := range res.Val() {
-			projectId := res.Val()[index]
-			//if strings.Contains(projectId, "uniswap_V2PairsSummarySnapshot_UNISWAPV2") {
-			projectPruneState := &models.ProjectPruneState{ProjectId: projectId}
-			projectList[projectId] = projectPruneState
-			//	break
-			//}
-		}
-
-		log.Infof("Retrieved %d storedProjects %+v from redis", len(res.Val()), projectList)
-
-		return projectList
-	}
-}
-
-// GetLastPrunedStatusFromRedis gets the last pruned height for each project from redis
-//func (c *caching) GetLastPrunedStatusFromRedis(projectList map[string]*models.ProjectPruneState, cycleDetails *models.PruningTaskDetails) map[string]*models.ProjectPruneState {
-//	log.WithField("TaskID", cycleDetails.TaskID).Debug("Fetching Last Pruned Status at key:", redisutils.REDIS_KEY_PRUNING_STATUS)
-//
-//	res := c.redisClient.HGetAll(context.Background(), redisutils.REDIS_KEY_PRUNING_STATUS)
-//
-//	if len(res.Val()) == 0 {
-//		log.WithField("TaskID", cycleDetails.TaskID).Info("Failed to fetch Last Pruned Status  from redis for the projects.")
-//		//Key doesn't exist.
-//		log.WithField("TaskID", cycleDetails.TaskID).Info("Key doesn't exist..hence proceed from start of the block.")
-//
-//		return projectList
-//	}
-//	err := res.Err()
-//	if err != nil {
-//		log.WithField("TaskID", cycleDetails.TaskID).Error("Ideally should not come here, which means there is some other redis error. To debug:", err)
-//
-//		return projectList
-//	}
-//
-//	// TODO: Need to handle dynamic addition of projects.
-//	for projectId, lastHeight := range res.Val() {
-//		if project, ok := projectList[projectId]; ok {
-//			project.LastPrunedHeight, err = strconv.Atoi(lastHeight)
-//			if err != nil {
-//				log.WithField("TaskID", cycleDetails.TaskID).Errorf("lastPrunedHeight corrupt for project %s. It will be set to 0", projectId)
-//				continue
-//			}
-//		} else {
-//			projectList[projectId] = &models.ProjectPruneState{ProjectId: projectId, LastPrunedHeight: 0}
-//		}
-//	}
-//
-//	log.WithField("TaskID", cycleDetails.TaskID).Debugf("Fetched Last Pruned Status from redis %+v", projectList)
-//
-//	return projectList
-//}
 
 // GetLastPrunedHeightOfProjectFromRedis gets the last pruned height for each project from redis
 func (c *caching) GetLastPrunedHeightOfProjectFromRedis(projectID, taskID string) (int, error) {

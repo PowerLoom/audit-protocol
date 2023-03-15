@@ -7,10 +7,12 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 
+	"github.com/hashicorp/go-retryablehttp"
+
 	"audit-protocol/goutils/settings"
 )
 
-func GetIPFSHTTPClient(settingsObj *settings.SettingsObj) http.Client {
+func GetIPFSHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
 	transport := http.Transport{
 		MaxIdleConns:        settingsObj.Web3Storage.MaxIdleConns,
 		MaxConnsPerHost:     settingsObj.Web3Storage.MaxIdleConns,
@@ -19,15 +21,18 @@ func GetIPFSHTTPClient(settingsObj *settings.SettingsObj) http.Client {
 		DisableCompression:  true,
 	}
 
-	ipfsHTTPClient := http.Client{
-		Timeout:   time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second,
-		Transport: &transport,
-	}
+	retryClient := retryablehttp.NewClient()
+	retryClient.RetryMax = *settingsObj.RetryCount
+	retryClient.Backoff = retryablehttp.DefaultBackoff
 
-	return ipfsHTTPClient
+	httpclient := retryClient.HTTPClient
+	httpclient.Transport = &transport
+	httpclient.Timeout = time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second
+
+	return httpclient
 }
 
-func GetW3sClient(settingsObj *settings.SettingsObj) (http.Client, *rate.Limiter) {
+func GetW3sClient(settingsObj *settings.SettingsObj) (*http.Client, *rate.Limiter) {
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.Web3Storage.MaxIdleConns,
@@ -37,10 +42,13 @@ func GetW3sClient(settingsObj *settings.SettingsObj) (http.Client, *rate.Limiter
 		DisableCompression:  true,
 	}
 
-	w3sHttpClient := http.Client{
-		Timeout:   time.Duration(settingsObj.PruningServiceSettings.Web3Storage.TimeoutSecs) * time.Second,
-		Transport: &t,
-	}
+	retryClient := retryablehttp.NewClient()
+	retryClient.RetryMax = *settingsObj.RetryCount
+	retryClient.Backoff = retryablehttp.DefaultBackoff
+
+	w3sHttpClient := retryClient.HTTPClient
+	w3sHttpClient.Transport = &t
+	w3sHttpClient.Timeout = time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second
 
 	//Default values
 	tps := rate.Limit(1) //3 TPS

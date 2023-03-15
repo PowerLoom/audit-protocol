@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/remeh/sizedwaitgroup"
 	log "github.com/sirupsen/logrus"
 
@@ -29,23 +30,27 @@ func (w worker) ConsumeTask() error {
 	// start consuming messages in separate go routine.
 	// messages will be sent back over taskChan.
 	go func() {
-		// improve
-		errChan := make(chan error)
-		maxRetries := 0
-		for maxRetries < 3 {
-			err := w.taskmgr.Consume(context.Background(), worker2.TypePruningServiceWorker, taskChan, errChan)
-			if err != nil {
-				log.Fatalf("Failed to consume the message: %v", err)
-			}
+		err := backoff.Retry(
+			func() error {
+				errChan := make(chan error)
+				err := w.taskmgr.Consume(context.Background(), worker2.TypePruningServiceWorker, taskChan, errChan)
+				if err != nil {
+					log.Fatalf("Failed to consume the message: %v", err)
+				}
 
-			err = <-errChan
-			if err != nil {
-				log.Fatalf("Failed to consume the message: %v, retrying again", err)
-			}
-			maxRetries++
+				err = <-errChan
+				if err != nil {
+					log.Fatalf("Failed to consume the message: %v, retrying again", err)
+
+					return err
+				}
+
+				return nil
+			}, backoff.NewExponentialBackOff())
+
+		if err != nil {
+			log.Fatalf("Failed to consume the message: %v", err)
 		}
-
-		log.Fatalf("Failed to consume messages, max retries reached")
 	}()
 
 	// create a wait group to wait for previous the tasks to finish.
@@ -67,12 +72,16 @@ func (w worker) ConsumeTask() error {
 			if err != nil {
 				log.Errorf("Failed to run the task: %v", err)
 
-				err = taskHandler.Nack(false)
+				err = backoff.Retry(func() error {
+					return taskHandler.Nack(false)
+				}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(*w.settings.RetryCount)))
 				if err != nil {
 					log.Errorf("Failed to nack the message: %v", err)
 				}
 			} else {
-				err = taskHandler.Ack()
+				err = backoff.Retry(func() error {
+					return taskHandler.Ack()
+				}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(*w.settings.RetryCount)))
 				if err != nil {
 					log.Errorf("Failed to ack the message: %v", err)
 				}
@@ -92,5 +101,3 @@ func (w worker) ConsumeTask() error {
 func NewWorker(service *service.PruningService, settings *settings.SettingsObj, mgr taskmgr.TaskMgr) worker2.Worker {
 	return &worker{service: service, settings: settings, taskmgr: mgr}
 }
-
-// TODO: create dead letter queue worker

@@ -88,8 +88,8 @@ type SettingsObj struct {
 					RoutingKeyPrefix string `json:"routing_key_prefix"`
 				} `json:"commit-payloads"`
 				DagPruning struct {
-					QueueName  string `json:"queue_name"`
-					RoutingKey string `json:"routing_key"`
+					QueueNamePrefix  string `json:"queue_name_prefix"`
+					RoutingKeyPrefix string `json:"routing_key_prefix"`
 				} `json:"dag-pruning"`
 				DiffRequests struct {
 					QueueNamePrefix  string `json:"queue_name_prefix"`
