@@ -218,7 +218,7 @@ def export_project_state(project_id: str, r: redis.Redis):
         project_specific_state.firstEpochEndHeight = int(r.get(redis_keys.get_project_first_epoch_end_height(project_id)))
     except Exception as e:
         local_exceptions.append({'firstEpochEndHeight': str(e)})
-        if 'Summary' in project_id:
+        if 'Summary' or 'Daily' in project_id:
             project_specific_state.firstEpochEndHeight = 0
     else:
         console.log('\t Exported firstEpochEndHeight')
@@ -227,7 +227,7 @@ def export_project_state(project_id: str, r: redis.Redis):
         project_specific_state.epochSize = int(r.get(redis_keys.get_project_epoch_size(project_id)))
     except Exception as e:
         local_exceptions.append({'epochSize': str(e)})
-        if 'Summary' in project_id:
+        if 'Summary' or 'Daily' in project_id:
             project_specific_state.epochSize = 0
     else:
         console.log('\t Exported epochSize')
@@ -273,14 +273,17 @@ def export_project_state(project_id: str, r: redis.Redis):
     for time_period in time_series_index_identifiers:
         idx_head_key = redis_keys.get_sliding_window_cache_head_marker(project_id, time_period)
         idx_tail_key = redis_keys.get_sliding_window_cache_tail_marker(project_id, time_period)
-        idx_head = r.get(idx_head_key)
         # this takes care of only head marker being set for '0' indexes to the latest snapshot's epoch max height
-        if idx_head:  
+        idx_head = r.get(idx_head_key)
+        if idx_head:
+            idx_head = int(idx_head)  
+            idx_tail = r.get(idx_tail_key)
+            idx_tail = int(idx_tail) if idx_tail else None
             project_specific_state.timeSeriesData[time_period] = TimeSeriesIndex(
                 head=idx_head,
-                tail=r.get(idx_tail_key),
+                tail=idx_tail,
             )
-            console.log('\t Exported timeSeriesData for ', time_period, ' with head ', idx_head, ' and tail ', r.get(idx_tail_key))
+            console.log('\t Exported timeSeriesData for ', time_period, ' with head ', idx_head, ' and tail ', idx_tail)
         else:
             local_exceptions.append({f'timeSeriesData.{time_period}': 'empty'})
     return project_specific_state, local_exceptions
@@ -450,8 +453,8 @@ def export_state():
             else:
                 if local_exceptions:
                     exceptions['project'].update({project_id: local_exceptions})
-                else:
-                    state.projectSpecificStates[project_id] = project_specific_state
+                state.projectSpecificStates[project_id] = project_specific_state
+    
     pruning_project_status = r.hgetall(redis_keys.get_pruning_status_key())
     if len(pruning_project_status) > 0:
         state.pruningProjectStatus = {k: int(v) for k, v in pruning_project_status.items()}
@@ -513,10 +516,11 @@ def load_project_specific_state(project_id: str, project_state: ProjectSpecificP
     snapshot_cid_map = {v: k for k, v in project_state.snapshotCidsZset.items()}
     r.zadd(name=redis_keys.get_payload_cids_key(project_id), mapping=snapshot_cid_map)
     console.log('\tLoaded snapshot CIDs')
-    r.hset(
-        name=redis_keys.get_project_dag_segments_key(project_id),
-        mapping={k: v.json() for k, v in project_state.dagSegments.items()}
-    )
+    if project_state.dagSegments:
+        r.hset(
+            name=redis_keys.get_project_dag_segments_key(project_id),
+            mapping={k: v.json() for k, v in project_state.dagSegments.items()}
+        )
     console.log('\tLoaded DAG segments')
     for time_series_id in project_state.timeSeriesData:
         idx_head_key = redis_keys.get_sliding_window_cache_head_marker(project_id, time_series_id)
@@ -531,11 +535,12 @@ def load_project_specific_state(project_id: str, project_state: ProjectSpecificP
 
 def load_pruning_detailed_stats(cycle_id: int, project_id_cycle_details_map: Dict[str, PruningCycleForProjectDetails], r: redis.Redis):
     console.log('Loading pruning cycle details for cycle ', cycle_id)
-    r.hset(
-        name=redis_keys.get_specific_pruning_cycle_run_information(cycle_id),
-        mapping={k: v.json() for k, v in project_id_cycle_details_map.items()}
-    )
-    console.log('\tLoaded pruning cycle details for cycle ', cycle_id, ' with ', len(project_id_cycle_details_map), ' projects')
+    if project_id_cycle_details_map:
+        r.hset(
+            name=redis_keys.get_specific_pruning_cycle_run_information(cycle_id),
+            mapping={k: v.json() for k, v in project_id_cycle_details_map.items()}
+        )
+        console.log('\tLoaded pruning cycle details for cycle ', cycle_id, ' with ', len(project_id_cycle_details_map), ' projects')
 
 def load_aggregates(aggregates: AggregateState, r: redis.Redis):
     # pair contract summary stuff
@@ -617,12 +622,13 @@ def load_aggregates(aggregates: AggregateState, r: redis.Redis):
     )
     console.log('Loaded tentative block height for V2 token summary ', aggregates.tokensSummary.tentativeBlockHeight)
     for pair_contract_address, metadata_dict in aggregates.tokensSummary.contractTokenMetadata.items():
-        pair_contract_tokens_data_key = f'uniswap:pairContract:{settings.pooler_namespace}:{pair_contract_address}:PairContractTokensData'  # hashtable
-        r.hset(
-            name=pair_contract_tokens_data_key,
-            mapping=metadata_dict
-        )
-        console.log('Loaded V2 token metadata for ', pair_contract_address)
+        if metadata_dict:
+            pair_contract_tokens_data_key = f'uniswap:pairContract:{settings.pooler_namespace}:{pair_contract_address}:PairContractTokensData'  # hashtable
+            r.hset(
+                name=pair_contract_tokens_data_key,
+                mapping=metadata_dict
+            )
+            console.log('Loaded V2 token metadata for ', pair_contract_address)
     for pair_contract_address, price_history_mapping in aggregates.tokensSummary.contractTokenPriceHistory.items():
         token_price_history_key = f'uniswap:tokenInfo:{settings.pooler_namespace}:{pair_contract_address}:priceHistory'
         r.zadd(
@@ -633,12 +639,13 @@ def load_aggregates(aggregates: AggregateState, r: redis.Redis):
         )
         console.log('Loaded V2 token price history for ', pair_contract_address, ' with ', len(price_history_mapping), ' elements')
     for pair_contract_address, token_addresses in aggregates.tokensSummary.contractTokenAddresses.items():
-        pair_token_addresses_key = f'uniswap:pairContract:{settings.pooler_namespace}:{pair_contract_address}:PairContractTokensAddresses'
-        r.hset(
-            name=pair_token_addresses_key,
-            mapping=token_addresses
-        )
-        console.log('Loaded V2 token addresses for ', pair_contract_address, ' with mapping ', token_addresses)
+        if token_addresses:
+            pair_token_addresses_key = f'uniswap:pairContract:{settings.pooler_namespace}:{pair_contract_address}:PairContractTokensAddresses'
+            r.hset(
+                name=pair_token_addresses_key,
+                mapping=token_addresses
+            )
+            console.log('Loaded V2 token addresses for ', pair_contract_address, ' with mapping ', token_addresses)
     for pair_contract_address, pair_contract_pricing_map in aggregates.tokensSummary.pairContractPriceHistory.items():
         pair_contract_price_at_block_height_key = f'uniswap:pairContract:{settings.pooler_namespace}:{pair_contract_address}:cachedPairBlockHeightTokenPrice'
         r.zadd(
@@ -682,11 +689,12 @@ def load_state_from_file(file_name: Optional[str] = typer.Argument('state.json.b
                 console.log('Error while loading project state: ', project_id, exc)
             else:
                 console.log('Loaded project state: ', project_id)
-    r.hset(
-        name=redis_keys.get_pruning_status_key(), 
-        mapping=state.pruningProjectStatus
-    )
-    console.log('Loaded pruning project status in key ', redis_keys.get_pruning_status_key())
+    if state.pruningProjectStatus:
+        r.hset(
+            name=redis_keys.get_pruning_status_key(), 
+            mapping=state.pruningProjectStatus
+        )
+        console.log('Loaded pruning project status in key ', redis_keys.get_pruning_status_key())
     r.zadd(
         name=redis_keys.get_all_pruning_cycles_status_key(),
         mapping={v.json(): k for k, v in state.pruningCycleRunStatus.items()}
