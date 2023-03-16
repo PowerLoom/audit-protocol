@@ -171,7 +171,8 @@ func (p *PruningService) pruneProjectSegments(projectID string, lastPrunedHeight
 
 	taskDetails.EndTime = time.Now().UnixMilli()
 
-	err = p.caching.UpdatePruningCycleDetailsInRedis(taskDetails, p.settingsObj.PruningServiceSettings.RunIntervalMins)
+	// ignoring error as it is not critical but can be sent to slack
+	_ = p.caching.UpdatePruningCycleDetailsInRedis(taskDetails, p.settingsObj.PruningServiceSettings.RunIntervalMins)
 
 	return nil
 }

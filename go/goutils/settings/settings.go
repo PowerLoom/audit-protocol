@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"os"
+	"strconv"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -26,6 +27,7 @@ type PruningServiceSettings struct {
 	IpfsTimeout                          int          `json:"ipfs_timeout_secs"`
 	SummaryProjectsPruneHeightBehindHead int          `json:"summary_projects_prune_height_behind_head"`
 	PruningHeightBehindOldestIndex       int          `json:"pruning_height_behind_oldest_index"`
+	SegmentSize                          int          `json:"segment_size"`
 	Web3Storage                          struct {
 		TimeoutSecs       int          `json:"timeout_secs"`
 		RateLimit         *RateLimiter `json:"rate_limit"`
@@ -209,6 +211,15 @@ func SetDefaults(settingsObj *SettingsObj) {
 	}
 	if settingsObj.DagVerifierSettings.Concurrency == 0 {
 		settingsObj.DagVerifierSettings.Concurrency = 10
+	}
+
+	// for local testing
+	if val, err := strconv.ParseBool(os.Getenv("LOCAL_TESTING")); err == nil && val {
+		settingsObj.Redis.Host = "localhost"
+		settingsObj.RedisReader.Host = "localhost"
+		settingsObj.Rabbitmq.Host = "localhost"
+		settingsObj.IpfsConfig.ReaderURL = "/dns/localhost/tcp/5001"
+		settingsObj.IpfsConfig.URL = "/dns/localhost/tcp/5001"
 	}
 }
 

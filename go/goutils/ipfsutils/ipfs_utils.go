@@ -244,6 +244,11 @@ func (client *IpfsClient) UnPinCidsFromIPFS(projectID string, cids map[int]strin
 
 // AddFileToIPFS adds a file to IPFS and returns the CID of the file
 func (client *IpfsClient) AddFileToIPFS(data []byte) (string, error) {
+	err := client.ipfsClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		return "", err
+	}
+	
 	cid, err := client.ipfsClient.Add(bytes.NewReader(data), shell.CidVersion(1))
 	if err != nil {
 		return "", err
