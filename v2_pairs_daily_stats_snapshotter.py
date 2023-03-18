@@ -148,13 +148,14 @@ async def v2_pairs_daily_stats_snapshotter(
             # fetch current and 24h old snapshot payload
             dag_block_latest, dag_block_24h = await asyncio.gather(
                 retrieve_payload_data(
-                    latest_pair_summary_timestamp_payload_cid,
-                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
-                    ipfs_read_client),
+                    payload_cid=latest_pair_summary_timestamp_payload_cid,
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
+                    ipfs_read_client=ipfs_read_client
+                ),
                 retrieve_payload_data(
-                    pair_snapshot_payload_cid_24h,
-                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
-                    ipfs_read_client),
+                    payload_cid=pair_snapshot_payload_cid_24h,
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
+                    ipfs_read_client=ipfs_read_client),
                 return_exceptions=True
             )
             # handle case of null payload in dag_block
