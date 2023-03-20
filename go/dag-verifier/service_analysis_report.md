@@ -8,11 +8,12 @@
     - Run PruningVerifier
 
 - `reportIssue` handler func
-  - Receives issues over http. ReqBody is expected to be [IssueReport](https://github.com/swagftw/audit-protocol/blob/main/go/goutils/datamodel/data_model.go#L87)
-  - Store report in redis
-  - Report issue to consensus system
-  - Remove issueReports older than 7 days
-  
+    - Receives issues over http. ReqBody is expected to
+      be [IssueReport](https://github.com/swagftw/audit-protocol/blob/main/go/goutils/datamodel/data_model.go#L87)
+    - Store report in redis
+    - Report issue to consensus system
+    - Remove issueReports older than 7 days
+
 ## Dag Verifier
 
 - Initialize DagVerifier Struct
@@ -57,5 +58,33 @@
     - update last verified dag height for every project in redis (projects:dagVerificationStatus)
     - update last indexed state for each project in redis (projects:IndexStatus)
 
+## Pruning Verifier
 
-## Pruning Verifier (WIP)
+Verifies pruning and archival of dag segments. This runs in a separate go routine in parallel with dag verifier,
+if `pruning_verification` is set to `true` in config/settings.
+
+- Init() initializes PruningVerifier struct
+    - Initialize redis client
+    - Initialize web3 storage client
+
+- Run() runs pruning verifier
+    - Get all projects stored in redis
+    - Fetch last pruning verification status from redis
+    - VerifyPruningAndArchival() verify pruning and archival
+
+- VerifyPruningAndArchival()
+    - check storage status for every dag segment
+    - if dag segment has `COLD` status check stat of dag segment is uploaded to web3 storage
+        - if yes verify dag segment uploaded to web3 storage (check for gaps and duplicate chain ranges)
+        - else update pruning report with failed status
+    - update verification status in redis stored in hash with key `projects:pruningVerificationStatus`
+    - notify on slack if fails are detected with archival and pruning
+
+## How to better verify DAG Chain
+
+- Check if dag chain is stuck for any project
+- Check for duplicate dag segments (same dag blocks range but different CID)
+- Check for gaps in dag chain
+- For consecutive dag blocks verify payload data
+    - check if source chain is continuous (no gaps). nth block's source chain end height = (n-1)th block's source chain
+      height - 1. Which also means checks for duplication of Epoch in payload data.
