@@ -29,7 +29,7 @@ class AsyncIPFSClient:
             )
             self._client = AsyncClient(
                 base_url=self._base_url,
-                timeout=Timeout(timeout=5.0),
+                timeout=Timeout(timeout=settings.ipfs.timeout),
                 follow_redirects=False,
                 transport=self._async_transport
             )

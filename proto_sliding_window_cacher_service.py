@@ -3,6 +3,7 @@ import json
 import logging
 import sys
 from functools import wraps
+from typing import Tuple
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
@@ -59,7 +60,6 @@ async def find_tail(
         tail: int,
         project_id: str,
         time_period_ts: int,
-        registered_projects,
         redis_conn: aioredis.Redis,
         ipfs_read_client: AsyncIPFSClient
 ):
@@ -75,6 +75,14 @@ async def find_tail(
         reader_redis_conn=redis_conn,
         ipfs_read_client=ipfs_read_client
     )
+    if not head_block['data']['payload']:
+        sliding_cacher_logger.warning(
+            "Seeking tail against head block DAG CID %s height %s for time period %s"
+            "No payload found while fetching dag_block at height %s for projectId: %s. Skipping building of primary index",
+            head_block['data']['dag_cid'], head, time_period_ts,
+            current_height, project_id, exc_info=True
+        )
+        return None
     present_ts = head_block['data']['payload']['timestamp']
     while current_height < head:
         try:
@@ -84,7 +92,7 @@ async def find_tail(
                 reader_redis_conn=redis_conn,
                 ipfs_read_client=ipfs_read_client
             )
-            if dag_block and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
+            if dag_block and dag_block['data']['payload'] and present_ts - dag_block['data']['payload']['timestamp'] <= time_period_ts:
                 sliding_cacher_logger.debug("Found tail after traversing %s blocks for projectId: %s:%d",
                                             abs(current_height - tail),
                                             project_id,
@@ -92,10 +100,12 @@ async def find_tail(
                 )
                 return current_height
         except Exception as err:
-            sliding_cacher_logger.error("Exception while fetching dag_block at height %s for projectId: %s. Error:%s",
-            current_height,
-            project_id,
-            err, exc_info=True)
+            sliding_cacher_logger.warning(
+                "Seeking tail against head block DAG CID %s height %s for time period %s"
+                "Exception while fetching dag_block at height %s for projectId: %s. Error:%s",
+                head_block['data']['dag_cid'], head, time_period_ts,
+                current_height, project_id, err, exc_info=True
+            )
         current_height += 1
 
     sliding_cacher_logger.error("Could not find tail for projectId:%s", project_id)
@@ -106,8 +116,7 @@ async def find_tail(
 async def build_primary_index(
         project_id: str,
         time_period: str,
-        height_map: dict,
-        registered_projects: list,
+        head_dag_block_height: int,
         semaphore: asyncio.BoundedSemaphore,
         writer_redis_conn: aioredis.Redis,
         ipfs_read_client: AsyncIPFSClient
@@ -120,7 +129,7 @@ async def build_primary_index(
     #  1. maybe don't store it? 2. or, might be useful state information?
     idx_head_key = redis_keys.get_sliding_window_cache_head_marker(project_id, time_period)
     idx_tail_key = redis_keys.get_sliding_window_cache_tail_marker(project_id, time_period)
-    head_marker = height_map.get('dag_block_height')
+    head_marker = head_dag_block_height
     tail_marker = None
 
     # if time_period is 0 then just set head and exit
@@ -135,7 +144,7 @@ async def build_primary_index(
         sliding_cacher_logger.info('Finding %s tail marker for the first time for project %s', time_period, project_id)
         #passing prev tail as 1 since we are looking for tail for the first time.
         tail_marker = await find_tail(
-            head_marker,1, project_id, time_period_ts, registered_projects, writer_redis_conn, ipfs_read_client
+            head_marker,1, project_id, time_period_ts, writer_redis_conn, ipfs_read_client
         )
         if not tail_marker:
             sliding_cacher_logger.error(
@@ -151,7 +160,7 @@ async def build_primary_index(
     else:
         tail_marker = int(markers[1])
         tail_ahead = await find_tail(
-            head_marker, tail_marker, project_id, time_period_ts, registered_projects, writer_redis_conn, ipfs_read_client
+            head_marker, tail_marker, project_id, time_period_ts, writer_redis_conn, ipfs_read_client
         )
         if not tail_ahead:
             sliding_cacher_logger.error(
@@ -169,6 +178,31 @@ async def build_primary_index(
                 'Set %s - %s index for %s data | Project ID: %s',
                 head_marker, tail_ahead, time_period, project_id
             )
+
+
+@acquire_bounded_semaphore
+async def get_epoch_end_per_project(
+    project_id: str,
+    semaphore: asyncio.BoundedSemaphore,
+    writer_redis_conn: aioredis.Redis,
+    ipfs_read_client: AsyncIPFSClient
+) -> Tuple[int, int]:
+    """
+    returns tuple of (head_dag_block_height_of_project, epoch_end_contained_in_head_dag_block)
+    """
+    project_height_key = redis_keys.get_block_height_key(project_id)
+    max_height = await writer_redis_conn.get(project_height_key)
+    if not max_height:
+        raise Exception("Can\'t fetch max block height against project ID: %s", project_id)
+    dag_block = await retrieval_utils.get_dag_block_by_height(
+        project_id=project_id,
+        block_height=int(max_height.decode('utf-8')),
+        reader_redis_conn=writer_redis_conn,
+        ipfs_read_client=ipfs_read_client
+    )
+    if not dag_block or not dag_block['data']['payload']:
+        return (int(max_height), 0)  # anomalous result to be filtered out by caller
+    return (int(max_height), dag_block['data']['payload']['chainHeightRange']['end'])
 
 
 @acquire_bounded_semaphore
@@ -238,68 +272,43 @@ async def build_primary_indexes(ipfs_read_client):
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
     project_id_to_register_series = dict(zip(registered_project_ids, registered_projects_ts))
-    project_source_height_map = {}
 
     sliding_cacher_logger.debug("Fetching maximum height for all projectIds")
     tasks = list()
     semaphore = asyncio.BoundedSemaphore(20)
-    for project_id, ts_arr in project_id_to_register_series.items():
-        fn = get_max_height_pair_project(**{
-            'project_id': project_id,
-            'height_map': project_source_height_map,
-            'registered_projects': registered_projects,
-            'semaphore': semaphore,
-            'writer_redis_conn': writer_redis_conn,
-            'ipfs_read_client': ipfs_read_client
-        })
-        tasks.append(fn)
-    max_height_array = await asyncio.gather(*tasks, return_exceptions=True)
-    res_exceptions = list(map(lambda r: r, filter(lambda y: isinstance(y, Exception), max_height_array)))
-
-    if len(res_exceptions) == len(project_id_to_register_series):
-        sliding_cacher_logger.debug('block-height for all projects has not been intialized yet, sleeping till next cycle')
-        return
-    if len(res_exceptions) > 0:
-        sliding_cacher_logger.warning('Can\'t find projects max height for some projects, sleeping till next cycle | error_objs: %s', res_exceptions)
-        return
-
-    try:
-        smallest_source_height = project_source_height_map[next(iter(project_source_height_map))]["source_height"]
-    except StopIteration:
-        sliding_cacher_logger.error("Can\'t find smallest source height for projects, sleeping till next cycle")
-        return
-    for project_map_id, project_map in project_source_height_map.items():
-        smallest_source_height = int(project_map["source_height"]) if int(project_map["source_height"]) < int(smallest_source_height) else int(smallest_source_height)
-
-    sliding_cacher_logger.debug(f"Adjusting all projects height to match common minimum height: {smallest_source_height}")
-    try:
-        await adjust_projects_head_by_source_height(
-            project_source_height_map,
-            smallest_source_height,
-            registered_projects,
-            writer_redis_conn,
-            ipfs_read_client
+    for project_id in registered_project_ids:
+        tasks.append(
+            get_epoch_end_per_project(
+            project_id=project_id, 
+            semaphore=semaphore, 
+            writer_redis_conn=writer_redis_conn, 
+            ipfs_read_client=ipfs_read_client)
         )
-    except Exception as exc:
-        sliding_cacher_logger.error(f"can\'t adjust projects height for smallest source height | error_msg: {exc}")
-        return
 
+    epoch_ends_map = await asyncio.gather(*tasks, return_exceptions=True)
+    sliding_cacher_logger.debug("Fetched epoch end information for all projectIds: %s", epoch_ends_map)
+    try:
+        max_epoch_end = max(filter(lambda x: not(isinstance(x, Exception) or x[1] == 0), epoch_ends_map), key=lambda x: x[1])
+    except ValueError:
+        sliding_cacher_logger.error("Can\'t find max epoch end for all projects, sleeping till next cycle")
+        return
+    indexable_projects_to_dag_heights = {k: epoch_ends_map[idx][0] for idx, k in enumerate(registered_project_ids) if not(isinstance(epoch_ends_map[idx], Exception) or epoch_ends_map[idx][1] == 0)}
+    
     sliding_cacher_logger.debug(f"Start building indexes for all projects | project_count:{len(project_id_to_register_series)}")
     tasks = list()
-    for project_id, ts_arr in project_id_to_register_series.items():
-        for time_period in ts_arr:
-            height_map = project_source_height_map[project_id]
-            fn = build_primary_index(**{
-                'project_id': project_id,
-                'time_period': time_period,
-                'height_map': height_map,
-                'registered_projects': registered_projects,
-                'semaphore': semaphore,
-                'writer_redis_conn': writer_redis_conn,
-                'ipfs_read_client': ipfs_read_client
-            })
+    for project_id, head_dag_height in indexable_projects_to_dag_heights.items():
+        for time_period in project_id_to_register_series[project_id]:
+            fn = build_primary_index(
+                project_id=project_id,
+                time_period=time_period,
+                head_dag_block_height=head_dag_height,
+                semaphore=semaphore,
+                writer_redis_conn=writer_redis_conn,
+                ipfs_read_client=ipfs_read_client
+            )
             tasks.append(fn)
     await asyncio.gather(*tasks)
+    return max_epoch_end[1]
 
 
 async def periodic_retrieval():
@@ -321,12 +330,20 @@ async def periodic_retrieval():
     redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     while True:
         try:
-            await build_primary_indexes(ipfs_read_client=ipfs_read_client)
-            await asyncio.gather(
-                v2_pairs_data(async_httpx_client, ipfs_write_client, ipfs_read_client),
-                v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
-                asyncio.sleep(90)
-            )
+            common_epoch_end = await build_primary_indexes(ipfs_read_client=ipfs_read_client)
+            if common_epoch_end:
+                try:
+                    await asyncio.gather(
+                        v2_pairs_data(async_httpx_client, common_epoch_end, ipfs_write_client, ipfs_read_client),
+                        v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
+                        asyncio.sleep(90),
+                    )
+                except Exception as e:
+                    sliding_cacher_logger.error('Error in uniswap summary aggregation: ')
+                    sliding_cacher_logger.error(e, exc_info=True)
+                    await asyncio.sleep(90)
+            else:
+                await asyncio.sleep(90)
             sliding_cacher_logger.debug('Finished a cycle of indexing...')
         except Exception as err:
             sliding_cacher_logger.error("Exception occured in indexing and aggregation cycle %s",
@@ -355,3 +372,4 @@ if __name__ == "__main__":
         asyncio.get_event_loop().run_until_complete(f)
     except:
         asyncio.get_event_loop().stop()
+

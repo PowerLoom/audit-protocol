@@ -311,7 +311,7 @@ async def calculate_pair_liquidity(
     liquidity_head_marker = await writer_redis_conn.get(
         redis_keys.get_sliding_window_cache_head_marker(project_id_token_reserve, '0'))
     liquidity_head_marker = int(liquidity_head_marker.decode('utf-8')) if liquidity_head_marker else 0
-    liquidity_data = await get_dag_block_by_height(
+    latest_dag_block_for_liquidity = await get_dag_block_by_height(
         project_id=project_id_token_reserve,
         block_height=liquidity_head_marker,
         reader_redis_conn=writer_redis_conn,
@@ -319,17 +319,21 @@ async def calculate_pair_liquidity(
     )
     pair_liquidity: PairLiquidity = PairLiquidity()
 
-    if not liquidity_data:
+    if not(latest_dag_block_for_liquidity is not None and latest_dag_block_for_liquidity.get('data') and latest_dag_block_for_liquidity['data'].get('payload')):
+        logger.error(
+            'Got DAG block at liquidity marker %s for pair %s as : %s',
+            liquidity_head_marker, pair_contract_address, latest_dag_block_for_liquidity
+        )
         return pair_liquidity
-    pair_liquidity.token0_liquidity = float(list(liquidity_data['data']['payload']['token0Reserves'].values())[-1])
-    pair_liquidity.token1_liquidity = float(list(liquidity_data['data']['payload']['token1Reserves'].values())[-1])
-    pair_liquidity.token0_liquidity_usd = float(list(liquidity_data['data']['payload']['token0ReservesUSD'].values())[-1])
-    pair_liquidity.token1_liquidity_usd = float(list(liquidity_data['data']['payload']['token1ReservesUSD'].values())[-1])
+    pair_liquidity.token0_liquidity = float(list(latest_dag_block_for_liquidity['data']['payload']['token0Reserves'].values())[-1])
+    pair_liquidity.token1_liquidity = float(list(latest_dag_block_for_liquidity['data']['payload']['token1Reserves'].values())[-1])
+    pair_liquidity.token0_liquidity_usd = float(list(latest_dag_block_for_liquidity['data']['payload']['token0ReservesUSD'].values())[-1])
+    pair_liquidity.token1_liquidity_usd = float(list(latest_dag_block_for_liquidity['data']['payload']['token1ReservesUSD'].values())[-1])
     pair_liquidity.total_liquidity = pair_liquidity.token0_liquidity_usd + pair_liquidity.token1_liquidity_usd
-    pair_liquidity.block_height_total_reserve = int(liquidity_data['data']['payload']['chainHeightRange']['end'])
-    pair_liquidity.block_timestamp_total_reserve = int(liquidity_data['data']['payload']['timestamp'])
+    pair_liquidity.block_height_total_reserve = int(latest_dag_block_for_liquidity['data']['payload']['chainHeightRange']['end'])
+    pair_liquidity.block_timestamp_total_reserve = int(latest_dag_block_for_liquidity['data']['payload']['timestamp'])
     if not pair_liquidity.block_timestamp_total_reserve:
-        pair_liquidity.block_timestamp_total_reserve = int(liquidity_data['timestamp'])
+        pair_liquidity.block_timestamp_total_reserve = int(latest_dag_block_for_liquidity['timestamp'])
 
     return pair_liquidity
 
@@ -390,6 +394,7 @@ async def store_pair_daily_stats(writer_redis_conn: aioredis.Redis, pair_contrac
 
 async def process_pairs_trade_volume_and_reserves(
         writer_redis_conn: aioredis.Redis,
+        common_epoch_end,
         pair_contract_address,
         ipfs_read_client: AsyncIPFSClient
 ):
@@ -426,16 +431,14 @@ async def process_pairs_trade_volume_and_reserves(
             not tail_marker_7d,
             not head_marker_7d
         ]):
-            logger.info(
-                'Values of 24h head, tail and 7h head, tail marker - some of them might be null and hence returning |'
-                '[tail_marker_24h, head_marker_24h,  tail_marker_7d, head_marker_7d] : %s',
-                [tail_marker_24h, head_marker_24h, tail_marker_7d, head_marker_7d]
-            )
-            return
+            msg = 'Values of 24h head, tail and 7h head, tail marker - some of them might be null and hence returning |' 
+            f'[tail_marker_24h, head_marker_24h,  tail_marker_7d, head_marker_7d] : {tail_marker_24h, head_marker_24h, tail_marker_7d, head_marker_7d}'
+            logger.info(msg)
+            raise Exception(msg)
 
         # if head of 24h and 7d index at 1 or less then return
         if head_marker_24h <= 1 or head_marker_7d <= 1:
-            return
+            raise Exception('Values of 24 head and tail marker are not sufficient to calculate aggregates')
 
         # initialize returning variables
         block_height_trade_volume = 0
@@ -456,7 +459,12 @@ async def process_pairs_trade_volume_and_reserves(
 
         pair_liquidity: PairLiquidity = await calculate_pair_liquidity(writer_redis_conn, pair_contract_address, ipfs_read_client)
         if not pair_liquidity.total_liquidity:
-            return
+            alert_msg = f"Error retrieving data in head DAG block to mark liquidity against latest source chain block in epoch | pair_contract_address: {pair_contract_address} | "
+            "Resuming next cycle"
+            logger.warning(
+                alert_msg
+            )
+            raise Exception(alert_msg)
 
         if not cached_trade_volume_data:
             logger.debug(
@@ -488,10 +496,11 @@ async def process_pairs_trade_volume_and_reserves(
 
             # calculate trade volume 7d
             pair_trade_volume_7d = calculate_pair_trade_volume(dag_chain_7d)
-
+            dag_chain_24h_intact_payloads = [x for x in dag_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+            dag_chain_7d_intact_payloads = [x for x in dag_chain_7d if x is not None and x.get('data') and x['data'].get('payload')]
             # store last recent logs, these will be used to show recent transaction for perticular contract
             # using only 24h dag chain as we just need 75 log at max
-            await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h, pair_contract_address)
+            await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h_intact_payloads, pair_contract_address)
 
             cids_volume_24h: DAGBlockRange = DAGBlockRange(
                 head_block_cid= dag_chain_24h[0]['dagCid'],
@@ -501,7 +510,7 @@ async def process_pairs_trade_volume_and_reserves(
                 head_block_cid= dag_chain_7d[0]['dagCid'],
                 tail_block_cid=dag_chain_7d[-1]['dagCid']
                 )
-            block_height_trade_volume = int(dag_chain_24h[0]['data']['payload']['chainHeightRange']['end'])
+            block_height_trade_volume = common_epoch_end
         else:
             sliding_window_front_chain_24h = []
             sliding_window_back_chain_24h = []
@@ -606,7 +615,8 @@ async def process_pairs_trade_volume_and_reserves(
             cids_volume_7d.tail_block_cid = tail_dag_block[0]['dagCid']
 
             if sliding_window_back_chain_24h:
-                sliding_window_back_volume_24h:PairTradeVolume = calculate_pair_trade_volume(sliding_window_back_chain_24h)
+                qualified_sliding_window_blocks_back_chain_24h = [x for x in sliding_window_back_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+                sliding_window_back_volume_24h:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_back_chain_24h)
                 cached_trade_volume_data["aggregated_volume_24h"] -= sliding_window_back_volume_24h.total_volume
                 cached_trade_volume_data["aggregated_fees_24h"] -= sliding_window_back_volume_24h.fees
                 cached_trade_volume_data["aggregated_token0_volume_24h"] -= sliding_window_back_volume_24h.token0_volume
@@ -615,7 +625,8 @@ async def process_pairs_trade_volume_and_reserves(
                 cached_trade_volume_data["aggregated_token1_volume_usd_24h"] -= sliding_window_back_volume_24h.token1_volume_usd
 
             if sliding_window_front_chain_24h:
-                sliding_window_front_volume_24h:PairTradeVolume =  calculate_pair_trade_volume(sliding_window_front_chain_24h)
+                qualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_back_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+                sliding_window_front_volume_24h:PairTradeVolume =  calculate_pair_trade_volume(qualified_sliding_window_blocks_front_chain_24h)
                 cached_trade_volume_data["aggregated_volume_24h"] += sliding_window_front_volume_24h.total_volume
                 cached_trade_volume_data["aggregated_fees_24h"] += sliding_window_front_volume_24h.fees
                 cached_trade_volume_data["aggregated_token0_volume_24h"] += sliding_window_front_volume_24h.token0_volume
@@ -623,16 +634,15 @@ async def process_pairs_trade_volume_and_reserves(
                 cached_trade_volume_data["aggregated_token0_volume_usd_24h"] += sliding_window_front_volume_24h.token0_volume_usd
                 cached_trade_volume_data["aggregated_token1_volume_usd_24h"] += sliding_window_front_volume_24h.token1_volume_usd
                 # block height of trade volume
-                block_height_trade_volume = int(
-                    sliding_window_front_chain_24h[0]['data']['payload']['chainHeightRange']['end'])
-
+                block_height_trade_volume = common_epoch_end
                 # store recent logs
-                await store_recent_transactions_logs(writer_redis_conn, sliding_window_front_chain_24h, pair_contract_address)
+                await store_recent_transactions_logs(writer_redis_conn, qualified_sliding_window_blocks_front_chain_24h, pair_contract_address)
             else:
                 block_height_trade_volume = cached_trade_volume_data["processed_block_height_trade_volume"]
 
             if sliding_window_back_chain_7d:
-                sliding_window_back_volume_7d:PairTradeVolume = calculate_pair_trade_volume(sliding_window_back_chain_7d)
+                qualified_sliding_window_blocks_back_chain_7d = [x for x in sliding_window_back_chain_7d if x is not None and x.get('data') and x['data'].get('payload')]
+                sliding_window_back_volume_7d:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_back_chain_7d)
                 cached_trade_volume_data["aggregated_volume_7d"] -= sliding_window_back_volume_7d.total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] -= sliding_window_back_volume_7d.token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_7d"] -= sliding_window_back_volume_7d.token1_volume
@@ -640,7 +650,8 @@ async def process_pairs_trade_volume_and_reserves(
                 cached_trade_volume_data["aggregated_token1_volume_usd_7d"] -= sliding_window_back_volume_7d.token1_volume_usd
 
             if sliding_window_front_chain_7d:
-                sliding_window_front_volume_7d:PairTradeVolume = calculate_pair_trade_volume(sliding_window_front_chain_7d)
+                qualified_sliding_window_blocks_front_chain_7d = [x for x in sliding_window_front_chain_7d if x is not None and x.get('data') and x['data'].get('payload')]
+                sliding_window_front_volume_7d:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_front_chain_7d)
                 cached_trade_volume_data["aggregated_volume_7d"] += sliding_window_front_volume_7d.total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] += sliding_window_front_volume_7d.token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_7d"] += sliding_window_front_volume_7d.token1_volume
@@ -734,219 +745,189 @@ async def process_pairs_trade_volume_and_reserves(
 
 async def v2_pairs_data(
         async_httpx_client: AsyncClient,
+        common_epoch_end,
         ipfs_write_client: AsyncIPFSClient,
         ipfs_read_client: AsyncIPFSClient
 ):
+    aioredis_pool = RedisPool()
+    await aioredis_pool.populate()
+    redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
+
+    if len(PAIR_CONTRACTS) <= 0:
+        return []
+
+    logger.debug("Launching tasks to aggregate trade volume and liquidity for pairs")
+    process_data_list = []
+    for pair_contract_address in PAIR_CONTRACTS:
+        trade_volume_reserves = process_pairs_trade_volume_and_reserves(
+            aioredis_pool.writer_redis_pool,
+            common_epoch_end,
+            pair_contract_address,
+            ipfs_read_client
+        )
+        process_data_list.append(trade_volume_reserves)
+
+    final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(
+        *process_data_list, return_exceptions=True
+    )
+    
     try:
-
-        aioredis_pool = RedisPool()
-        await aioredis_pool.populate()
-        redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
-
-        if len(PAIR_CONTRACTS) <= 0:
-            return []
-
-        logger.debug("Create threads to aggregate trade volume and liquidity for pairs")
-        process_data_list = []
-        for pair_contract_address in PAIR_CONTRACTS:
-            trade_volume_reserves = process_pairs_trade_volume_and_reserves(
-                aioredis_pool.writer_redis_pool,
-                pair_contract_address,
-                ipfs_read_client
+        common_block_timestamp = max(
+            map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
+        )
+    except ValueError:
+        logger.error(
+                'Aggregation on all pair contracts\' trade volume and reserves incomplete. Waiting to build v2 pairs summary in next cycle '
             )
-            process_data_list.append(trade_volume_reserves)
+        return
+    pair_addresses = map(lambda x: x.contractAddress, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
+    pair_contract_address = next(pair_addresses)
+    logger.debug('Setting common blockheight for v2 pairs aggregation %s', common_epoch_end)
+    
+    summarized_result_l = [x.dict() for x in final_results if not (isinstance(x, BaseException) or x is None)]
+    summarized_payload = {'data': summarized_result_l}
+    # get last processed v2 pairs snapshot height
+    l_ = await redis_conn.get(
+        redis_keys.get_uniswap_pair_snapshot_last_block_height(
+            settings.pooler_namespace
+            )
+        )
+    if l_:
+        last_common_block_height = int(l_)
+    else:
+        last_common_block_height = 0
+    if common_epoch_end > last_common_block_height:
+        logger.info(
+            'Present common block height in V2 pairs summary snapshot is %s | Moved from %s',
+            common_epoch_end, last_common_block_height
+        )
+        tentative_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
+            project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace)
+        ))
+        tentative_audit_project_block_height  = int(tentative_audit_project_block_height) if tentative_audit_project_block_height else 0
 
-        final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(*process_data_list,
-                                                                                                     return_exceptions=True)
-        common_blockheight_reached = False
-        common_block_timestamp = False
-        pair_contract_address = None
-        collected_heights = list(
-            map(lambda x: x.block_height, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
-        collected_block_timestamp = list(
-            map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
-        pair_addresses = list(
-            map(lambda x: x.contractAddress, filter(lambda y: isinstance(y, liquidityProcessedData), final_results)))
-        none_results = list(
-            map(lambda x: x, filter(lambda y: isinstance(y, type(None)), final_results)))
-        # logger.debug('Final results from running v2 pairs coroutines: %s', final_results)
-        # logger.debug('Filtered heights from running v2 pairs coroutines: %s', collected_heights)
-        if cardinality.count(none_results) == cardinality.count(final_results):
-            logger.debug("pair-contract chains didn't move ahead, sleeping till next cycle...")
-        elif cardinality.count(final_results) != cardinality.count(collected_heights):
-            if len(collected_heights) == 0:
-                logger.error(
-                    'Got empty result for all pairs, either pair chains didn\'t move ahead or there is an error while fetching dag-blocks data')
-            else:
-                logger.error(
-                    'In V2 pairs overall summary snapshot creation: '
-                    'No common block height found among all summarized contracts. Some results returned exception.'
-                    'Block heights found: %s',collected_heights
-                )
-            common_blockheight_reached = False
+        logger.debug('Sending v2 pairs summary payload to audit protocol')
+        # send to audit protocol for snapshot to be committed
+        try:
+            response = await helper_functions.commit_payload(
+                project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
+                report_payload=summarized_payload,
+                session=async_httpx_client,
+                skipAnchorProof=settings.txn_config.skip_summary_projects_anchor_proof
+            )
+        except Exception as exc:
+            logger.error(
+                'Error while committing pairs summary snapshot at common epoch end %s to audit protocol. '
+                'Exception: %s',
+                common_epoch_end, exc, exc_info=True
+            )
         else:
-            if all(collected_heights[0] == y for y in collected_heights):
-                common_blockheight_reached = collected_heights[0]
-                common_block_timestamp = collected_block_timestamp[0]
-                pair_contract_address = pair_addresses[0]
-                logger.debug('Setting common blockheight reached to %s', collected_heights[0])
-            else:
+            if 'message' in response.keys():
                 logger.error(
-                    'In V2 pairs overall summary snapshot creation: '
-                    'No common block height found among all summarized contracts.'
-                    'Block heights found: %s', list(collected_heights)
+                    'Error while committing pairs summary snapshot at common epoch end %s to audit protocol. '
+                    'Response status code and other information: %s',
+                    common_epoch_end, response
                 )
-        wait_for_snapshot_project_new_commit = False
-        tentative_audit_project_block_height = 0
-        if common_blockheight_reached:
-            summarized_result_l = [x.dict() for x in final_results]
-            summarized_payload = {'data': summarized_result_l}
-            # get last processed v2 pairs snapshot height
-            l_ = await redis_conn.get(
-                redis_keys.get_uniswap_pair_snapshot_last_block_height(
-                    settings.pooler_namespace
-                    )
-                )
-            if l_:
-                last_common_block_height = int(l_)
             else:
-                last_common_block_height = 0
-            if common_blockheight_reached > last_common_block_height:
-                logger.info(
-                    'Present common block height in V2 pairs summary snapshot is %s | Moved from %s',
-                    common_blockheight_reached, last_common_block_height
-                )
-                tentative_audit_project_block_height = await redis_conn.get(redis_keys.get_tentative_block_height_key(
-                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace)
-                ))
-                tentative_audit_project_block_height  = int(tentative_audit_project_block_height) if tentative_audit_project_block_height else 0
+                updated_audit_project_block_height = tentative_audit_project_block_height + 1
+                wait_cycles = 0
+                while True:
+                    # introduce a break condition if something goes wrong and snapshot summary does not move ahead
+                    wait_cycles += 1
+                    if wait_cycles > 3:  # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot summary submission
+                        logger.info(
+                            "Waited for %s cycles, snapshot summary project has not moved ahead. Stopped waiting to retry in next cycle.",
+                            wait_cycles)
+                        break
+                    logger.debug('Waiting for 10 seconds to check if latest v2 pairs summary snapshot was committed...')
+                    await asyncio.sleep(10)
 
-                logger.debug('Sending v2 pairs summary payload to audit protocol')
-                # send to audit protocol for snapshot to be committed
-                try:
-                    response = await helper_functions.commit_payload(
+                    block_status = await retrieval_utils.retrieve_block_status(
                         project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
-                        report_payload=summarized_payload,
-                        session=async_httpx_client,
-                        skipAnchorProof=settings.txn_config.skip_summary_projects_anchor_proof
+                        project_block_height=0,
+                        block_height=updated_audit_project_block_height,
+                        reader_redis_conn=redis_conn,
+                        writer_redis_conn=redis_conn,
+                        ipfs_read_client=ipfs_read_client
                     )
-                except Exception as exc:
-                    logger.error(
-                        'Error while committing pairs summary snapshot at block height %s to audit protocol. '
-                        'Exception: %s',
-                        common_blockheight_reached, exc, exc_info=True
-                    )
-                else:
-                    if 'message' in response.keys():
-                        logger.error(
-                            'Error while committing pairs summary snapshot at block height %s to audit protocol. '
-                            'Response status code and other information: %s',
-                            common_blockheight_reached, response
-                        )
-                    else:
-                        wait_for_snapshot_project_new_commit = True
-                        updated_audit_project_block_height = tentative_audit_project_block_height + 1
-        if wait_for_snapshot_project_new_commit:
-            wait_cycles = 0
-            while True:
-                # introduce a break condition if something goes wrong and snapshot summary does not move ahead
-                wait_cycles += 1
-                if wait_cycles > 3:  # Wait for 60 seconds after which move ahead as something must have has gone wrong with snapshot summary submission
+                    if block_status is None:
+                        logger.error("block_status is returned as None at height %s for project %s",
+                        updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace))
+                        break
+                    if block_status.status < 3:
+                        continue
                     logger.info(
-                        "Waited for %s cycles, snapshot summary project has not moved ahead. Stopped waiting to retry in next cycle.",
-                        wait_cycles)
-                    break
-                logger.debug('Waiting for 10 seconds to check if latest v2 pairs summary snapshot was committed...')
-                await asyncio.sleep(10)
+                        'Audit project height against V2 pairs summary snapshot is %s | Moved from %s',
+                        updated_audit_project_block_height, tentative_audit_project_block_height
+                    )
+                    begin_block_data = await get_oldest_block_and_timestamp(
+                        pair_contract_address, redis_conn, ipfs_read_client
+                    )
 
-                block_status = await retrieval_utils.retrieve_block_status(
-                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
-                    project_block_height=0,
-                    block_height=updated_audit_project_block_height,
-                    reader_redis_conn=redis_conn,
-                    writer_redis_conn=redis_conn,
-                    ipfs_read_client=ipfs_read_client
-                )
-                if block_status is None:
-                    logger.error("block_status is returned as None at height %s for project %s",
-                    updated_audit_project_block_height, redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace))
-                    break
-                if block_status.status < 3:
-                    continue
-                logger.info(
-                    'Audit project height against V2 pairs summary snapshot is %s | Moved from %s',
-                    updated_audit_project_block_height, tentative_audit_project_block_height
-                )
-                begin_block_data = await get_oldest_block_and_timestamp(
-                    pair_contract_address, redis_conn, ipfs_read_client
-                )
+                    snapshot_zset_entry = uniswapPairsSnapshotZset(
+                        cid=block_status.payload_cid,
+                        txHash=block_status.tx_hash,
+                        begin_block_height_24h=begin_block_data["begin_block_height_24h"],
+                        begin_block_timestamp_24h=begin_block_data["begin_block_timestamp_24h"],
+                        begin_block_height_7d=begin_block_data["begin_block_height_7d"],
+                        begin_block_timestamp_7d=begin_block_data["begin_block_timestamp_7d"],
+                        txStatus=block_status.status,
+                        dagHeight=updated_audit_project_block_height
+                    )
 
-                snapshot_zset_entry = uniswapPairsSnapshotZset(
-                    cid=block_status.payload_cid,
-                    txHash=block_status.tx_hash,
-                    begin_block_height_24h=begin_block_data["begin_block_height_24h"],
-                    begin_block_timestamp_24h=begin_block_data["begin_block_timestamp_24h"],
-                    begin_block_height_7d=begin_block_data["begin_block_height_7d"],
-                    begin_block_timestamp_7d=begin_block_data["begin_block_timestamp_7d"],
-                    txStatus=block_status.status,
-                    dagHeight=updated_audit_project_block_height
-                )
+                    logger.debug("Prepared snapshot redis-zset entry: %s ", snapshot_zset_entry.json())
 
-                logger.debug("Prepared snapshot redis-zset entry: %s ", snapshot_zset_entry.json())
+                    # store in snapshots zset
+                    result = await asyncio.gather(
+                        redis_conn.zadd(
+                            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(settings.pooler_namespace),
+                            mapping={snapshot_zset_entry.json(): common_epoch_end}
+                        ),
+                        redis_conn.zadd(
+                            name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
+                            mapping={block_status.payload_cid: common_block_timestamp}
+                        ),
+                        redis_conn.set(
+                            name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(
+                                common_epoch_end,
+                                settings.pooler_namespace
+                                ),
+                            value=json.dumps(summarized_payload),
+                            ex=1800  # TTL of 30 minutes?
+                        ),
+                        redis_conn.set(
+                            redis_keys.get_uniswap_pair_snapshot_last_block_height(settings.pooler_namespace),
+                            common_epoch_end),
+                    )
+                    logger.debug("Updated snapshot details in redis, ops results: %s", result)
 
-                # store in snapshots zset
-                result = await asyncio.gather(
-                    redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(settings.pooler_namespace),
-                        mapping={snapshot_zset_entry.json(): common_blockheight_reached}),
-                    redis_conn.zadd(
-                        name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
-                        mapping={block_status.payload_cid: common_block_timestamp}),
-                    redis_conn.set(
-                        name=redis_keys.get_uniswap_pair_snapshot_payload_at_blockheight(
-                            common_blockheight_reached,
+                    # prune zset
+                    block_height_zset_len = await redis_conn.zcard(
+                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(
                             settings.pooler_namespace
-                            ),
-                        value=json.dumps(summarized_payload),
-                        ex=1800  # TTL of 30 minutes?
-                    ),
-                    redis_conn.set(
-                        redis_keys.get_uniswap_pair_snapshot_last_block_height(settings.pooler_namespace),
-                        common_blockheight_reached),
-                )
-                logger.debug("Updated snapshot details in redis, ops results: %s", result)
-
-                # prune zset
-                block_height_zset_len = await redis_conn.zcard(
-                    name=redis_keys.get_uniswap_pair_snapshot_summary_zset(
-                        settings.pooler_namespace
+                            )
                         )
-                    )
 
-                if block_height_zset_len > 20:
-                    _ = await redis_conn.zremrangebyrank(
-                        name=redis_keys.get_uniswap_pair_snapshot_summary_zset(settings.pooler_namespace),
+                    if block_height_zset_len > 20:
+                        _ = await redis_conn.zremrangebyrank(
+                            name=redis_keys.get_uniswap_pair_snapshot_summary_zset(settings.pooler_namespace),
+                            min=0,
+                            max=-1 * (block_height_zset_len - 20) + 1
+                        )
+                        logger.debug('Pruned snapshot summary CID zset by %s elements', _)
+
+                    pruning_timestamp = int(time()) - (60 * 60 * 24 + 60 * 60 * 2)  # now - 26 hours
+                    _ = await redis_conn.zremrangebyscore(
+                        name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
                         min=0,
-                        max=-1 * (block_height_zset_len - 20) + 1
+                        max=pruning_timestamp
                     )
-                    logger.debug('Pruned snapshot summary CID zset by %s elements', _)
 
-                pruning_timestamp = int(time()) - (60 * 60 * 24 + 60 * 60 * 2)  # now - 26 hours
-                _ = await redis_conn.zremrangebyscore(
-                    name=redis_keys.get_uniswap_pair_snapshot_timestamp_zset(settings.pooler_namespace),
-                    min=0,
-                    max=pruning_timestamp
-                )
+                    logger.debug('Pruned snapshot summary Timestamp zset by %s elements', _)
+                    logger.info('V2 pairs summary snapshot updated...')
+                    break
 
-                logger.debug('Pruned snapshot summary Timestamp zset by %s elements', _)
-                logger.info('V2 pairs summary snapshot updated...')
-                break
-
-        return final_results
-
-    except Exception as exc:
-        logger.error("Error at V2 pair data: %s", str(exc), exc_info=True)
-
+                return final_results
 
 if __name__ == '__main__':
     print("", "")
