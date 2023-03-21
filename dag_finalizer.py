@@ -11,7 +11,7 @@ from aio_pika.pool import Pool
 from typing import Optional, Dict, List
 from urllib.parse import urljoin
 from data_models import (
-    PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
+    EpochStatusRequest, PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
     AuditRecordTxEventData, SnapshotterIssue, SnapshotterIssueSeverity
 )
 from itertools import filterfalse
@@ -524,44 +524,39 @@ class DAGFinalizationCallbackProcessor:
                                     finalized_block_height_project+1, earliest_pending_dag_height_next_to_finalized
                                 )
                             }
-                            consensus_snapshots_fetch_tasks = [
-                                self._httpx_wrap_call(
-                                    url=urljoin(settings.consensus_config.service_url, '/epochStatus'),
-                                    json_body=SnapshotBase(
-                                        epoch=EpochBase(begin=y - project_epoch_size + 1, end=y),
-                                        projectID=project_id,
-                                        instanceID=settings.instance_id
-                                    ).dict()
-                                )
-                                for x, y in epochs_to_fetch.items()
-                            ]
+                            epochs_to_fetch_in_request = EpochStatusRequest(
+                                epochs=[EpochBase(begin=y - project_epoch_size + 1, end=y) for y in epochs_to_fetch.values()],
+                                projectID=project_id,
+                                instanceID=settings.instance_id
+                            ).dict() 
+                            
                             # 3. query consensus service for snapshots and create DAG block
-                            consensus_snapshots_response = await asyncio.gather(
-                                *consensus_snapshots_fetch_tasks,
-                                return_exceptions=True
-                            )
+                            try:
+                                consensus_snapshots_response = await self._httpx_wrap_call(
+                                    url=urljoin(settings.consensus_config.service_url, '/epochStatus'),
+                                    json_body=epochs_to_fetch_in_request
+                                )
+                            except Exception as e:
+                                custom_logger.warning(
+                                    'Consensus Self Healing | Project %s | Exception fetching snapshot from '
+                                    'consensus service against expected tentative height and epoch end height range %s : %s ',
+                                    project_id,
+                                    epochs_to_fetch,
+                                    e
+                                )
+                                # TODO: dispatch slack notification about failure to fetch consensus snapshot in the range
+                                return  # let this be picked up in the next callback, give up for now
                             # fill in pending tx entries according to consensus snapshot CID returned
                             # or set data to null for the epochs where no consensus or submission were found
                             tentative_height_to_cid_map = dict()
                             for tentative_height, each_consensus_response in zip(
-                                    epochs_to_fetch.keys(), consensus_snapshots_response
+                                    epochs_to_fetch.keys(), consensus_snapshots_response.values()
                             ):
                                 custom_logger.debug('tentative height: %s  consensus service response: %s', tentative_height, each_consensus_response)
-                                if isinstance(consensus_snapshots_response, Exception):
-                                    custom_logger.warning(
-                                        'Consensus Self Healing | Project %s | Exception fetching snapshot from '
-                                        'consensus service against epoch end height %s, expected tentative height: %s ',
-                                        project_id,
-                                        epochs_to_fetch[tentative_height],
-                                        tentative_height,
-                                        consensus_snapshots_response
-                                    )
-                                    tentative_height_to_cid_map[tentative_height] = f'null_{epochs_to_fetch[tentative_height]}'
-                                    continue
                                 try:
+                                    # unlikely for this condition to be true, but just in case
                                     parsed_snapshot_response = SubmissionResponse.parse_obj(each_consensus_response)
                                 except Exception as exc:
-                                    #TODO: Retry fetching from consensus in case of network error or retryable HTTP response codes.
                                     custom_logger.warning(
                                         'Consensus Self Healing | Project %s | Exception converting response to '
                                         'data model against epoch end height %s, expected tentative height: %s | %s',
@@ -789,10 +784,9 @@ class DAGFinalizationCallbackProcessor:
 
     @retry(
         reraise=True, wait=wait_random_exponential(multiplier=1, max=20),
-        # Randomly wait up to 2^x * 1 seconds between each retry until the range reaches 60 seconds
+        # Randomly wait up to 2^x * 1 seconds between each retry until the range reaches 20 seconds
         # then randomly up to 20 seconds afterwards
-        stop=stop_after_attempt(5),
-        retry=retry_if_exception_type(httpx_exceptions.TransportError) | retry_if_exception_type(json.JSONDecodeError)
+        retry=retry_if_exception_type(httpx_exceptions.TransportError) | retry_if_exception_type(json.JSONDecodeError) | retry_if_exception_type(httpx_exceptions.HTTPStatusError)
     )
     async def _httpx_wrap_call(self, url, json_body):
         resp = await self._httpx_client.post(
