@@ -3,7 +3,6 @@ import json
 import logging
 import sys
 from functools import wraps
-from tkinter import E
 from typing import Tuple
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
