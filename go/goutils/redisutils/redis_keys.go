@@ -31,7 +31,8 @@ const REDIS_KEY_TOKENS_SUMMARY_SNAPSHOT_AT_BLOCKHEIGHT string = "uniswap:V2Token
 const REDIS_KEY_PAIRS_SUMMARY_SNAPSHOT_BLOCKHEIGHT string = "uniswap:V2PairsSummarySnapshot:%s:snapshot:%d"
 const REDIS_KEY_TOKENS_SUMMARY_TENTATIVE_HEIGHT string = "projectID:uniswap_V2TokensSummarySnapshot_%s:tentativeBlockHeight"
 
-const REDIS_KEY_DAG_VERIFICATION_STATUS string = "projects:dagVerificationStatus"
+const REDIS_KEY_DAG_VERIFICATION_STATUS string = "projects:%s:dagVerificationStatus"
+const REDIS_KEY_DAG_LAST_VERIFIED_HEIGHT string = "projectID:%s:lastVerifiedHeight"
 const REDIS_KEY_PROJECTS_INDEX_STATUS string = "projects:IndexStatus"
 const REDIS_KEY_PROJECT_DAG_CHAIN_GAPS string = "projectID:%s:dagChainGaps"
 const REDIS_KEY_PRUNING_ISSUES string = "%s:pruningIssues"

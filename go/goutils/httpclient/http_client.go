@@ -5,6 +5,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/swagftw/gi"
 	"golang.org/x/time/rate"
 
 	"github.com/hashicorp/go-retryablehttp"
@@ -12,7 +13,11 @@ import (
 	"audit-protocol/goutils/settings"
 )
 
-func GetIPFSHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
+func GetIPFSHTTPClient() *http.Client {
+	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
+	if err != nil {
+		log.Fatalf("Error getting settings object: %v", err)
+	}
 	transport := http.Transport{
 		MaxIdleConns:        settingsObj.Web3Storage.MaxIdleConns,
 		MaxConnsPerHost:     settingsObj.Web3Storage.MaxIdleConns,
@@ -32,7 +37,7 @@ func GetIPFSHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
 	return httpclient
 }
 
-func GetW3sClient(settingsObj *settings.SettingsObj) (*http.Client, *rate.Limiter) {
+func GetW3sHTTPClient(settingsObj *settings.SettingsObj) (*http.Client, *rate.Limiter) {
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.Web3Storage.MaxIdleConns,

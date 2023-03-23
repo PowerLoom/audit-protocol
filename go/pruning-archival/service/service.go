@@ -540,7 +540,7 @@ func (p *PruningService) UploadChunkToWeb3Storage(fileName, cycleID string, file
 	req.Header.Add("Authorization", "Bearer "+p.settingsObj.Web3Storage.APIToken)
 	req.Header.Add("accept", "application/vnd.ipld.car")
 
-	w3sHTTPClient, web3StorageClientRateLimiter := httpclient.GetW3sClient(p.settingsObj)
+	w3sHTTPClient, web3StorageClientRateLimiter := httpclient.GetW3sHTTPClient(p.settingsObj)
 
 	err = web3StorageClientRateLimiter.Wait(context.Background())
 	if err != nil {

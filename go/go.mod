@@ -16,6 +16,7 @@ require (
 	github.com/remeh/sizedwaitgroup v1.0.0
 	github.com/sirupsen/logrus v1.9.0
 	github.com/streadway/amqp v1.0.0
+	github.com/swagftw/gi v0.1.0
 	github.com/web3-storage/go-w3s-client v0.0.7
 	golang.org/x/time v0.3.0
 )

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/swagftw/gi"
 )
 
 type RateLimiter struct {
@@ -176,6 +177,11 @@ func ParseSettings() *SettingsObj {
 
 	SetDefaults(settingsObj)
 	log.Infof("Final Settings Object being used %+v", settingsObj)
+
+	err = gi.Inject(settingsObj)
+	if err != nil {
+		log.Fatal("Cannot inject the settings object", err)
+	}
 
 	return settingsObj
 }

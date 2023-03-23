@@ -1,14 +1,7 @@
 package datamodel
 
-import "encoding/json"
-
-type retryType int64
-
-const (
-	NO_RETRY_SUCCESS retryType = iota
-	RETRY_IMMEDIATE            //TOD be used in timeout scenarios or non server returned error scenarios.
-	RETRY_WITH_DELAY           //TO be used when immediate error is returned so that server is not overloaded.
-	NO_RETRY_FAILURE           //This is to be used for unexpected conditions which are not recoverable and hence no retry
+import (
+	"encoding/json"
 )
 
 type SlackNotifyReq struct {
@@ -56,31 +49,29 @@ type DagChainIssue struct {
 }
 
 type DagPayload struct {
-	PayloadCid     string `json:"payloadCid"`
-	DagChainHeight int64  `json:"dagChainHeight"`
-	Data           DagPayloadChainHeightRange
+	PayloadCid       string            `json:"payloadCid"`     // can be removed [DON'T USE THIS FIELD]
+	DagChainHeight   int64             `json:"dagChainHeight"` // can be removed [DON'T USE THIS FIELD]
+	ChainHeightRange *ChainHeightRange `json:"chainHeightRange"`
 }
 
-type DagPayloadChainHeightRange struct {
-	ChainHeightRange struct {
-		Begin int64 `json:"begin"`
-		End   int64 `json:"end"`
-	} `json:"chainHeightRange"`
+type ChainHeightRange struct {
+	Begin int64 `json:"begin"`
+	End   int64 `json:"end"`
 }
 
 type IPLDLink struct {
-	LinkData string `json:"/"`
+	Cid string `json:"/"`
 }
-
+type Data struct {
+	PayloadLink *IPLDLink `json:"cid"`
+}
 type DagBlock struct {
-	Data struct {
-		Cid IPLDLink `json:"cid"`
-	} `json:"data"`
-	Height     int64      `json:"height"`
-	PrevCid    IPLDLink   `json:"prevCid"`
-	Timestamp  int64      `json:"timestamp"`
-	TxHash     string     `json:"txHash"`
-	Payload    DagPayload `json:"payload"`
+	Data       *Data       `json:"data"`
+	Height     int64       `json:"height"`
+	PrevLink   *IPLDLink   `json:"prevCid"`
+	Timestamp  int64       `json:"timestamp"`
+	TxHash     string      `json:"txHash"`
+	Payload    *DagPayload `json:"payload"`
 	CurrentCid string
 }
 
@@ -135,15 +126,6 @@ type PayloadCommit struct {
 	SkipAnchorProof       bool   `json:"skipAnchorProof"`
 	ConsensusSubmissionTs int64  `json:"-"`
 	IsSummaryProject      bool   `json:"-"`
-}
-
-type _ChainHeightRange_ struct {
-	Begin int64 `json:"begin"`
-	End   int64 `json:"end"`
-}
-
-type PayloadData struct {
-	ChainHeightRange *_ChainHeightRange_ `json:"chainHeightRange"`
 }
 
 type Snapshot struct {
@@ -222,4 +204,43 @@ type AuditContractSimWebhookCallbackRequest struct {
 	} `json:"event_data"`
 	ProstvigilEventID int64 `json:"prostvigil_event_id,omitempty"`
 	Ctime             int64 `json:"ctime"`
+}
+
+type ProjectIndexedState struct {
+	StartSourceChainHeight   int64 `json:"startSourceChainHeight"`
+	CurrentSourceChainHeight int64 `json:"currentSourceChainHeight"`
+}
+
+type PruningIssueReport struct {
+	ProjectID    string          `json:"projectID"`
+	SegmentError SegmentError    `json:"error"`
+	ChainIssues  []DagChainIssue `json:"dagChainIssues"`
+}
+
+type ProjectPruningVerificationStatus struct {
+	LastSegmentEndHeight int   `json:"lastSegmentEndHeight"`
+	SegmentWithErrors    []int `json:"segmentsWithErrors,omitempty"`
+}
+
+type SegmentError struct {
+	Error     string `json:"errorData"`
+	EndHeight int    `json:"endHeight"`
+}
+
+type DagBlocksHeightRange struct {
+	StartHeight int64 `json:"start_height"`
+	EndHeight   int64 `json:"end_height"`
+}
+
+type DagVerifierStatus struct {
+	EventPayload         *DagBlocksInsertedReq `json:"eventPayload"`
+	Timestamp            int64                 `json:"timestamp"`
+	NoIssues             bool                  `json:"noIssues"` // can also just check if len(issues) == 0
+	DagBlocksHeightRange *DagBlocksHeightRange `json:"dagBlocksHeightRange"`
+	Issues               []interface{}         `json:"issues"`
+}
+
+type DagBlocksInsertedReq struct {
+	ProjectID       string           `json:"projectID"`
+	DagHeightCIDMap map[string]int64 `json:"dagHeightCIDMap"`
 }

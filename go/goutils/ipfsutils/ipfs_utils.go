@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
 	"strings"
 	"time"
 
 	shell "github.com/ipfs/go-ipfs-api"
 	ma "github.com/multiformats/go-multiaddr"
 	log "github.com/sirupsen/logrus"
+	"github.com/swagftw/gi"
 	"golang.org/x/time/rate"
 
 	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/settings"
 )
 
@@ -29,23 +30,12 @@ func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, tim
 	// _url := url
 	url = ParseMultiAddrUrl(url)
 
-	transport := http.Transport{
-		MaxIdleConns:        poolSize,
-		MaxConnsPerHost:     poolSize,
-		MaxIdleConnsPerHost: poolSize,
-		IdleConnTimeout:     0,
-		DisableCompression:  true,
-	}
-
-	ipfsHTTPClient := http.Client{
-		Timeout:   time.Duration(timeoutSecs * int(time.Second)),
-		Transport: &transport,
-	}
+	ipfsHTTPClient := httpclient.GetIPFSHTTPClient()
 
 	log.Debug("Initializing the IPFS client with IPFS Daemon URL:", url)
 
 	client := new(IpfsClient)
-	client.ipfsClient = shell.NewShellWithClient(url, &ipfsHTTPClient)
+	client.ipfsClient = shell.NewShellWithClient(url, ipfsHTTPClient)
 	timeout := time.Duration(timeoutSecs * int(time.Second))
 	client.ipfsClient.SetTimeout(timeout)
 
@@ -68,6 +58,12 @@ func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, tim
 	log.Infof("Rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
 	client.ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
 
+	// exit if injection fails
+	err := gi.Inject(client)
+	if err != nil {
+		log.Fatalln("Failed to inject dependencies", err)
+	}
+
 	return client
 }
 
@@ -79,70 +75,61 @@ func ParseMultiAddrUrl(url string) string {
 	return url
 }
 
-func (client *IpfsClient) GetDagBlock(dagCid string) (datamodel.DagBlock, error) {
-	var dagBlock datamodel.DagBlock
-	var err error
-	var i int
-	for i = 0; i < 3; i++ {
+func (client *IpfsClient) GetDagBlock(dagCid string) (*datamodel.DagBlock, error) {
+	dagBlock := new(datamodel.DagBlock)
+	l := log.WithField("dagCid", dagCid)
 
-		err = client.ipfsClientRateLimiter.Wait(context.Background())
-		if err != nil {
-			log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-		err = client.ipfsClient.DagGet(dagCid, &dagBlock)
-		if err != nil {
-			log.Error("Error in getting Dag block from IPFS, Dag-CID:", dagCid, ", error:", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		break
+	err := client.ipfsClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
+
+		return nil, err
 	}
-	if i >= 3 {
-		log.Errorf("Failed to fetch CID %s even after retrying.", dagCid)
-		return dagBlock, err
+	err = client.ipfsClient.DagGet(dagCid, dagBlock)
+	if err != nil {
+		l.WithError(err).Error("failed to get block from IPFS")
+
+		return nil, err
 	}
-	log.Tracef("Fetched the dag Block with CID %s, BlockInfo:%+v", dagCid, dagBlock)
+
 	return dagBlock, nil
 }
 
-func (client *IpfsClient) GetPayloadChainHeightRang(
-	payloadCid string,
-	retryCount int) (datamodel.DagPayloadChainHeightRange, error) {
-	var payload datamodel.DagPayloadChainHeightRange
-	var err error
-	var i int
-	for i = 0; i < retryCount; i++ {
-		err := client.ipfsClientRateLimiter.Wait(context.Background())
-		if err != nil {
-			log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-		data, err := client.ipfsClient.Cat(payloadCid)
-		if err != nil {
-			log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+// GetPayloadChainHeightRang fetches the payload chain height range for given CID from IPFS
+func (client *IpfsClient) GetPayloadChainHeightRang(payloadCid string) (*datamodel.ChainHeightRange, error) {
+	payload := new(datamodel.DagPayload)
 
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(data)
+	err := client.ipfsClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
 
-		err = json.Unmarshal(buf.Bytes(), &payload)
-		if err != nil {
-			log.Error("Failed to Unmarshal Json Payload from IPFS, CID:", payloadCid, ", bytes:", buf, ", error:", err)
-			return payload, err
-		}
-		break
+		return nil, err
 	}
-	if i >= retryCount {
-		log.Error("Failed to fetch even after retrying.")
-		return payload, err
+
+	data, err := client.ipfsClient.Cat(payloadCid)
+	if err != nil {
+		log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
+
+		return nil, err
 	}
-	log.Tracef("Fetched Payload with CID %s from IPFS: %+v", payloadCid, payload)
-	return payload, nil
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(data)
+	if err != nil {
+		log.Error("Failed to read Payload from IPFS, CID:", payloadCid, ", error:", err)
+		return nil, err
+	}
+
+	err = json.Unmarshal(buf.Bytes(), payload)
+	if err != nil {
+		log.Error("Failed to Unmarshal Json Payload from IPFS, CID:", payloadCid, ", bytes:", buf, ", error:", err)
+
+		return nil, err
+	}
+
+	log.Infof("Fetched Payload with CID %s from IPFS: %+v", payloadCid, payload)
+
+	return payload.ChainHeightRange, nil
 }
 
 func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadCommit,
@@ -177,36 +164,39 @@ func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadC
 	return true
 }
 
-func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string, retryIntervalSecs int, retryCount int) (*datamodel.PayloadData, error) {
-	var payload datamodel.PayloadData
-	for i := 0; ; {
-		log.Debugf("Fetching payloadCid %s from IPFS", payloadCid)
-		data, err := client.ipfsClient.Cat(payloadCid)
-		if err != nil {
-			if i >= retryCount {
-				log.Errorf("Failed to fetch Payload with CID %s from IPFS even after max retries due to error %+v.", payloadCid, err)
-				return &payload, err
-			}
-			log.Warnf("Failed to fetch Payload from IPFS, CID %s due to error %+v", payloadCid, err)
-			time.Sleep(time.Duration(retryIntervalSecs) * time.Second)
-			i++
-			continue
-		}
+func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string) (*datamodel.DagPayload, error) {
+	payload := new(datamodel.DagPayload)
+	l := log.WithField("payloadCid", payloadCid)
 
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(data)
+	l.Debugf("fetching payloadCid %s from IPFS", payloadCid)
 
-		err = json.Unmarshal(buf.Bytes(), &payload)
-		if err != nil {
-			log.Errorf("Failed to Unmarshal Json Payload from IPFS, CID %s, bytes: %+v due to error %+v ",
-				payloadCid, buf, err)
-			return nil, err
-		}
-		break
+	data, err := client.ipfsClient.Cat(payloadCid)
+	if err != nil {
+		l.WithError(err).Errorf("failed to fetch payload from IPFS")
+
+		return payload, err
 	}
 
-	log.Debugf("Fetched Payload with CID %s from IPFS: %+v", payloadCid, payload)
-	return &payload, nil
+	buf := new(bytes.Buffer)
+
+	_, err = buf.ReadFrom(data)
+	if err != nil {
+		l.WithError(err).Errorf("failed to read payload")
+
+		return payload, err
+	}
+
+	err = json.Unmarshal(buf.Bytes(), payload)
+	if err != nil {
+		l.WithError(err).WithField("payload", payload).
+			Errorf("failed to unmarshal json payload from IPFS")
+
+		return nil, err
+	}
+
+	l.Debugf("fetched payload from ipfs")
+
+	return payload, nil
 }
 
 func (client *IpfsClient) UnPinCidsFromIPFS(projectID string, cids map[int]string) error {
@@ -248,7 +238,7 @@ func (client *IpfsClient) AddFileToIPFS(data []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	cid, err := client.ipfsClient.Add(bytes.NewReader(data), shell.CidVersion(1))
 	if err != nil {
 		return "", err

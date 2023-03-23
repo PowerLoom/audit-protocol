@@ -1,4 +1,4 @@
-package main
+package verifiers
 
 import (
 	"bufio"
@@ -17,29 +17,28 @@ import (
 	carv2 "github.com/ipld/go-car/v2"
 	"github.com/ipld/go-car/v2/blockstore"
 	log "github.com/sirupsen/logrus"
+	"github.com/swagftw/gi"
 	"github.com/web3-storage/go-w3s-client"
 	"golang.org/x/time/rate"
 
+	"audit-protocol/caching"
+	"audit-protocol/dag-verifier/verifiers/bak"
 	"audit-protocol/goutils/commonutils"
 	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/slackutils"
 )
 
-type ProjectPruningVerificationStatus struct {
-	LastSegmentEndHeight int   `json:"lastSegmentEndHeight"`
-	SegmentWithErrors    []int `json:"segmentsWithErrors,omitempty"`
-}
-
 type PruningVerifier struct {
-	redisClient                  *redis.Client
+	redisCache                   *caching.RedisCache
 	w3sClient                    w3s.Client
 	w3httpClient                 *http.Client
 	web3StorageClientRateLimiter *rate.Limiter
 	RunInterval                  int
 	Projects                     []string
-	ProjectVerificationStatus    map[string]*ProjectPruningVerificationStatus
+	ProjectVerificationStatus    map[string]*datamodel.ProjectPruningVerificationStatus
 	verificationReport           PruningVerificationReport
 	settingsObj                  *settings.SettingsObj
 }
@@ -48,16 +47,6 @@ type PruningVerificationReport struct {
 	TotalProjects          int
 	ArchivalFailedProjects int
 	Host                   string
-}
-
-type PruningIssueReport struct {
-	ProjectID    string                    `json:"projectID"`
-	SegmentError SegmentError              `json:"error"`
-	ChainIssues  []datamodel.DagChainIssue `json:"dagChainIssues"`
-}
-type SegmentError struct {
-	Error     string `json:"errorData"`
-	EndHeight int    `json:"endHeight"`
 }
 
 type ProjectDAGSegment struct {
@@ -72,39 +61,34 @@ type Web3StorageErrResponse struct {
 	Message string `json:"message"`
 }
 
-func (verifier *PruningVerifier) Init(settings *settings.SettingsObj) {
+func InitPruningVerifier() (*PruningVerifier, error) {
+	verifier := new(PruningVerifier)
+	var err error
 
-	//Verify every half-time of pruningInterval
-	verifier.RunInterval = settings.PruningServiceSettings.RunIntervalMins / 2
-	verifier.redisClient = redisutils.InitRedisClient(
-		settings.Redis.Host,
-		settings.Redis.Port,
-		settings.Redis.Db,
-		settings.DagVerifierSettings.RedisPoolSize,
-		settings.Redis.Password)
-	verifier.settingsObj = settings
-	verifier.w3httpClient = InitW3sHTTPClient(settings)
-	verifier.InitW3sClient()
-}
-
-func InitW3sHTTPClient(settings *settings.SettingsObj) *http.Client {
-	t := http.Transport{
-		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
-		MaxIdleConns:        settings.Web3Storage.MaxIdleConns,
-		MaxConnsPerHost:     settings.Web3Storage.MaxIdleConns,
-		MaxIdleConnsPerHost: settings.Web3Storage.MaxIdleConns,
-		IdleConnTimeout:     time.Duration(settings.Web3Storage.IdleConnTimeout),
-		DisableCompression:  true,
+	verifier.settingsObj, err = gi.Invoke[*settings.SettingsObj]()
+	if err != nil {
+		return nil, err
 	}
 
-	w3sHttpClient := http.Client{
-		Timeout:   time.Duration(settings.PruningServiceSettings.Web3Storage.TimeoutSecs) * time.Second,
-		Transport: &t,
+	verifier.redisCache, err = gi.Invoke[*caching.RedisCache]()
+	if err != nil {
+		return nil, err
 	}
-	return &w3sHttpClient
+
+	// Verify every half-time of pruningInterval
+	verifier.RunInterval = verifier.settingsObj.PruningServiceSettings.RunIntervalMins / 2
+
+	verifier.w3httpClient, _ = httpclient.GetW3sHTTPClient(verifier.settingsObj)
+
+	err = verifier.InitW3sClient()
+	if err != nil {
+		return nil, err
+	}
+
+	return verifier, nil
 }
 
-func (verifier *PruningVerifier) InitW3sClient() {
+func (verifier *PruningVerifier) InitW3sClient() error {
 	for {
 		var err error
 		verifier.w3sClient, err = w3s.NewClient(w3s.WithToken(verifier.settingsObj.Web3Storage.APIToken))
@@ -134,7 +118,7 @@ func (verifier *PruningVerifier) FetchProjectList() {
 	key := redisutils.REDIS_KEY_STORED_PROJECTS
 	log.Debugf("Fetching stored Projects from redis at key: %s", key)
 	for i := 0; ; i++ {
-		res := verifier.redisClient.SMembers(ctx, key)
+		res := verifier.redisCache.SMembers(context.Background(), key)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
 				log.Warnf("Stored Projects key doesn't exist..retrying")
@@ -156,7 +140,7 @@ func (verifier *PruningVerifier) Run() {
 	verifier.FetchProjectList()
 	pruningVerifierSleepInterval := time.Duration(verifier.RunInterval) * time.Minute
 	for {
-		verifier.ProjectVerificationStatus = make(map[string]*ProjectPruningVerificationStatus)
+		verifier.ProjectVerificationStatus = make(map[string]*datamodel.ProjectPruningVerificationStatus)
 		if !verifier.FetchPruningVerificationStatusFromRedis() {
 			continue
 		}
@@ -191,7 +175,7 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 	sortedSegments := commonutils.SortKeysAsNumber(&dagSegments)
 	for _, endHeightStr := range *sortedSegments {
 		dagSegment := dagSegments[endHeightStr]
-		var pruningReport PruningIssueReport
+		var pruningReport datamodel.PruningIssueReport
 		pruningReport.ChainIssues = make([]datamodel.DagChainIssue, 0)
 		pruningReport.ProjectID = projectId
 		endHeight, _ := strconv.Atoi(endHeightStr)
@@ -206,7 +190,7 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 			archiveStatus, err, issues := verifier.VerifyArchivalStatus(projectId, &segment)
 			//NOT doing any action for redis Zset as in next cycle Zset will get trimmed from startScore
 			if !archiveStatus {
-				error := SegmentError{
+				error := datamodel.SegmentError{
 					Error:     fmt.Sprintf("endDAG CID %s is not available in web3.storage due to error %s", segment.EndDAGCID, err),
 					EndHeight: segment.EndHeight,
 				}
@@ -223,7 +207,7 @@ func (verifier *PruningVerifier) VerifyPruningStatus(projectId string) {
 	}
 }
 
-func (verifier *PruningVerifier) AddPruningIssueReport(report *PruningIssueReport) {
+func (verifier *PruningVerifier) AddPruningIssueReport(report *datamodel.PruningIssueReport) {
 	var member redis.Z
 	member.Score = float64(report.SegmentError.EndHeight)
 	reportStr, _ := json.Marshal(report)
@@ -231,7 +215,7 @@ func (verifier *PruningVerifier) AddPruningIssueReport(report *PruningIssueRepor
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_ISSUES, report.ProjectID)
 	i := 0
 	for ; i < 3; i++ {
-		res := verifier.redisClient.ZAddNX(ctx, key, &member)
+		res := verifier.redisCache.ZAddNX(context.Background(), key, &member)
 		if res.Err() != nil {
 			log.Warnf("Failed to update pruning issues key for project %s due to error %+v Retrying %d.", report.ProjectID, res.Err(), i)
 			time.Sleep(30 * time.Second)
@@ -289,8 +273,8 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment 
 		   		} */
 		issues, errStr := verifier.VerifyDAGSegment(projectId, segment)
 		if len(*issues) > 0 {
-			log.Errorf("Project %s: %d DAGChain Issues found in the DAG Segment with root CID %s in web3.storage", projectId, len(*issues), segment.EndDAGCID)
-			return false, fmt.Sprintf("%d DAGChain Issues found in the DAG Segment with root CID %s in web3.storage. PossibleCause: %s", len(*issues), segment.EndDAGCID, errStr), issues
+			log.Errorf("Project %s: %d DAGChain issues found in the DAG Segment with root CID %s in web3.storage", projectId, len(*issues), segment.EndDAGCID)
+			return false, fmt.Sprintf("%d DAGChain issues found in the DAG Segment with root CID %s in web3.storage. PossibleCause: %s", len(*issues), segment.EndDAGCID, errStr), issues
 		}
 		break
 	}
@@ -307,24 +291,24 @@ func (verifier *PruningVerifier) VerifyDAGSegment(projectId string, segment *Pro
 	prevBlockChainEndHeight := int64(0)
 	for cid := segment.EndDAGCID; dagHeight >= segment.BeginHeight; dagHeight-- {
 		log.Debugf("Project %s: DAG CID is %s at height %d", projectId, cid, dagHeight)
-		dagBlock, err := ipfsClient.GetDagBlock(cid)
+		dagBlock, err := main.ipfsClient.GetDagBlock(cid)
 		if err != nil {
 			log.Errorf("Project %s: Could not fetch DAG CID %s at DagHeight %d from IPFS due to error %+v and hence can't verify further DAGChain", projectId, cid, dagHeight, err)
-			chainIssue := datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssue := datamodel.DagChainIssue{IssueType: verifiers.DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
 			chainIssues = append(chainIssues, chainIssue)
 			return &chainIssues, fmt.Sprintf("Could not fetch DAG CID %s at DagHeight %d from IPFS and hence can't verify further DAGChain", cid, dagHeight)
 		}
-		payload, err := ipfsClient.GetPayloadChainHeightRang(dagBlock.Data.Cid.LinkData, 3)
+		payload, err := main.ipfsClient.GetPayloadChainHeightRang(dagBlock.Data.Cid.LinkData, 3)
 		if err != nil {
 			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
-			chainIssue := datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssue := datamodel.DagChainIssue{IssueType: main2.DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
 			chainIssues = append(chainIssues, chainIssue)
 			cid = dagBlock.PrevCid.LinkData
 			continue
 		}
 		if prevBlockChainEndHeight != 0 && payload.ChainHeightRange.Begin == prevBlockChainEndHeight+1 {
 			log.Warnf("Project %s: Could not fetch payload CID %s at DAG Height %d from IPFS due to error %+v", projectId, dagBlock.Data.Cid.LinkData, dagHeight, err)
-			chainIssue := datamodel.DagChainIssue{IssueType: DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
+			chainIssue := datamodel.DagChainIssue{IssueType: main2.DAG_CHAIN_ISSUE_GAP_IN_CHAIN, DAGBlockHeight: int64(dagHeight)}
 			chainIssues = append(chainIssues, chainIssue)
 			cid = dagBlock.PrevCid.LinkData
 			continue
@@ -459,11 +443,11 @@ func (verifier *PruningVerifier) FetchCAR(segment *ProjectDAGSegment) (bool, str
 func (verifier *PruningVerifier) FetchPruningVerificationStatusFromRedis() bool {
 	for i := 0; i < 3; i++ {
 		log.Infof("Fetching PruningVerification Status at key %s", redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS)
-		res := verifier.redisClient.HGetAll(ctx, redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS)
+		res := verifier.redisCache.HGetAll(main2.context.Background(), redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
 				for index := range verifier.Projects {
-					verifier.ProjectVerificationStatus[verifier.Projects[index]] = &ProjectPruningVerificationStatus{}
+					verifier.ProjectVerificationStatus[verifier.Projects[index]] = &datamodel.ProjectPruningVerificationStatus{}
 				}
 				log.Debugf("No PruningVerification key found in redis and hence creating newly")
 				return true
@@ -474,14 +458,14 @@ func (verifier *PruningVerifier) FetchPruningVerificationStatusFromRedis() bool 
 		}
 		if len(res.Val()) == 0 {
 			for index := range verifier.Projects {
-				verifier.ProjectVerificationStatus[verifier.Projects[index]] = &ProjectPruningVerificationStatus{}
+				verifier.ProjectVerificationStatus[verifier.Projects[index]] = &datamodel.ProjectPruningVerificationStatus{}
 			}
 			log.Debugf("No PruningVerification key found in redis and hence creating newly")
 			return true
 		}
 
 		for projectID, projectLastStatus := range res.Val() {
-			projectStatus := ProjectPruningVerificationStatus{}
+			projectStatus := datamodel.ProjectPruningVerificationStatus{}
 			err := json.Unmarshal([]byte(projectLastStatus), &projectStatus)
 			if err != nil {
 				log.Fatalf("Failed to unmarshal last projectStatus for project %s due to error %+v", projectID, err)
@@ -493,7 +477,7 @@ func (verifier *PruningVerifier) FetchPruningVerificationStatusFromRedis() bool 
 			for index := range verifier.Projects {
 				if _, ok := verifier.ProjectVerificationStatus[verifier.Projects[index]]; !ok {
 					log.Debugf("New project %s detected, Adding it to verification status", verifier.Projects[index])
-					verifier.ProjectVerificationStatus[verifier.Projects[index]] = &ProjectPruningVerificationStatus{}
+					verifier.ProjectVerificationStatus[verifier.Projects[index]] = &datamodel.ProjectPruningVerificationStatus{}
 				}
 			}
 		}
@@ -513,7 +497,7 @@ func (verifier *PruningVerifier) UpdatePruningVerificationStatusToRedis(projectI
 			log.Fatalf("Unable to marshal ProjectVerificationStatus due to error %+v", err)
 			return
 		}
-		res := verifier.redisClient.HSet(ctx, redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS, projectID, valueStr)
+		res := verifier.redisCache.HSet(main2.context.Background(), redisutils.REDIS_KEY_PRUNING_VERIFICATION_STATUS, projectID, valueStr)
 		if res.Err() != nil {
 			log.Warnf("Failed to update PruningVerification for project %s in redis due to errro %+v..Retrying %d", projectID, res.Err(), i)
 			time.Sleep(5 * time.Second)
@@ -529,7 +513,7 @@ func (verifier *PruningVerifier) UpdatePruningVerificationStatusToRedis(projectI
 func (verifier *PruningVerifier) FetchProjectDagSegments(projectId string) *map[string]string {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_METADATA, projectId)
 	for i := 0; i < 3; i++ {
-		res := verifier.redisClient.HGetAll(ctx, key)
+		res := verifier.redisCache.HGetAll(main2.context.Background(), key)
 		if res.Err() != nil {
 			if res.Err() == redis.Nil {
 				return nil
