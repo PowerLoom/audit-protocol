@@ -6,6 +6,7 @@ from functools import wraps
 from typing import Tuple
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
+from exceptions import ProjectFinalizedHeightError
 from utils import redis_keys
 from utils.redis_conn import RedisPool
 from utils import retrieval_utils
@@ -42,8 +43,10 @@ def acquire_bounded_semaphore(fn):
         result = None
         try:
             result = await fn(*args, **kwargs)
-        except:
-            pass
+        except Exception as e:
+            sliding_cacher_logger.error('Error in semaphore acquisition decorator: %s', e, exc_info=True)
+            if isinstance(e, ProjectFinalizedHeightError):
+                result = e  # so that the caller can filter out such bad results
         finally:
             sem.release()
             return result
@@ -193,7 +196,7 @@ async def get_epoch_end_per_project(
     project_height_key = redis_keys.get_block_height_key(project_id)
     max_height = await writer_redis_conn.get(project_height_key)
     if not max_height:
-        raise Exception("Can\'t fetch max block height against project ID: %s", project_id)
+        raise ProjectFinalizedHeightError("Can\'t fetch max block height against project ID: %s", project_id)
     dag_block = await retrieval_utils.get_dag_block_by_height(
         project_id=project_id,
         block_height=int(max_height.decode('utf-8')),
@@ -235,29 +238,6 @@ async def get_max_height_pair_project(
         return err
     finally:
         return max_height
-
-async def adjust_projects_head_by_source_height(
-        source_height_map,
-        smallest_source_height,
-        registered_projects,
-        writer_redis_conn,
-        ipfs_read_client: AsyncIPFSClient
-):
-    for project_map_id, project_map in source_height_map.items():
-        dag_block_height = int(project_map["dag_block_height"])
-        cycles = 0
-        while cycles <= 10 and int(smallest_source_height) != int(source_height_map[project_map_id]["source_height"]):
-            cycles += 1
-            dag_block_height -= 1
-            dag_block = await retrieval_utils.get_dag_block_by_height(
-                project_id=project_map_id,
-                block_height=dag_block_height,
-                reader_redis_conn=writer_redis_conn,
-                ipfs_read_client=ipfs_read_client
-            )
-            if dag_block:
-                source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
-                source_height_map[project_map_id]["dag_block_height"] = dag_block_height
 
 
 async def build_primary_indexes(ipfs_read_client):
