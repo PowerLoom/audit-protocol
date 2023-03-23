@@ -490,14 +490,12 @@ async def process_pairs_trade_volume_and_reserves(
             )
             if not dag_chain_7d:
                 return
-
-            # calculate trade volume 24h
-            pair_trade_volume_24h = calculate_pair_trade_volume(dag_chain_24h)
-
-            # calculate trade volume 7d
-            pair_trade_volume_7d = calculate_pair_trade_volume(dag_chain_7d)
             dag_chain_24h_intact_payloads = [x for x in dag_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
             dag_chain_7d_intact_payloads = [x for x in dag_chain_7d if x is not None and x.get('data') and x['data'].get('payload')]
+            # calculate trade volume 24h
+            pair_trade_volume_24h = calculate_pair_trade_volume(dag_chain_24h_intact_payloads)
+            # calculate trade volume 7d
+            pair_trade_volume_7d = calculate_pair_trade_volume(dag_chain_7d_intact_payloads)
             # store last recent logs, these will be used to show recent transaction for perticular contract
             # using only 24h dag chain as we just need 75 log at max
             await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h_intact_payloads, pair_contract_address)
