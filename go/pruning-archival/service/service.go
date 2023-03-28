@@ -16,6 +16,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	"github.com/hashicorp/go-retryablehttp"
 	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/goutils/commonutils"
@@ -230,7 +231,7 @@ func (p *PruningService) archiveAndPruneSegment(projectID string, taskDetails *m
 
 	log.WithField("TaskID", taskDetails.TaskID).Infof("Unpinning DAG CIDS from IPFS for project %s segment with endheight %d", projectID, dagSegmentEndHeight)
 
-	bkoff := backoff.WithMaxRetries(backoff.NewConstantBackOff(1*time.Second), uint64(*p.settingsObj.RetryCount))
+	bkoff := backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(*p.settingsObj.RetryCount))
 
 	// remove cids from ipfs AKA unpin
 	// TBD: if unpin fails (not because it was not pinned), task should be marked as failed
@@ -396,7 +397,7 @@ func (p *PruningService) ExportDAGFromIPFS(projectID, cycleID string, fromHeight
 	reqURL := "http://" + host + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
 	log.WithField("TaskID", cycleID).Debugf("Sending request to URL %s", reqURL)
 
-	req, err := http.NewRequest(http.MethodPost, reqURL, nil)
+	req, err := retryablehttp.NewRequest(http.MethodPost, reqURL, nil)
 	if err != nil {
 		log.WithField("TaskID", cycleID).Fatalf("Failed to create new HTTP Req with URL %s with error %+v",
 			reqURL, err)
@@ -407,7 +408,7 @@ func (p *PruningService) ExportDAGFromIPFS(projectID, cycleID string, fromHeight
 	log.WithField("TaskID", cycleID).Debugf("Sending Req to IPFS URL %s for project %s at height %d ",
 		reqURL, projectID, fromHeight)
 
-	ipfsHTTPClient := httpclient.GetIPFSHTTPClient(p.settingsObj)
+	ipfsHTTPClient := httpclient.GetIPFSHTTPClient()
 
 	res, err := ipfsHTTPClient.Do(req)
 	if err != nil {
@@ -529,7 +530,7 @@ func (p *PruningService) UploadFileToWeb3Storage(fileName, cycleID string) (stri
 func (p *PruningService) UploadChunkToWeb3Storage(fileName, cycleID string, fileReader io.Reader) (string, error) {
 	reqURL := p.settingsObj.Web3Storage.URL + "/car"
 
-	req, err := http.NewRequest(http.MethodPost, reqURL, fileReader)
+	req, err := retryablehttp.NewRequest(http.MethodPost, reqURL, fileReader)
 	if err != nil {
 		log.WithField("TaskID", cycleID).Fatalf("Failed to create new HTTP Req with URL %s for message %+v with error %+v",
 			reqURL, err)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/hashicorp/go-retryablehttp"
 	cid "github.com/ipfs/go-cid"
 	carv2 "github.com/ipld/go-car/v2"
 	"github.com/ipld/go-car/v2/blockstore"
@@ -22,7 +23,6 @@ import (
 	"golang.org/x/time/rate"
 
 	"audit-protocol/caching"
-	"audit-protocol/dag-verifier/verifiers/bak"
 	"audit-protocol/goutils/commonutils"
 	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/httpclient"
@@ -33,8 +33,8 @@ import (
 
 type PruningVerifier struct {
 	redisCache                   *caching.RedisCache
-	w3sClient                    w3s.Client
-	w3httpClient                 *http.Client
+	w3s                          w3s.Client
+	w3httpClient                 *retryablehttp.Client
 	web3StorageClientRateLimiter *rate.Limiter
 	RunInterval                  int
 	Projects                     []string
@@ -91,7 +91,7 @@ func InitPruningVerifier() (*PruningVerifier, error) {
 func (verifier *PruningVerifier) InitW3sClient() error {
 	for {
 		var err error
-		verifier.w3sClient, err = w3s.NewClient(w3s.WithToken(verifier.settingsObj.Web3Storage.APIToken))
+		verifier.w3s, err = w3s.NewClient(w3s.WithToken(verifier.settingsObj.Web3Storage.APIToken))
 		if err != nil {
 			log.Fatalf("Failed to initialize Web3.Storage client due to error %+v.Retrying after sometime.", err)
 			time.Sleep(5 * time.Minute)
@@ -250,7 +250,7 @@ func (verifier *PruningVerifier) VerifyArchivalStatus(projectId string, segment 
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		s, err := verifier.w3sClient.Status(context.Background(), rootCid)
+		s, err := verifier.w3s.Status(context.Background(), rootCid)
 		if err != nil {
 			log.Errorf("Project %s: Failed to fetch status of CID %s from web3.storage", projectId, segment.EndDAGCID)
 			return false, err.Error(), nil

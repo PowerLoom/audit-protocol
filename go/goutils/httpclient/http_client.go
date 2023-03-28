@@ -13,7 +13,7 @@ import (
 	"audit-protocol/goutils/settings"
 )
 
-func GetIPFSHTTPClient() *http.Client {
+func GetIPFSHTTPClient() *retryablehttp.Client {
 	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
 	if err != nil {
 		log.Fatalf("Error getting settings object: %v", err)
@@ -30,14 +30,13 @@ func GetIPFSHTTPClient() *http.Client {
 	retryClient.RetryMax = *settingsObj.RetryCount
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 
-	httpclient := retryClient.HTTPClient
-	httpclient.Transport = &transport
-	httpclient.Timeout = time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second
+	retryClient.HTTPClient.Transport = &transport
+	retryClient.HTTPClient.Timeout = time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second
 
-	return httpclient
+	return retryClient
 }
 
-func GetW3sHTTPClient(settingsObj *settings.SettingsObj) (*http.Client, *rate.Limiter) {
+func GetW3sHTTPClient(settingsObj *settings.SettingsObj) (*retryablehttp.Client, *rate.Limiter) {
 	t := http.Transport{
 		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.Web3Storage.MaxIdleConns,
@@ -51,9 +50,8 @@ func GetW3sHTTPClient(settingsObj *settings.SettingsObj) (*http.Client, *rate.Li
 	retryClient.RetryMax = *settingsObj.RetryCount
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 
-	w3sHttpClient := retryClient.HTTPClient
-	w3sHttpClient.Transport = &t
-	w3sHttpClient.Timeout = time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second
+	retryClient.HTTPClient.Transport = &t
+	retryClient.HTTPClient.Timeout = time.Duration(settingsObj.PruningServiceSettings.IpfsTimeout) * time.Second
 
 	//Default values
 	tps := rate.Limit(1) //3 TPS
@@ -70,5 +68,5 @@ func GetW3sHTTPClient(settingsObj *settings.SettingsObj) (*http.Client, *rate.Li
 	log.Infof("Rate Limit configured for web3.storage at %v TPS with a burst of %d", tps, burst)
 	web3StorageClientRateLimiter := rate.NewLimiter(tps, burst)
 
-	return w3sHttpClient, web3StorageClientRateLimiter
+	return retryClient, web3StorageClientRateLimiter
 }

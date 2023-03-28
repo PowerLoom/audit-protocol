@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-retryablehttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
@@ -25,6 +27,7 @@ import (
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/slackutils"
+	w3storage "audit-protocol/goutils/w3s"
 )
 
 func main() {
@@ -53,28 +56,42 @@ func main() {
 		settingsObj.HttpClientTimeoutSecs,
 	)
 
+	// inits the w3s client
+	w3storage.InitW3S()
+
 	slackutils.InitSlackWorkFlowClient(settingsObj.DagVerifierSettings.SlackNotifyURL)
 
 	redisCache := caching.NewRedisCache()
 
-	err := gi.Inject(redisCache)
-	if err != nil {
+	if err := gi.Inject(redisCache); err != nil {
 		log.Panicln("failed to inject dependencies", err)
+
 		return
 	}
 
 	_ = caching.InitDiskCache()
 
-	_ = verifiers.InitDagVerifier()
+	dagVerifier := verifiers.InitDagVerifier()
+
+	oneTimeRun := flag.Bool("oneTime", false, "Run the verifier once for all projects from genesis and exit.")
+	flag.Parse()
+
+	if *oneTimeRun {
+		dagVerifier.OneTimeRun()
+
+		return
+	}
 
 	var wg sync.WaitGroup
 
 	http.HandleFunc("/reportIssue", IssueReportHandler)
 	http.HandleFunc("/dagBlocksInserted", DagBlocksInsertedHandler)
+
 	port := settingsObj.DagVerifierSettings.Port
 	hostPort := net.JoinHostPort(settingsObj.DagVerifierSettings.Host, strconv.Itoa(port))
 
 	wg.Add(1)
+
 	go func() {
 		defer wg.Done()
 
@@ -118,7 +135,7 @@ func DagBlocksInsertedHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// parse body
-	dagBlocksInserted := new(verifiers.DagBlocksInsertedReq)
+	dagBlocksInserted := new(datamodel.DagBlocksInsertedReq)
 
 	err = json.Unmarshal(reqBody, dagBlocksInserted)
 	if err != nil {
@@ -189,7 +206,7 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 		// Prune issues older than 7 days.
 		pruneTillTime := time.Now().Add(-7 * 24 * 60 * 60 * time.Second).UnixMicro()
 
-		err = redisCache.RemoveOlderReportedIssues(context.Background(), pruneTillTime)
+		err = redisCache.RemoveOlderReportedIssues(context.Background(), int(pruneTillTime))
 		if err != nil {
 			log.Errorf("Failed to prune older sissues from cache due to error %+v", err)
 		}
@@ -202,49 +219,41 @@ func ReportIssueToConsensus(reqBytes []byte) {
 	settingsObj, _ := gi.Invoke[*settings.SettingsObj]()
 
 	reqURL := settingsObj.ConsensusConfig.ServiceURL + "/reportIssue"
-	for retryCount := 0; ; {
-		if retryCount == 3 {
-			log.Errorf("failed to send issueReport to consensus service after max-retry")
-			return
-		}
 
-		req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(reqBytes))
+	retryClient := retryablehttp.NewClient()
+	retryClient.RetryMax = *settingsObj.RetryCount
+	retryClient.Backoff = retryablehttp.DefaultBackoff
+
+	req, err := retryablehttp.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(reqBytes))
+	if err != nil {
+		log.Fatalf("Failed to create new HTTP Req with URL %s due to error %+v",
+			reqURL, err)
+		return
+	}
+
+	req.Header.Add("accept", "application/json")
+	log.Debugf("sending issue report %+v to consensus service URL %s", req, reqURL)
+
+	res, err := retryClient.Do(req)
+	if err != nil {
+		log.Errorf("failed to send request %+v towards consensus service URL %s due to error %+v", req, reqURL, err)
+	}
+
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
 		if err != nil {
-			log.Fatalf("Failed to create new HTTP Req with URL %s due to error %+v",
-				reqURL, err)
-			return
+			log.Errorf("failed to close response body from consensus service with error %+v.", err)
 		}
+	}(res.Body)
 
-		req.Header.Add("accept", "application/json")
-		log.Debugf("Sending issue report %+v to consensus service URL %s",
-			req, reqURL)
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			retryCount++
-			log.Errorf("Failed to send request %+v towards consensus service URL %s due to error %+v.  Retrying %d",
-				req, reqURL, err, retryCount)
-			continue
-		}
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Errorf("Failed to read response body from consensus service with error %+v.", err)
+	}
 
-		defer res.Body.Close()
-
-		respBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			retryCount++
-			log.Errorf("Failed to read response body from consensus service with error %+v.",
-				err, retryCount)
-			break
-		}
-
-		if res.StatusCode == http.StatusOK {
-			log.Infof("Reported issue to consensus layer.")
-			break
-		} else {
-			retryCount++
-			log.Errorf("Received Error response %+v from consensus service with statusCode %d and status : %s ",
-				respBody, res.StatusCode, res.Status)
-			time.Sleep(time.Duration(settingsObj.RetryIntervalSecs) * time.Second)
-			continue
-		}
+	if res.StatusCode == http.StatusOK {
+		log.Infof("reported issue to consensus layer.")
+	} else {
+		log.Errorf("received error response %+v from consensus service with statusCode %d and status : %s ", respBody, res.StatusCode, res.Status)
 	}
 }

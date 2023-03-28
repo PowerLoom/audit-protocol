@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	shell "github.com/ipfs/go-ipfs-api"
 	ma "github.com/multiformats/go-multiaddr"
 	log "github.com/sirupsen/logrus"
@@ -35,7 +37,7 @@ func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, tim
 	log.Debug("Initializing the IPFS client with IPFS Daemon URL:", url)
 
 	client := new(IpfsClient)
-	client.ipfsClient = shell.NewShellWithClient(url, ipfsHTTPClient)
+	client.ipfsClient = shell.NewShellWithClient(url, ipfsHTTPClient.HTTPClient)
 	timeout := time.Duration(timeoutSecs * int(time.Second))
 	client.ipfsClient.SetTimeout(timeout)
 
@@ -85,7 +87,16 @@ func (client *IpfsClient) GetDagBlock(dagCid string) (*datamodel.DagBlock, error
 
 		return nil, err
 	}
-	err = client.ipfsClient.DagGet(dagCid, dagBlock)
+
+	err = backoff.Retry(func() error {
+		err = client.ipfsClient.DagGet(dagCid, dagBlock)
+		if err != nil {
+
+			return err
+		}
+
+		return nil
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
 	if err != nil {
 		l.WithError(err).Error("failed to get block from IPFS")
 
@@ -106,7 +117,15 @@ func (client *IpfsClient) GetPayloadChainHeightRang(payloadCid string) (*datamod
 		return nil, err
 	}
 
-	data, err := client.ipfsClient.Cat(payloadCid)
+	var data io.ReadCloser
+	err = backoff.Retry(func() error {
+		data, err = client.ipfsClient.Cat(payloadCid)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
 	if err != nil {
 		log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
 
@@ -165,18 +184,28 @@ func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadC
 }
 
 func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string) (*datamodel.DagPayload, error) {
+	client.ipfsClientRateLimiter.Wait(context.Background())
+
 	payload := new(datamodel.DagPayload)
 	l := log.WithField("payloadCid", payloadCid)
 
 	l.Debugf("fetching payloadCid %s from IPFS", payloadCid)
 
-	data, err := client.ipfsClient.Cat(payloadCid)
+	var data io.ReadCloser
+	var err error
+	err = backoff.Retry(func() error {
+		data, err = client.ipfsClient.Cat(payloadCid)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
 	if err != nil {
-		l.WithError(err).Errorf("failed to fetch payload from IPFS")
+		log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
 
-		return payload, err
+		return nil, err
 	}
-
 	buf := new(bytes.Buffer)
 
 	_, err = buf.ReadFrom(data)
@@ -210,21 +239,26 @@ func (client *IpfsClient) UnPinCidsFromIPFS(projectID string, cids map[int]strin
 
 		log.Debugf("Unpinning CID %s at height %d from IPFS for project %s", cid, height, projectID)
 
-		err = client.ipfsClient.Unpin(cid)
-		if err != nil {
-			// CID has already been unpinned.
-			if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
-				log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectID, height)
+		err = backoff.Retry(func() error {
+			err = client.ipfsClient.Unpin(cid)
+			if err != nil {
+				// CID has already been unpinned.
+				if err.Error() == "pin/rm: not pinned or pinned indirectly" || err.Error() == "pin/rm: pin is not part of the pinset" {
+					log.Debugf("CID %s for project %s at height %d could not be unpinned from IPFS as it was not pinned on the IPFS node.", cid, projectID, height)
 
-				continue
+					return nil
+				}
+
+				log.Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v", cid, projectID, height, err)
+
+				return err
 			}
 
-			log.Warnf("Failed to unpin CID %s from ipfs for project %s at height %d due to error %+v", cid, projectID, height, err)
+			log.Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectID)
 
-			return err
-		}
+			return nil
+		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
 
-		log.Debugf("Unpinned CID %s at height %d from IPFS successfully for project %s", cid, height, projectID)
 	}
 
 	return nil

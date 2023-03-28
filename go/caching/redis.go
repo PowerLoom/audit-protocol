@@ -224,8 +224,6 @@ func (r *RedisCache) GetDagChainCIDs(ctx context.Context, projectID string, star
 		return nil, err
 	}
 
-	log.Debug("Result for ZRangeByScoreWithScores: ", val)
-
 	dagChainBlocks := make([]*datamodel.DagBlock, len(val))
 
 	for index, v := range val {
@@ -241,7 +239,7 @@ func (r *RedisCache) GetDagChainCIDs(ctx context.Context, projectID string, star
 // GetStoredProjects returns the list of projects that are stored in redis
 func (r *RedisCache) GetStoredProjects(ctx context.Context) ([]string, error) {
 	key := redisutils.REDIS_KEY_STORED_PROJECTS
-	val, err := r.redisClient.SMembers(context.Background(), key).Result()
+	val, err := r.redisClient.SMembers(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
 			log.Errorf("error getting stored projects, key %s not found", key)
@@ -281,6 +279,11 @@ func (r *RedisCache) StoreReportedIssues(ctx context.Context, issue *datamodel.I
 }
 
 func (r *RedisCache) RemoveOlderReportedIssues(ctx context.Context, tillTime int) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (r *RedisCache) GetReportedIssues(ctx context.Context, projectID string) ([]*datamodel.IssueReport, error) {
 	//TODO implement me
 	panic("implement me")
 }

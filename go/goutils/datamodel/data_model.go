@@ -72,6 +72,7 @@ type DagBlock struct {
 	Timestamp  int64       `json:"timestamp"`
 	TxHash     string      `json:"txHash"`
 	Payload    *DagPayload `json:"payload"`
+	PrevRoot   string      `json:"prevRoot"`
 	CurrentCid string
 }
 
@@ -232,12 +233,13 @@ type DagBlocksHeightRange struct {
 	EndHeight   int64 `json:"end_height"`
 }
 
+type DagVerificationIssueType string
+
 type DagVerifierStatus struct {
-	EventPayload         *DagBlocksInsertedReq `json:"eventPayload"`
-	Timestamp            int64                 `json:"timestamp"`
-	NoIssues             bool                  `json:"noIssues"` // can also just check if len(issues) == 0
-	DagBlocksHeightRange *DagBlocksHeightRange `json:"dagBlocksHeightRange"`
-	Issues               []interface{}         `json:"issues"`
+	Timestamp   int64                    `json:"timestamp"`
+	BlockHeight int64                    `json:"blockHeight"`
+	IssueType   DagVerificationIssueType `json:"issueType"`
+	Meta        interface{}              `json:"meta"` // other details
 }
 
 type DagBlocksInsertedReq struct {
