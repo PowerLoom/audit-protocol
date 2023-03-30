@@ -96,7 +96,7 @@ func (client *IpfsClient) GetDagBlock(dagCid string) (*datamodel.DagBlock, error
 		}
 
 		return nil
-	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
 	if err != nil {
 		l.WithError(err).Error("failed to get block from IPFS")
 
@@ -125,7 +125,7 @@ func (client *IpfsClient) GetPayloadChainHeightRang(payloadCid string) (*datamod
 		}
 
 		return nil
-	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
 	if err != nil {
 		log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
 
@@ -200,9 +200,9 @@ func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string) (*datamodel.DagP
 		}
 
 		return nil
-	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
 	if err != nil {
-		log.Error("Failed to fetch Payload from IPFS, CID:", payloadCid, ", error:", err)
+		log.WithError(err).WithField("payloadCID", payloadCid).Error("Failed to fetch Payload from IPFS")
 
 		return nil, err
 	}

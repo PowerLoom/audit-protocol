@@ -13,8 +13,9 @@ type DbCache interface {
 	GetStoredProjects(ctx context.Context) ([]string, error)
 	GetLastProjectIndexedState(ctx context.Context) (map[string]*datamodel.ProjectIndexedState, error)
 	GetPayloadCidAtDAGHeight(ctx context.Context, projectID string, dagHeight int) (string, error)
-	GetLastVerifiedDagHeight(ctx context.Context, projectID string) (int, error)
-	UpdateDagVerificationStatus(ctx context.Context, projectID string, status *datamodel.DagVerifierStatus) error
+	GetLastReportedDagHeight(ctx context.Context, projectID string) (int, error)
+	UpdateLastReportedDagHeight(ctx context.Context, projectID string, dagHeight int) error
+	UpdateDagVerificationStatus(ctx context.Context, projectID string, status map[string][]*datamodel.DagVerifierStatus) error
 	GetProjectDAGBlockHeight(ctx context.Context, projectID string) (int, error)
 	UpdateDAGChainIssues(ctx context.Context, projectID string, dagChainIssues []*datamodel.DagChainIssue) error
 	StorePruningIssueReport(ctx context.Context, report *datamodel.PruningIssueReport) error
@@ -37,6 +38,12 @@ type DbCache interface {
 type DiskCache interface {
 	Read(filepath string) ([]byte, error)
 	Write(filepath string, data []byte) error
+}
+
+type MemCache interface {
+	Get(key string) (interface{}, bool)
+	Set(key string, value interface{}) error
+	Delete(key string)
 }
 
 var (

@@ -13,7 +13,7 @@ go build .
 
 cd ../
 echo "Building DAG Verifier Service"
-cd dag-verifier
+cd dag-status-reporter
 go build .
 
 cd ../

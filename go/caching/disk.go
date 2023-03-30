@@ -25,7 +25,7 @@ func InitDiskCache() *LocalDiskCache {
 func (l LocalDiskCache) Read(filepath string) ([]byte, error) {
 	// check if file exists
 	if _, err := os.Stat(filepath); errors.Is(err, os.ErrNotExist) {
-		log.Errorf("file %s does not exist on disk", filepath)
+		log.WithError(err).Error("file does not exist on disk")
 		return nil, err
 	}
 

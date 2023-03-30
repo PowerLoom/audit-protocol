@@ -498,8 +498,8 @@ func AddToPendingTxns(payloadCommit *datamodel.PayloadCommit, txHash string, req
 	return true
 }
 
-func ReadPayloadFromCache(projectID string, payloadCid string) (*datamodel.PayloadData, error) {
-	var payload datamodel.PayloadData
+func ReadPayloadFromCache(projectID string, payloadCid string) (*datamodel.DagPayload, error) {
+	var payload datamodel.DagPayload
 	log.Debugf("Fetching payloadCid %s from local Cache", payloadCid)
 	bytes, err := filecache.ReadFromCache(settingsObj.PayloadCachePath+"/", projectID, payloadCid)
 	if err != nil {

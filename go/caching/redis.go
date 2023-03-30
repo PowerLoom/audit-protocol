@@ -93,12 +93,12 @@ func (r *RedisCache) GetPayloadCidAtDAGHeight(ctx context.Context, projectID str
 	return payloadCid, nil
 }
 
-// GetLastVerifiedDagHeight returns the last verified dag block height for the project
-func (r *RedisCache) GetLastVerifiedDagHeight(ctx context.Context, projectID string) (int, error) {
+// GetLastReportedDagHeight returns the last reported dag block height for the project
+func (r *RedisCache) GetLastReportedDagHeight(ctx context.Context, projectID string) (int, error) {
 	log.WithField("projectID", projectID)
-	key := fmt.Sprintf(redisutils.REDIS_KEY_DAG_LAST_VERIFIED_HEIGHT, projectID)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_LAST_REPORTED_DAG_HEIGHT, projectID)
 
-	val, err := r.redisClient.HGet(ctx, key, projectID).Result()
+	val, err := r.redisClient.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
 			log.Errorf("error getting verification status, key %s not found", key)
@@ -119,18 +119,32 @@ func (r *RedisCache) GetLastVerifiedDagHeight(ctx context.Context, projectID str
 	return height, nil
 }
 
-func (r *RedisCache) UpdateDagVerificationStatus(ctx context.Context, projectID string, status *datamodel.DagVerifierStatus) error {
+// UpdateLastReportedDagHeight updates the last reported dag height for the project
+func (r *RedisCache) UpdateLastReportedDagHeight(ctx context.Context, projectID string, dagHeight int) error {
+	log.WithField("projectID", projectID)
+	key := fmt.Sprintf(redisutils.REDIS_KEY_LAST_REPORTED_DAG_HEIGHT, projectID)
+
+	_, err := r.redisClient.Set(ctx, key, dagHeight, 0).Result()
+
+	return err
+}
+
+func (r *RedisCache) UpdateDagVerificationStatus(ctx context.Context, projectID string, status map[string][]*datamodel.DagVerifierStatus) error {
 	log.WithField("projectID", projectID)
 	key := fmt.Sprintf(redisutils.REDIS_KEY_DAG_VERIFICATION_STATUS, projectID)
 
-	data, err := json.Marshal(status)
-	if err != nil {
-		log.Errorf("error marshalling verification status for project %s", projectID)
+	statusMap := make(map[string]string)
+	for height, verifierStatus := range status {
+		data, err := json.Marshal(verifierStatus)
+		if err != nil {
+			log.Errorf("error marshalling verification status for project %s", projectID)
 
-		return err
+			continue
+		}
+		statusMap[height] = string(data)
 	}
 
-	_, err = r.redisClient.HSet(ctx, key, status.Timestamp, string(data)).Result()
+	_, err := r.redisClient.HSet(ctx, key, statusMap).Result()
 	if err != nil {
 		log.Errorf("error updating last verified dag height for project %s", projectID)
 

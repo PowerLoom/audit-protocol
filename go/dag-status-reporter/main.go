@@ -6,11 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -20,7 +20,7 @@ import (
 	"github.com/swagftw/gi"
 
 	"audit-protocol/caching"
-	"audit-protocol/dag-verifier/verifiers"
+	"audit-protocol/dag-status-reporter/verifiers"
 	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
@@ -73,14 +73,14 @@ func main() {
 
 	dagVerifier := verifiers.InitDagVerifier()
 
-	oneTimeRun := flag.Bool("oneTime", false, "Run the verifier once for all projects from genesis and exit.")
-	flag.Parse()
-
-	if *oneTimeRun {
-		dagVerifier.OneTimeRun()
-
-		return
-	}
+	// if the last verified height for the project is 0
+	// then we need to start verification from the genesis block
+	// this is a non-blocking call which will perform genesis run for every project available in cache
+	// while this is running (can take some time to finish),
+	// http server is listening on callback for newly added dag blocks
+	// those request can't be served until genesis run is finished
+	// so we just ack those requests and put them in-memory queue and pick them up after genesis run is finished
+	go dagVerifier.GenesisRun()
 
 	var wg sync.WaitGroup
 
@@ -106,18 +106,18 @@ func main() {
 	}()
 
 	if settingsObj.DagVerifierSettings.PruningVerification {
-		pruningVerifier, err := verifiers.InitPruningVerifier()
-		if err != nil {
-			log.Error("failed to initialize the pruning verifier", err)
-
-			return
-		}
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			pruningVerifier.Run()
-		}()
+		//pruningVerifier, err := verifiers.InitPruningVerifier()
+		//if err != nil {
+		//	log.Error("failed to initialize the pruning verifier", err)
+		//
+		//	return
+		//}
+		//
+		//wg.Add(1)
+		//go func() {
+		//	defer wg.Done()
+		//	pruningVerifier.Run()
+		//}()
 	}
 
 	wg.Wait()
@@ -153,7 +153,22 @@ func DagBlocksInsertedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go dagVerifier.Run(dagBlocksInserted)
+	sortedCIDByHeight := sortCIDsByHeight(dagBlocksInserted.DagHeightCIDMap)
+	if len(sortedCIDByHeight) == 0 {
+		log.Info("no dag blocks to verify")
+		w.WriteHeader(http.StatusBadRequest)
+
+		return
+	}
+
+	startHeight := sortedCIDByHeight[0].Height
+	endHeight := sortedCIDByHeight[len(sortedCIDByHeight)-1].Height
+
+	go dagVerifier.Run(&verifiers.NewBlocksAddedEvent{
+		ProjectID:   dagBlocksInserted.ProjectID,
+		StartHeight: strconv.Itoa(int(startHeight)),
+		EndHeight:   strconv.Itoa(int(endHeight)),
+	}, false)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -162,17 +177,21 @@ func DagBlocksInsertedHandler(w http.ResponseWriter, r *http.Request) {
 func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 	log.Infof("Received issue report %+v : ", *req)
 	reqBytes, err := io.ReadAll(req.Body)
+
 	if err != nil {
 		log.Errorf("Failed to read request body")
 		w.WriteHeader(http.StatusBadRequest)
+
 		return
 	}
 
 	issueReport := new(datamodel.IssueReport)
+
 	err = json.Unmarshal(reqBytes, issueReport)
 	if err != nil {
 		log.Errorf("Failed to parse issue report")
 		w.WriteHeader(http.StatusBadRequest)
+
 		return
 	}
 
@@ -184,11 +203,12 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	//Record issues in redis
+	// Record issues in redis
 	err = redisCache.StoreReportedIssues(context.Background(), issueReport)
 	if err != nil {
 		log.Errorf("Failed to add issue to redis due to error %+v", err)
 		w.WriteHeader(http.StatusInternalServerError)
+
 		return
 	}
 
@@ -196,8 +216,9 @@ func IssueReportHandler(w http.ResponseWriter, req *http.Request) {
 		// Notify consensus layer
 		ReportIssueToConsensus(reqBytes)
 
-		//Notify on slack and report to consensus layer
+		// Notify on slack and report to consensus layer.
 		report, _ := json.MarshalIndent(issueReport, "", "\t")
+
 		err = slackutils.NotifySlackWorkflow(string(report), issueReport.Severity, issueReport.Service)
 		if err != nil {
 			log.Errorf("Failed to notify slack due to error %+v", err)
@@ -256,4 +277,29 @@ func ReportIssueToConsensus(reqBytes []byte) {
 	} else {
 		log.Errorf("received error response %+v from consensus service with statusCode %d and status : %s ", respBody, res.StatusCode, res.Status)
 	}
+}
+
+// cidAndHeight is a struct that holds the CID and height of a dag block
+type cidAndHeight struct {
+	CID    string `json:"cid"`
+	Height int64  `json:"height"`
+}
+
+// sortCIDsByHeight sorts the given map of cid to height and returns sorted blocks by height
+func sortCIDsByHeight(cidToHeightMap map[string]int64) []*cidAndHeight {
+
+	cidAndHeightList := make([]*cidAndHeight, 0, len(cidToHeightMap))
+
+	for cid, height := range cidToHeightMap {
+		cidAndHeightList = append(cidAndHeightList, &cidAndHeight{
+			CID:    cid,
+			Height: height,
+		})
+	}
+
+	sort.Slice(cidAndHeightList, func(i, j int) bool {
+		return cidAndHeightList[i].Height < cidAndHeightList[j].Height
+	})
+
+	return cidAndHeightList
 }
