@@ -4,8 +4,12 @@ import logging
 import sys
 from functools import wraps
 from typing import Tuple
+from urllib.parse import urljoin
+
+import httpx
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
+from data_models import SnapshotterIssue, SnapshotterIssueSeverity
 from exceptions import ProjectFinalizedHeightError
 from utils import redis_keys
 from utils.redis_conn import RedisPool
@@ -240,7 +244,7 @@ async def get_max_height_pair_project(
         return max_height
 
 
-async def build_primary_indexes(ipfs_read_client):
+async def build_primary_indexes(ipfs_read_client: AsyncIPFSClient, httpx_client: httpx.AsyncClient):
     aioredis_pool = RedisPool()
     await aioredis_pool.populate()
     writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
@@ -273,8 +277,24 @@ async def build_primary_indexes(ipfs_read_client):
         sliding_cacher_logger.error("Can\'t find max epoch end for all projects, sleeping till next cycle")
         return
     indexable_projects_to_dag_heights = {k: epoch_ends_map[idx][0] for idx, k in enumerate(registered_project_ids) if not(isinstance(epoch_ends_map[idx], Exception) or epoch_ends_map[idx][1] == 0)}
-    
-    sliding_cacher_logger.debug(f"Start building indexes for all projects | project_count:{len(project_id_to_register_series)}")
+    non_indexable_projects = {k: str(epoch_ends_map[idx][1]) for idx, k in enumerate(registered_project_ids) if isinstance(epoch_ends_map[idx], Exception) or epoch_ends_map[idx][1] == 0}
+    if non_indexable_projects:
+        sliding_cacher_logger.error("Can\'t find epoch end for projects: %s", non_indexable_projects)
+        slack_alert_json = {
+            'severity': 'MEDIUM',   
+            'Service': 'PrimaryIndexBuilder',
+            'errorDetails': f'\nEpoch end or DAG block height not found for projects: \n\n{non_indexable_projects}\n'
+                            f'Indexable projects and DAG head block heights found: \n\n{indexable_projects_to_dag_heights}'
+        }
+        # send slack alert
+        try:
+            await httpx_client.post(
+                url=settings.primary_indexer.slack_notify_URL,
+                json=slack_alert_json
+            )
+        except Exception as e:
+            sliding_cacher_logger.error("Error while sending slack alert: %s | Alert body: %s", e, slack_alert_json, exc_info=True)
+    sliding_cacher_logger.debug(f"Start building indexes for %s projects", len(indexable_projects_to_dag_heights))
     tasks = list()
     for project_id, head_dag_height in indexable_projects_to_dag_heights.items():
         for time_period in project_id_to_register_series[project_id]:
@@ -310,7 +330,7 @@ async def periodic_retrieval():
     redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     while True:
         try:
-            common_epoch_end = await build_primary_indexes(ipfs_read_client=ipfs_read_client)
+            common_epoch_end = await build_primary_indexes(ipfs_read_client=ipfs_read_client, httpx_client=async_httpx_client)
             if common_epoch_end:
                 try:
                     await asyncio.gather(
