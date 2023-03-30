@@ -668,8 +668,8 @@ async def process_pairs_trade_volume_and_reserves(
 
             if not sliding_window_front_chain_7d and not sliding_window_back_chain_7d:
                 return
-            #TODO: Need to fix this index based access to data model based access.
-            cids_volume_24h.head_block_cid = sliding_window_front_chain_24h[0]['dagCid']
+            
+            cids_volume_24h.head_block_cid = sliding_window_front_chain_24h[-1]['dagCid']
             
             if sliding_window_back_chain_24h:
                 cids_volume_24h.tail_block_cid = sliding_window_back_chain_24h[-1]['dagCid']
@@ -682,7 +682,7 @@ async def process_pairs_trade_volume_and_reserves(
                     ipfs_read_client=ipfs_read_client
                 )
                 cids_volume_24h.tail_block_cid = tail_block_24h['dagCid']
-            cids_volume_7d.head_block_cid = sliding_window_front_chain_7d[0]['dagCid']
+            cids_volume_7d.head_block_cid = sliding_window_front_chain_7d[-1]['dagCid']
             if sliding_window_back_chain_7d:
                 cids_volume_7d.tail_block_cid = sliding_window_back_chain_7d[-1]['dagCid']
             else:
