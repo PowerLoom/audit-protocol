@@ -8,3 +8,6 @@ class GenericExitOnSignal(Exception):
 
 class ProjectFinalizedHeightError(Exception):
     pass
+
+class MissingIndexException(Exception):
+    pass

@@ -7,6 +7,7 @@ from async_ipfshttpclient.main import AsyncIPFSClient
 from gnosis.eth import EthereumClient
 from config import settings
 from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, DAGBlockRange, PairLiquidity, PairTradeVolume
+from exceptions import MissingIndexException
 from utils import helper_functions
 from utils import redis_keys
 from utils import retrieval_utils
@@ -434,11 +435,11 @@ async def process_pairs_trade_volume_and_reserves(
             msg = 'Values of 24h head, tail and 7h head, tail marker - some of them might be null and hence returning |' 
             f'[tail_marker_24h, head_marker_24h,  tail_marker_7d, head_marker_7d] : {tail_marker_24h, head_marker_24h, tail_marker_7d, head_marker_7d}'
             logger.info(msg)
-            raise Exception(msg)
+            raise MissingIndexException(msg)
 
         # if head of 24h and 7d index at 1 or less then return
         if head_marker_24h <= 1 or head_marker_7d <= 1:
-            raise Exception('Values of 24 head and tail marker are not sufficient to calculate aggregates')
+            raise MissingIndexException('Values of 24 head and tail marker are not sufficient to calculate aggregates')
 
         # initialize returning variables
         block_height_trade_volume = 0
@@ -464,7 +465,7 @@ async def process_pairs_trade_volume_and_reserves(
             logger.warning(
                 alert_msg
             )
-            raise Exception(alert_msg)
+            raise MissingIndexException(alert_msg)
 
         if not cached_trade_volume_data:
             logger.debug(
@@ -592,7 +593,7 @@ async def process_pairs_trade_volume_and_reserves(
                     cached_trade_volume_data["processed_head_marker_24h"],cached_trade_volume_data["processed_tail_marker_24h"],
                     project_id_trade_volume
                 )
-                return
+                
 
             # if 24h tail moved ahead
             if tail_marker_24h > cached_trade_volume_data["processed_tail_marker_24h"]:
@@ -636,8 +637,9 @@ async def process_pairs_trade_volume_and_reserves(
             else:
                 logger.debug("7d head is at %d and did not move ahead for project %s | last seen range %s - %s",
                     head_marker_7d,
-                    cached_trade_volume_data["processed_head_marker_7d"],cached_trade_volume_data["processed_tail_marker_7d"],
-                    project_id_trade_volume
+                    project_id_trade_volume,
+                    cached_trade_volume_data["processed_head_marker_7d"], cached_trade_volume_data["processed_tail_marker_7d"]
+                    
                 )
 
             # if 7d tail moved ahead
@@ -663,11 +665,34 @@ async def process_pairs_trade_volume_and_reserves(
                 )
 
 
-            if not sliding_window_front_chain_24h and not sliding_window_back_chain_24h:
-                return
+            if (not sliding_window_front_chain_24h and not sliding_window_back_chain_24h) or (not sliding_window_front_chain_7d and not sliding_window_back_chain_7d):
+                logger.debug("No new sliding window to process for project %s, returning last cached reserves and trade volume data", project_id_trade_volume)    
+                prepared_snapshot = liquidityProcessedData(
+                    contractAddress=pair_contract_address,
+                    name=pair_token_metadata['pair']['symbol'],
+                    liquidity=f"US${round(abs(pair_liquidity.total_liquidity)):,}",
+                    volume_24h=f"US${round(abs(cached_trade_volume_data['aggregated_volume_24h'])):,}",
+                    volume_7d=f"US${round(abs(cached_trade_volume_data['aggregated_volume_7d'])):,}",
+                    fees_24h=f"US${round(abs(cached_trade_volume_data['aggregated_fees_24h'])):,}",
+                    cid_volume_24h=DAGBlockRange(head_block_cid=cached_trade_volume_data['aggregated_volume_cid_24h']['head_block_cid'], tail_block_cid=cached_trade_volume_data['aggregated_volume_cid_24h']['tail_block_cid']),
+                    cid_volume_7d=DAGBlockRange(head_block_cid=cached_trade_volume_data['aggregated_volume_cid_7d']['head_block_cid'], tail_block_cid=cached_trade_volume_data['aggregated_volume_cid_7d']['tail_block_cid']),
+                    block_height=pair_liquidity.block_height_total_reserve,
+                    block_timestamp=pair_liquidity.block_timestamp_total_reserve,
+                    token0Liquidity=pair_liquidity.token0_liquidity,
+                    token1Liquidity=pair_liquidity.token1_liquidity,
+                    token0LiquidityUSD=pair_liquidity.token0_liquidity_usd,
+                    token1LiquidityUSD=pair_liquidity.token1_liquidity_usd,
+                    token0TradeVolume_24h=cached_trade_volume_data['aggregated_token0_volume_24h'],
+                    token1TradeVolume_24h=cached_trade_volume_data['aggregated_token1_volume_24h'],
+                    token0TradeVolumeUSD_24h=cached_trade_volume_data['aggregated_token0_volume_usd_24h'],
+                    token1TradeVolumeUSD_24h=cached_trade_volume_data['aggregated_token1_volume_usd_24h'],
+                    token0TradeVolume_7d=cached_trade_volume_data['aggregated_token0_volume_7d'],
+                    token1TradeVolume_7d=cached_trade_volume_data['aggregated_token1_volume_7d'],
+                    token0TradeVolumeUSD_7d=cached_trade_volume_data['aggregated_token0_volume_usd_7d'],
+                    token1TradeVolumeUSD_7d=cached_trade_volume_data['aggregated_token1_volume_usd_7d']
+                )
+                return prepared_snapshot
 
-            if not sliding_window_front_chain_7d and not sliding_window_back_chain_7d:
-                return
             
             cids_volume_24h.head_block_cid = sliding_window_front_chain_24h[-1]['dagCid']
             
@@ -858,6 +883,7 @@ async def process_pairs_trade_volume_and_reserves(
             pair_trade_volume_7d.token0_volume_usd = cached_trade_volume_data['aggregated_token0_volume_usd_7d']
             pair_trade_volume_7d.token1_volume_usd = cached_trade_volume_data['aggregated_token1_volume_usd_7d']
 
+        # TODO: create data model for sliding window data
         sliding_window_data = {
             "processed_tail_marker_24h": tail_marker_24h,
             "processed_head_marker_24h": head_marker_24h,
@@ -954,24 +980,27 @@ async def v2_pairs_data(
         *process_data_list, return_exceptions=True
     )
 
-    if len(list(filter(lambda x: isinstance(x, liquidityProcessedData), final_results))) < len(PAIR_CONTRACTS):
+    final_results_map = dict(zip(PAIR_CONTRACTS, final_results))
+    results_without_missing_index = {k: v for k, v in final_results_map.items() if not isinstance(v, MissingIndexException)}
+    contracts_results_with_missing_index = {k for k, v in final_results_map.items() if isinstance(v, MissingIndexException)}
+    # filter out exceptions around missing indexes
+    if all(map(lambda x: isinstance(x, liquidityProcessedData), results_without_missing_index.items())):
         logger.error(
             'Aggregation on all pair contracts\' trade volume and reserves incomplete. Waiting to build v2 pairs summary in next cycle.\nErrors: %s',
-            list(filter(lambda x: not isinstance(x, liquidityProcessedData), final_results))
+            {k: v for k, v in results_without_missing_index.items() if not isinstance(v, liquidityProcessedData)}
         )
         return
     
     
-    
     common_block_timestamp = max(
-        map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
-    )
+        filter(lambda x: isinstance(x, liquidityProcessedData) ,results_without_missing_index.values()), 
+        key=lambda x: x.block_timestamp).block_timestamp
     
     pair_addresses = map(lambda x: x.contractAddress, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
     pair_contract_address = next(pair_addresses)
     logger.debug('Setting common blockheight for v2 pairs aggregation %s', common_epoch_end)
     
-    summarized_result_l = [x.dict() for x in final_results if not (isinstance(x, BaseException) or x is None)]
+    summarized_result_l = [x.dict() for x in results_without_missing_index.values()]
     summarized_payload = {'data': summarized_result_l}
     # get last processed v2 pairs snapshot height
     l_ = await redis_conn.get(
@@ -1114,7 +1143,7 @@ async def v2_pairs_data(
                     logger.info('V2 pairs summary snapshot updated...')
                     break
 
-                return final_results
+                return results_without_missing_index
 
 if __name__ == '__main__':
     print("", "")
