@@ -702,7 +702,7 @@ async def process_pairs_trade_volume_and_reserves(
                         'severity': 'MEDIUM',
                         'Service': 'TradeVolumeProcessor',
                         'errorDetails': f'\nFound unqualified blocks in sliding window back chain 24h for project {project_id_trade_volume} '
-                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_24h"]+1} to {tail_marker_24h}.\n\n{unqualified_sliding_window_blocks_back_chain_24h}' 
+                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_24h"]+1} to {tail_marker_24h}.\n\n```{unqualified_sliding_window_blocks_back_chain_24h}```' 
                     }
                     try:
                         await httpx_client.post(
@@ -737,8 +737,8 @@ async def process_pairs_trade_volume_and_reserves(
                     slack_alert_msg = {
                         'severity': 'MEDIUM',
                         'Service': 'TradeVolumeProcessor',
-                        'errorDetails': f'\nFound unqualified blocks in sliding window back chain 24h for project {project_id_trade_volume} '
-                                        f'while adjusting tail from {cached_trade_volume_data["processed_head_marker_24h"]+1} to {head_marker_24h}\n\n{unqualified_sliding_window_blocks_front_chain_24h}' 
+                        'errorDetails': f'\nFound unqualified blocks in sliding window front chain 24h for project {project_id_trade_volume} '
+                                        f'while adjusting tail from {cached_trade_volume_data["processed_head_marker_24h"]+1} to {head_marker_24h}\n\n```{unqualified_sliding_window_blocks_front_chain_24h}```' 
                     }
                     try:
                         await httpx_client.post(
@@ -780,7 +780,7 @@ async def process_pairs_trade_volume_and_reserves(
                         'severity': 'MEDIUM',
                         'Service': 'TradeVolumeProcessor',
                         'errorDetails': f'\nFound unqualified blocks in sliding window back chain 7d for project {project_id_trade_volume} '
-                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_7d"]+1} to {tail_marker_7d}\n\n{unqualified_sliding_window_blocks_back_chain_7d}' 
+                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_7d"]+1} to {tail_marker_7d}\n\n```{unqualified_sliding_window_blocks_back_chain_7d}```' 
                     }
                     try:
                         await httpx_client.post(
@@ -814,7 +814,7 @@ async def process_pairs_trade_volume_and_reserves(
                         'severity': 'MEDIUM',
                         'Service': 'TradeVolumeProcessor',
                         'errorDetails': f'\nFound unqualified blocks in sliding window front chain 7d for project {project_id_trade_volume} '
-                                        f'while adjusting head from {cached_trade_volume_data["processed_head_marker_7d"]+1} to {head_marker_7d}\n\n{unqualified_sliding_window_blocks_front_chain_7d}' 
+                                        f'while adjusting head from {cached_trade_volume_data["processed_head_marker_7d"]+1} to {head_marker_7d}\n\n```{unqualified_sliding_window_blocks_front_chain_7d}```' 
                     }
                     try:
                         await httpx_client.post(
