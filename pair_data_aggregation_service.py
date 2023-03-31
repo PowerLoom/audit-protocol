@@ -983,8 +983,9 @@ async def v2_pairs_data(
     final_results_map = dict(zip(PAIR_CONTRACTS, final_results))
     results_without_missing_index = {k: v for k, v in final_results_map.items() if not isinstance(v, MissingIndexException)}
     contracts_results_with_missing_index = {k for k, v in final_results_map.items() if isinstance(v, MissingIndexException)}
+    # logger.debug(list(map(lambda x: x if not isinstance(x, liquidityProcessedData) else None, results_without_missing_index.values())))
     # filter out exceptions around missing indexes
-    if all(map(lambda x: isinstance(x, liquidityProcessedData), results_without_missing_index.items())):
+    if not all(map(lambda x: isinstance(x, liquidityProcessedData), results_without_missing_index.values())):
         logger.error(
             'Aggregation on all pair contracts\' trade volume and reserves incomplete. Waiting to build v2 pairs summary in next cycle.\nErrors: %s',
             {k: v for k, v in results_without_missing_index.items() if not isinstance(v, liquidityProcessedData)}
