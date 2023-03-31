@@ -953,16 +953,20 @@ async def v2_pairs_data(
     final_results: Iterable[Union[liquidityProcessedData, None, BaseException]] = await asyncio.gather(
         *process_data_list, return_exceptions=True
     )
-    
-    try:
-        common_block_timestamp = max(
-            map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
-        )
-    except ValueError:
+
+    if len(list(filter(lambda x: isinstance(x, liquidityProcessedData), final_results))) < len(PAIR_CONTRACTS):
         logger.error(
-                'Aggregation on all pair contracts\' trade volume and reserves incomplete. Waiting to build v2 pairs summary in next cycle '
-            )
+            'Aggregation on all pair contracts\' trade volume and reserves incomplete. Waiting to build v2 pairs summary in next cycle.\nErrors: %s',
+            list(filter(lambda x: not isinstance(x, liquidityProcessedData), final_results))
+        )
         return
+    
+    
+    
+    common_block_timestamp = max(
+        map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
+    )
+    
     pair_addresses = map(lambda x: x.contractAddress, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
     pair_contract_address = next(pair_addresses)
     logger.debug('Setting common blockheight for v2 pairs aggregation %s', common_epoch_end)
