@@ -60,7 +60,7 @@ func main() {
 	}
 
 	// assuming dag segment height is 720
-	if cids[0].Score <= 1440 {
+	if cids[0].Score <= float64(segmentSize*2) {
 		log.Panicln("TEST FAILED: invalid score", cids[0].Score, "expected", 1441)
 	}
 

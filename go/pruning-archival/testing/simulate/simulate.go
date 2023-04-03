@@ -63,7 +63,11 @@ func (m *migrator) simulate() {
 	data, _ := json.Marshal(dummyDataJson)
 	_ = json.Unmarshal(data, dummyData)
 
+	// clear stale data if present
+	m.clearStaleData(dummyData)
+
 	// create stored projects
+	log.Info("storing dummy project")
 	_, err := m.redisClient.SAdd(context.Background(), redisutils.REDIS_KEY_STORED_PROJECTS, dummyData.ProjectID).Result()
 	if err != nil {
 		log.Panicln("error getting stored projects", err)
@@ -71,6 +75,7 @@ func (m *migrator) simulate() {
 
 	// create two project dag segments
 	// assuming that the project has segment of height 720
+	log.Info("creating project dag segments")
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_METADATA, dummyData.ProjectID)
 
 	segmentHeight := m.settingsObj.PruningServiceSettings.SegmentSize
@@ -100,6 +105,7 @@ func (m *migrator) simulate() {
 	cids := make([]*redis.Z, safeHeight)
 	payloadCids := make([]*redis.Z, safeHeight)
 
+	log.Info("creating cids and payload cids, might take a while...be patient :)")
 	for i := 0; i < safeHeight; i++ {
 		cid := m.createDummyDagCID([]byte(strconv.Itoa(i) + "cid"))
 		cids[i] = &redis.Z{Score: float64(i), Member: cid}
@@ -127,11 +133,12 @@ func (m *migrator) simulate() {
 	}
 
 	// create pruning status
-	err = m.redisClient.HSet(context.Background(), fmt.Sprintf(redisutils.REDIS_KEY_PRUNING_STATUS), dummyData.ProjectID, 0).Err()
+	err = m.redisClient.HSet(context.Background(), redisutils.REDIS_KEY_PRUNING_STATUS, dummyData.ProjectID, 0).Err()
 	if err != nil {
 		log.Panicln("error setting pruning status", err)
 	}
 
+	log.Info("pushing archival task to message queue")
 	m.pushTaskToMessageQueue(dummyData.ProjectID)
 
 	log.Println("done")
@@ -143,8 +150,6 @@ func (m *migrator) createDummyDagCID(data []byte) string {
 	if err != nil {
 		log.Panicln("error adding file to ipfs", err)
 	}
-
-	log.Println("dummy dag cid", cid)
 
 	return cid
 }
@@ -180,12 +185,46 @@ func (m *migrator) pushTaskToMessageQueue(projectID string) {
 	}
 }
 
+func (m *migrator) clearStaleData(dummyData *dummy) {
+	err := m.redisClient.SRem(context.Background(), redisutils.REDIS_KEY_STORED_PROJECTS, dummyData.ProjectID).Err()
+	if err != nil {
+		log.WithError(err).Error("error removing project from stored projects set")
+	}
+
+	segmentHeight := m.settingsObj.PruningServiceSettings.SegmentSize
+
+	err = m.redisClient.HDel(context.Background(), fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_METADATA, dummyData.ProjectID), strconv.Itoa(segmentHeight), strconv.Itoa(segmentHeight*2)).Err()
+	if err != nil {
+		log.WithError(err).Error("error removing project metadata")
+	}
+
+	err = m.redisClient.ZRemRangeByScore(context.Background(), fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_CIDS, dummyData.ProjectID), "0", strconv.Itoa(segmentHeight*2+100)).Err()
+	if err != nil {
+		log.WithError(err).Error("error removing project cids")
+	}
+
+	err = m.redisClient.ZRemRangeByScore(context.Background(), fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, dummyData.ProjectID), "0", strconv.Itoa(segmentHeight*2+100)).Err()
+	if err != nil {
+		log.WithError(err).Error("error removing project payload cids")
+	}
+
+	err = m.redisClient.Del(context.Background(), fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TAIL_INDEX, dummyData.ProjectID, "7d")).Err()
+	if err != nil {
+		log.WithError(err).Error("error removing oldest project indexed height")
+	}
+
+	err = m.redisClient.HDel(context.Background(), redisutils.REDIS_KEY_PRUNING_STATUS, dummyData.ProjectID).Err()
+	if err != nil {
+		log.WithError(err).Error("error removing pruning status")
+	}
+}
+
 func jsonMarshal(val interface{}) string {
 	data, _ := json.Marshal(val)
 	return string(data)
 }
 
 var dummyDataJson = map[string]interface{}{
-	"projectID": "uniswap_pairContract_trade_volume_0x21b8065d10f73ee2e260e5b47d3344d3ced7596e_UNISWAPV2-ph15-stg",
+	"projectID": "uniswap_pairContract_trade_volume_0x21b8065d10f73ee2e260e5b47d3344d3ced7596e_UNISWAPV2-ph15-dummy",
 	"tail":      1600,
 }
