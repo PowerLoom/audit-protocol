@@ -1,11 +1,39 @@
 # Overview
-DAG Verifier service performs following functions:
-1. Periodically verify the status of project's DAG Chains to ensure that there are no gaps or issues in the chains. In case any issues are found, the same are recorded in redis as well as reported as slack notifications.
-    Currently, dag verifier checks for following issues:
-    - Gaps in DAG chains by looking at epochs at each snapshot and reports missing epochs
-    - In case DAG chains are stuck due to any reason
-2. Verify the archival status of archived dag-segments.
-3. Expose an endpoint to which issues are reported by other services [Ref](https://github.com/PowerLoom/audit-protocol-private/issues/143). These issues are :
+DAG Status reporter service performs following functions:
+1. Expose endpoint `/dagBlocksInserted` over http to receive callback from dag-finalizer service for newly added blocks.
+```json
+   {
+    "projectID": "project_id_goes_here",
+	"dagHeightCIDMap": {
+           "bafyreic6x6ekvd3wc56vgol75nfygvav6pxj5raqvdghyqeyxmgcvmx6fy": 21
+    }
+   }
+```
+
+2. Check all possible issues in dag chain
+   - Check for duplicate dag heights
+   - Check for missing dag heights
+   - Check for chain gaps
+   - Check for null payloads
+   - Check for gap in epochs
+   - Check for missing epochs
+
+
+3. Issue types
+   - `BLOCKS_OUT_OF_ORDER` : When dag block heights are not in order
+   - `EPOCH_SKIPPED` : When epoch is skipped
+   - `PAYLOAD_MISSING` : When payload cid is null/missing
+   - `DUPLICATE_DAG_BLOCK` : When duplicate dag block heights are found
+   - `CID_HEIGHTS_OUT_OF_SYNC_IN_CACHE` : When Payload CID and Block CID heights are out of order
+   - `CID_AND_PAYLOAD_CID_COUNT_MISMATCH` : When Payload CIDs and block CIDs count for a given range is not same
+   - `MULTIPLE_BLOCKS_AT_SAME_HEIGHT` : When multiple blocks when different cid are at same block height
+   - `INTERNAL_VERIFICATION_ERR` : Internal service issue. `CRITICAL` and should be addressed ASAP.
+   - for information about json structure for all the issues, refer [here](./verifiers/dag_chain_verifier.go#L54-L92)
+
+4. Issues are recorded in redis under every project as key `projectID:project:dagVerificationStatus`
+5. Just run `main.go` to run the service
+6. Verify the archival status of archived dag-segments.
+7. Expose an endpoint to which issues are reported by other services [Ref](https://github.com/PowerLoom/audit-protocol-private/issues/143). These issues are :
     - Recorded in redis
     - Notified to consensus layer
     - Notified on slack if the URL is configured

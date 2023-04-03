@@ -9,7 +9,7 @@
 
 - `reportIssue` handler func
     - Receives issues over http. ReqBody is expected to
-      be [IssueReport](https://github.com/swagftw/audit-protocol/blob/main/go/goutils/datamodel/data_model.go#L87)
+      be [IssueReport](https://github.com/PowerLoom/audit-protocol/blob/main/go/goutils/datamodel/data_model.go#L87)
     - Store report in redis
     - Report issue to consensus system
     - Remove issueReports older than 7 days

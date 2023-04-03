@@ -97,7 +97,6 @@ const (
 	EpochSkipped                  datamodel.DagVerificationIssueType = "EPOCH_SKIPPED"
 	PayloadMissing                datamodel.DagVerificationIssueType = "PAYLOAD_MISSING"
 	DuplicateDagBlock             datamodel.DagVerificationIssueType = "DUPLICATE_DAG_BLOCK"
-	PayloadCorrupted              datamodel.DagVerificationIssueType = "PAYLOAD_CORRUPTED"
 	CidHeightsOutOfSyncInCache    datamodel.DagVerificationIssueType = "CID_HEIGHTS_OUT_OF_SYNC_IN_CACHE"
 	CIDAndPayloadCIDCountMismatch datamodel.DagVerificationIssueType = "CID_AND_PAYLOAD_CID_COUNT_MISMATCH"
 	MultipleBlocksAtSameHeight    datamodel.DagVerificationIssueType = "MULTIPLE_BLOCKS_AT_SAME_HEIGHT"

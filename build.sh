@@ -12,7 +12,7 @@ cd payload-commit
 go build .
 
 cd ../
-echo "Building DAG Verifier Service"
+echo "Building DAG status reporter Service"
 cd dag-status-reporter
 go build .
 
