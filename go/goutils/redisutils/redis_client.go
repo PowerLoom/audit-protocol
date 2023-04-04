@@ -27,8 +27,9 @@ func InitRedisClient(redisHost string, port int, redisDb int, poolSize int, pass
 	})
 	pong, err := redisClient.Ping(context.Background()).Result()
 	if err != nil {
-		log.Error("Unable to connect to redis at:")
+		log.WithField("addr", redisURL).Fatal("Unable to connect to redis")
 	}
+
 	log.Info("Connected successfully to Redis and received ", pong, " back")
 
 	// exit if injection fails

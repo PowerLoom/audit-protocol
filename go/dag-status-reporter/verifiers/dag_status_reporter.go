@@ -397,9 +397,7 @@ func (d *DagVerifier) runQueuedProjectEvents(projects []string) {
 func (d *DagVerifier) checkNullPayload(projectID string, chain []*datamodel.DagBlock) {
 	l := log.WithField("projectID", projectID)
 
-	if len(chain) == 0 {
-		log.Debug("dag chain is empty")
-
+	if len(chain) < 2 {
 		return
 	}
 
@@ -429,7 +427,7 @@ func (d *DagVerifier) checkNullPayload(projectID string, chain []*datamodel.DagB
 func (d *DagVerifier) checkBlocksOutOfOrder(projectID string, chain []*datamodel.DagBlock) error {
 	l := log.WithField("projectID", projectID)
 
-	if len(chain) == 0 {
+	if len(chain) < 2 {
 		return nil
 	}
 	// check if the blocks are out_of_order/missing/discontinuous
@@ -529,7 +527,7 @@ func (d *DagVerifier) checkBlocksOutOfOrder(projectID string, chain []*datamodel
 func (d *DagVerifier) checkEpochsOutOfOrder(projectID string, chain []*datamodel.DagBlock) {
 	l := log.WithField("projectID", projectID).WithField("method", "checkBlocksOutOfOrder")
 
-	if len(chain) == 0 {
+	if len(chain) < 2 {
 		return
 	}
 
@@ -740,6 +738,10 @@ func (d *DagVerifier) fillPayloadData(projectID string, dagBlockChain, dagChainW
 
 // traverseArchivedDagSegments traverses the archived dag segments and verifies the data
 func (d *DagVerifier) traverseArchivedDagSegments(projectID string, dagBlockChain []*datamodel.DagBlock) error {
+	if len(dagBlockChain) == 0 {
+		return nil
+	}
+
 	l := log.WithField("projectID", projectID)
 	fullChain := make([]*datamodel.DagBlock, dagBlockChain[len(dagBlockChain)-1].Height)
 
@@ -926,6 +928,14 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 		if err != nil {
 			l.WithError(err).Error("failed to update last verified dag height in cache")
 		}
+
+		data, _ := json.Marshal(d.issues)
+
+		// notify on slack
+		err = slackutils.NotifySlackWorkflow(string(data), "High", "DagStatusReporter")
+		if err != nil {
+			l.WithError(err).Error("failed to notify slack")
+		}
 	} else {
 		// if no issues found, update last verified dag height in cache
 		err := d.redisCache.UpdateLastReportedDagHeight(context.Background(), projectID, int(maxHeight))
@@ -934,10 +944,4 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 		}
 	}
 
-	data, _ := json.Marshal(d.issues)
-	// notify on slack
-	err := slackutils.NotifySlackWorkflow(string(data), "High", "DagVerifier")
-	if err != nil {
-		l.WithError(err).Error("failed to notify slack")
-	}
 }
