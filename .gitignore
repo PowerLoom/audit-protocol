@@ -10,6 +10,9 @@ __pycache__/
 files/
 .env
 out/
+state.json
+state.json.bz2
+state_parse_error.json
 static/cached_pair_addresses.json
 
 # Ignore dynaconf secret files

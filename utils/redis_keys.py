@@ -26,6 +26,12 @@ def get_pruning_status_key():
     last_pruned_key = "projects:pruningStatus"
     return last_pruned_key
 
+def get_all_pruning_cycles_status_key():
+    return 'pruningRunStatus'
+
+
+def get_specific_pruning_cycle_run_information(cycle_id):
+    return f'pruningProjectDetails:{cycle_id}'
 
 def get_dag_cids_key(project_id: str):
     dag_cids_key = "projectID:{}:Cids".format(project_id)
@@ -107,36 +113,6 @@ def get_project_dag_segments_key(project_id: str):
     return f'projectID:{project_id}:dagSegments'
 
 
-def get_target_dags_key(project_id: str):
-    target_dags_key = "projectID:{}:targetDags".format(project_id)
-    return target_dags_key
-
-
-def get_prune_from_height_key(project_id: str):
-    prune_from_height_key = "projectID:{}:pruneFromHeight".format(project_id)
-    return prune_from_height_key
-
-
-def get_prune_to_height_key(project_id: str):
-    prune_to_height_key = "projectID:{}:pruneToHeight".format(project_id)
-    return prune_to_height_key
-
-
-def get_to_unpin_projects_key():
-    to_unpin_projects_key = "toUnpinProjects"
-    return to_unpin_projects_key
-
-
-def get_filecoin_token_key(project_id: str):
-    filecoin_token_key = "filecoinToken:{}".format(project_id)
-    return filecoin_token_key
-
-
-def get_executing_containers_key():
-    executing_containers_key = "executingContainers"
-    return executing_containers_key
-
-
 def get_payload_commit_id_process_logs_zset_key(project_id, payload_commit_id):
     return f'projectID:{project_id}:payloadCommitID:{payload_commit_id}:processingLogs'
 
@@ -144,11 +120,6 @@ def get_payload_commit_id_process_logs_zset_key(project_id, payload_commit_id):
 def get_hits_dag_block_key():
     hits_dag_block_key = "hitsDagBlock"
     return hits_dag_block_key
-
-
-def get_hits_payload_data_key():
-    hits_payload_data_key = "hitsPayloadData"
-    return hits_payload_data_key
 
 
 def get_last_snapshot_cid_key(project_id: str):
@@ -199,10 +170,7 @@ def get_cached_containers_key(container_id: str):
 def get_projects_registered_for_cache_indexing_key():
     return 'cache:indexesRequested'
 
-def get_uniswap_pair_contract_tokens_data(pair_address, pooler_namespace):
-    return 'uniswap:pairContract:'+pooler_namespace+':{}:PairContractMetaData'.format(pair_address)
-
-
+# pair summary related keys
 def get_uniswap_pair_contract_V2_pair_data(pair_address, pooler_namespace):
     return 'uniswap:pairContract:'+pooler_namespace+':{}:contractV2PairCachedData'.format(pair_address)
 
@@ -217,34 +185,45 @@ def get_uniswap_pair_snapshot_summary_zset(pooler_namespace):
 def get_uniswap_pair_snapshot_payload_at_blockheight(block_height, pooler_namespace):
     return 'uniswap:V2PairsSummarySnapshot:'+pooler_namespace+f':snapshot:{block_height}'
 
+def get_uniswap_pairs_summary_snapshot_project_id(pooler_namespace):
+    return 'uniswap_V2PairsSummarySnapshot_'+pooler_namespace
+
+def get_uniswap_pair_snapshot_timestamp_zset(pooler_namespace):
+    return 'uniswap:V2PairsSummarySnapshot:'+pooler_namespace+':snapshotTimestampZset'
+
+# daily stats related keys
 def get_uniswap_pair_daily_stats_snapshot_zset(pooler_namespace):
     return 'uniswap:V2DailyStatsSnapshot:'+pooler_namespace+':snapshotsZset'
 
 def get_uniswap_pair_daily_stats_payload_at_blockheight(block_height, pooler_namespace):
     return 'uniswap:V2DailyStatsSnapshot:'+pooler_namespace+f':snapshot:{block_height}'
 
-
-def get_uniswap_pairs_summary_snapshot_project_id(pooler_namespace):
-    return 'uniswap_V2PairsSummarySnapshot_'+pooler_namespace
-
 def get_uniswap_pairs_v2_daily_snapshot_project_id(pooler_namespace):
     return 'uniswap_V2DailyStatsSnapshot_'+pooler_namespace
 
-def get_uniswap_pair_snapshot_timestamp_zset(pooler_namespace):
-    return 'uniswap:V2PairsSummarySnapshot:'+pooler_namespace+':snapshotTimestampZset'
 
+# token stats related keys
+
+def get_uniswap_token_summary_snapshot_project_id(pooler_namespace):
+    return f'uniswap_V2TokensSummarySnapshot_{pooler_namespace}'
 
 def get_uniswap_pair_cached_token_price(pair_symbol, pooler_namespace):
     return 'uniswap:pairContract:'+pooler_namespace+':{}:cachedPairPrice'.format(pair_symbol)
 
+def get_uniswap_token_summary_snapshot_zset(pooler_namespace):
+    return f'uniswap:V2TokensSummarySnapshot:{pooler_namespace}:snapshotsZset'
 
+def get_uniswap_pair_contract_tokens_data(pair_address, pooler_namespace):
+    return 'uniswap:pairContract:'+pooler_namespace+':{}:PairContractMetaData'.format(pair_address)
+
+
+# misc 
 def get_uniswap_pair_cached_recent_logs(pair_address, pooler_namespace):
     return 'uniswap:pairContract:'+pooler_namespace+':{}:recentLogs'.format(pair_address)
 
 
 def get_uniswap_pair_cache_daily_stats(pair_address, pooler_namespace):
-    return 'uniswap:pairContract:'+pooler_namespace+':{}:dailyCache'.format(pair_address)
-
+    return 'uniswap:pairContract:'+pooler_namespace+':{pair_address}:dailyCache'
 
 def get_uniswap_pair_cache_sliding_window_data(pair_address, pooler_namespace):
     return 'uniswap:pairContract:'+pooler_namespace+':{}:slidingWindowData'.format(pair_address)

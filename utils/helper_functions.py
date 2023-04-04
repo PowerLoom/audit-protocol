@@ -2,7 +2,7 @@ from functools import partial, wraps
 from utils import redis_keys
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
-from tenacity import AsyncRetrying, stop_after_attempt
+from tenacity import AsyncRetrying, stop_after_attempt, wait_random_exponential
 import logging
 import sys
 from redis import asyncio as aioredis
@@ -109,7 +109,7 @@ def cleanup_children_procs(fn):
 async def commit_payload(project_id, report_payload, session: AsyncClient, web3_storage_flag=True, skipAnchorProof=False):
     # setting web3Storage flag to true by default
     audit_protocol_url = f'http://{settings.ap_backend.host}:{settings.ap_backend.port}/commit_payload'
-    async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3)):
+    async for attempt in AsyncRetrying(reraise=True, stop=stop_after_attempt(3), wait=wait_random_exponential(multiplier=1, max=30)):
         with attempt:
             response_obj = await session.post(
                     url=audit_protocol_url,
@@ -117,7 +117,7 @@ async def commit_payload(project_id, report_payload, session: AsyncClient, web3_
             )
             logger.debug('Got audit protocol response: %s', response_obj.text)
             response_status_code = response_obj.status_code
-            response = response_obj.json() or {}
+            response = response_obj.json()
             if response_status_code in range(200, 300):
                 return response
             elif response_status_code == 500 or response_status_code == 502:

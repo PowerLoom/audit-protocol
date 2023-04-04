@@ -1,4 +1,6 @@
+from typing import Union
 from eth_utils import keccak
+from httpx import _exceptions as httpx_exceptions
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
 from utils import helper_functions
@@ -77,7 +79,7 @@ async def retrieve_block_status(
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
         ipfs_read_client: AsyncIPFSClient
-) -> ProjectBlockHeightStatus:
+) -> Union[ProjectBlockHeightStatus, None]:
     block_status = ProjectBlockHeightStatus(
         project_id=project_id,
         block_height=block_height,
@@ -150,8 +152,7 @@ async def retrieve_block_status(
             withscores=False
         )
         if len(r) == 0:
-            #This scenario can happen when a project's blockHeight is pushed ahead
-            # and current height is not present in the project DAG.
+            retrieval_utils_logger.error('No dagCid found for project_id: %s, block_height: %s', project_id, block_height)
             return None
         dag_cid = r[0].decode('utf-8')
 
@@ -159,9 +160,11 @@ async def retrieve_block_status(
             block_dag_cid=dag_cid,
             project_id=project_id,
             ipfs_read_client=ipfs_read_client,
-            writer_redis_conn=writer_redis_conn,
             data_flag=0
         )
+        retrieval_utils_logger.info('In block status check: Got DAG block with cid %s at block height %s: %s', dag_cid, block_height, block)
+        if not block or not block.get('data'):
+            return None
         block_status.payload_cid = block['data']['cid']['/']
         block_status.tx_hash = block['txHash']
         block_status.status = SNAPSHOT_STATUS_MAP['TX_CONFIRMED']
@@ -179,7 +182,6 @@ async def retrieve_block_data(
         block_dag_cid:str,
         project_id:str,
         ipfs_read_client: AsyncIPFSClient,
-        writer_redis_conn=None,
         data_flag=0
 ):
     """
@@ -196,24 +198,28 @@ async def retrieve_block_data(
     assert data_flag in range(0, 3), \
         f"The value of data: {data_flag} is invalid. It can take values: 0, 1 or 2"
 
-    """ TODO: Increment hits on block, to be used for some caching purpose """
-    # block_dag_hits_key = redis_keys.get_hits_dag_block_key()
-    # if writer_redis_conn:
-    #     r = await writer_redis_conn.zincrby(block_dag_hits_key, 1.0, block_dag_cid)
-    #     retrieval_utils_logger.debug("Block hit for: ")
-    #     retrieval_utils_logger.debug(block_dag_cid)
-    #     retrieval_utils_logger.debug(r)
-
     block = await get_dag_block(block_dag_cid, project_id, ipfs_read_client=ipfs_read_client)
     # handle case of no dag_block or null payload in dag_block
-    if data_flag == 0 or block is None or 'data' not in block:
+    if data_flag == 0 and block is None:
+        return dict()
+    retrieval_utils_logger.debug('Retrieved dag block with CID %s: %s', block_dag_cid, block)
+    # the data field may not be present in the dag block because of the DAG finalizer omitting null fields in DAG block model while converting to JSON
+    if 'data' not in block.keys() or block['data'] is None:  
+        if data_flag == 1:
+            block['data'] = {'payload': None, 'cid': 'null'}
+            return block
+        elif data_flag == 0:
+            return block
+        else:
+            return None
+    if data_flag == 0:
         return block
     payload = dict()
     """ Get the payload Data """
     payload_data = await retrieve_payload_data(
-                    payload_cid=block['data']['cid']['/'],
-                    project_id=project_id,
-                    ipfs_read_client=ipfs_read_client
+        payload_cid=block['data']['cid']['/'],
+        project_id=project_id,
+        ipfs_read_client=ipfs_read_client
     )
     # handle case of null payload in dag_block
     if payload_data:
@@ -247,15 +253,10 @@ async def retrieve_payload_cid(project_id: str, block_height: int,reader_redis_c
     return payload_cid
 
 
-# TODO: find all vestigal parameters that once upon a time
-#       1. expected a redis connection injection
-#       2. the injection decorator has been removed
-#       3. as well as the code block that needed a redis connection is gone
 async def retrieve_payload_data(
         payload_cid,
-        project_id:str=None,
-        ipfs_read_client: AsyncIPFSClient=None,
-        writer_redis_conn=None
+        ipfs_read_client: AsyncIPFSClient,
+        project_id,
 ):
     """
         - Given a payload_cid, get its data from ipfs, at the same time increase its hit
@@ -269,37 +270,45 @@ async def retrieve_payload_data(
     if project_id is not None:
         payload_data = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ payload_cid + ".json", None )
     if payload_data is None:
+        # TODO: set such logs to TRACE level
         retrieval_utils_logger.info("Failed to read payload with CID %s for project %s from local cache ",
         payload_cid,project_id)
         # Get the payload Data from ipfs
-        _payload_data = await ipfs_read_client.cat(payload_cid)
-        if not isinstance(_payload_data,str):
-            payload_data = _payload_data.decode('utf-8')
+        try:
+            _payload_data = await ipfs_read_client.cat(payload_cid)
+        except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as e:
+            retrieval_utils_logger.error("Failed to read payload with CID %s for project %s from IPFS ",
+            payload_cid,project_id)
+            retrieval_utils_logger.error(e)
+            payload_data = None
         else:
-            payload_data = _payload_data
-
-    return payload_data
+            if not isinstance(_payload_data,str):
+                return _payload_data.decode('utf-8')
+            else:
+                return _payload_data
+    else:
+        return payload_data
 
 async def get_dag_block_by_height(
         project_id, block_height,
         reader_redis_conn: aioredis.Redis,
         ipfs_read_client: AsyncIPFSClient
-        ):
-    dag_block = {}
+) -> dict:
+    dag_block = dict()
     dag_cid = await helper_functions.get_dag_cid(
         project_id=project_id,
         block_height=block_height,
         reader_redis_conn=reader_redis_conn
     )
     if not dag_cid:
-        return {}
+        return dict()
 
     dag_block = await retrieve_block_data(
         block_dag_cid=dag_cid, project_id=project_id,data_flag=1,
         ipfs_read_client=ipfs_read_client
-        )
+    )
 
-    dag_block = dag_block if dag_block else {}
+    dag_block = dag_block if dag_block else dict()
     dag_block["dagCid"] = dag_cid
 
     return dag_block
