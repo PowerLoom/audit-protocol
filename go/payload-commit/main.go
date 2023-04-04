@@ -33,7 +33,7 @@ import (
 var ctx = context.Background()
 
 var redisClient *redis.Client
-var ipfsClient ipfsutils.IpfsClient
+var ipfsClient *ipfsutils.IpfsClient
 var txMgrHttpClient http.Client
 var dagFinalizerClient http.Client
 var w3sHttpClient http.Client
@@ -143,7 +143,7 @@ func main() {
 
 	logger.InitLogger()
 	ParseSettings()
-	ipfsutils.InitClient(
+	ipfsClient = ipfsutils.InitClient(
 		settingsObj.IpfsConfig.URL,
 		settingsObj.PayloadCommit.Concurrency,
 		settingsObj.IpfsConfig.IPFSRateLimiter,
