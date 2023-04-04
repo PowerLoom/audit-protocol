@@ -202,6 +202,19 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	// if lastReportedDagHeight is 0, genesis run should take care of it
 	if lastReportedDagHeight == 0 && !tillGenesis {
 		l.Debug("last reported dag height is 0, skipping dag verification")
+
+		if events, ok := d.eventMessagesMap[projectID]; ok {
+			events.mutex.Lock()
+			events.messages = append(events.messages, newBlocksAddedEvent)
+			events.mutex.Unlock()
+		} else {
+			d.eventMessagesMap[projectID] = &eventMessages{
+				messages: []*NewBlocksAddedEvent{newBlocksAddedEvent},
+				mutex:    sync.Mutex{},
+			}
+		}
+
+		return
 	}
 
 	// if lastReportedDagHeight is greater than endHeight verification is already done for this ranges
