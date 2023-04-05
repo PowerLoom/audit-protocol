@@ -714,6 +714,14 @@ func (d *DagVerifier) fillPayloadData(projectID string, dagBlockChain, dagChainW
 
 			block.Data = dagChainWithPayloadCIDs[index].Data
 
+			if block.Data == nil {
+				return
+			}
+
+			if strings.HasPrefix(block.Data.PayloadLink.Cid, "null") {
+				return
+			}
+
 			payload, err := d.getPayloadFromDiskCache(projectID, block.Data.PayloadLink.Cid)
 			if err != nil {
 				l.WithError(err).Error("failed to get payload from disk cache")
