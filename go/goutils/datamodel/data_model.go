@@ -243,6 +243,11 @@ type DagVerifierStatus struct {
 }
 
 type DagBlocksInsertedReq struct {
-	ProjectID          string           `json:"projectID"`
-	DagCIDInsertionMap map[string]int64 `json:"dagCIDInsertionMap"`
+	ProjectID          string                         `json:"projectID"`
+	DagCIDInsertionMap map[string]*DagCIDInsertionMap `json:"dagCIDInsertionMap"`
+}
+
+type DagCIDInsertionMap struct {
+	Height        int64  `json:"height"`
+	InsertionType string `json:"insertionType"`
 }

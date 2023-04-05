@@ -134,6 +134,8 @@ func DagBlocksInsertedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.WithField("reqBody", string(reqBody)).Info("received dag blocks inserted event")
+
 	// parse body
 	dagBlocksInserted := new(datamodel.DagBlocksInsertedReq)
 
@@ -286,14 +288,14 @@ type cidAndHeight struct {
 }
 
 // sortCIDsByHeight sorts the given map of cid to height and returns sorted blocks by height
-func sortCIDsByHeight(cidToHeightMap map[string]int64) []*cidAndHeight {
+func sortCIDsByHeight(cidToHeightMap map[string]*datamodel.DagCIDInsertionMap) []*cidAndHeight {
 
 	cidAndHeightList := make([]*cidAndHeight, 0, len(cidToHeightMap))
 
-	for cid, height := range cidToHeightMap {
+	for cid, m := range cidToHeightMap {
 		cidAndHeightList = append(cidAndHeightList, &cidAndHeight{
 			CID:    cid,
-			Height: height,
+			Height: m.Height,
 		})
 	}
 

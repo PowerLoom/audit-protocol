@@ -54,17 +54,18 @@ def v2_pair_data_unpack(prop):
 
 def link_contract_objs_of_v2_pairs_snapshot(recent_v2_pairs_snapshot, old_v2_pairs_snapshot):
     linked_contract_snapshot = {}
-    for new_contract_obj in recent_v2_pairs_snapshot:
-        linked_contract_snapshot[new_contract_obj["contractAddress"]] = {
-            "recent": new_contract_obj
-        }
+    if recent_v2_pairs_snapshot:
+        for new_contract_obj in recent_v2_pairs_snapshot:
+            linked_contract_snapshot[new_contract_obj["contractAddress"]] = {
+                "recent": new_contract_obj
+            }
 
-        for old_contract_obj in old_v2_pairs_snapshot:
-            if new_contract_obj["contractAddress"] == old_contract_obj["contractAddress"]:
-                linked_contract_snapshot[new_contract_obj["contractAddress"]]["old"] = old_contract_obj
+            if old_v2_pairs_snapshot:
+                for old_contract_obj in old_v2_pairs_snapshot:
+                    if new_contract_obj["contractAddress"] == old_contract_obj["contractAddress"]:
+                        linked_contract_snapshot[new_contract_obj["contractAddress"]]["old"] = old_contract_obj
 
-    return linked_contract_snapshot
-
+        return linked_contract_snapshot
 
 async def v2_pairs_daily_stats_snapshotter(
         async_httpx_client: AsyncClient,
@@ -148,13 +149,14 @@ async def v2_pairs_daily_stats_snapshotter(
             # fetch current and 24h old snapshot payload
             dag_block_latest, dag_block_24h = await asyncio.gather(
                 retrieve_payload_data(
-                    latest_pair_summary_timestamp_payload_cid,
-                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
-                    ipfs_read_client),
+                    payload_cid=latest_pair_summary_timestamp_payload_cid,
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
+                    ipfs_read_client=ipfs_read_client
+                ),
                 retrieve_payload_data(
-                    pair_snapshot_payload_cid_24h,
-                    redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
-                    ipfs_read_client),
+                    payload_cid=pair_snapshot_payload_cid_24h,
+                    project_id=redis_keys.get_uniswap_pairs_summary_snapshot_project_id(settings.pooler_namespace),
+                    ipfs_read_client=ipfs_read_client),
                 return_exceptions=True
             )
             # handle case of null payload in dag_block
