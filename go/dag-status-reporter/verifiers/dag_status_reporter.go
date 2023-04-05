@@ -560,27 +560,32 @@ func (d *DagVerifier) checkEpochsOutOfOrder(projectID string, chain []*datamodel
 
 	// check if the epochs are out_of_order/missing/skipped/discontinuous
 	for index := 0; index < len(chain)-1; index++ {
-		if chain[index].Data == nil {
+		currentIpfsBlock := chain[index]
+		nextIpfsBlock := chain[index+1]
+
+		if currentIpfsBlock.Data == nil || nextIpfsBlock.Data == nil {
 			continue
 		}
 
 		// check if the payload cid is null
-		if strings.HasPrefix(chain[index].Data.PayloadLink.Cid, "null") {
+		if strings.HasPrefix(currentIpfsBlock.Data.PayloadLink.Cid, "null") ||
+			strings.HasPrefix(nextIpfsBlock.Data.PayloadLink.Cid, "null") {
 			continue
 		}
 
 		// check if the blocks are continuous, then only it makes sense to check for epochs continuity
-		if chain[index].Height+1 != chain[index+1].Height {
+		if currentIpfsBlock.Height+1 != nextIpfsBlock.Height {
 			continue
 		}
 
 		// check if the chain height range is nil
-		if chain[index].Payload.ChainHeightRange == nil {
+		if currentIpfsBlock.Payload.ChainHeightRange == nil {
 			continue
 		}
 
-		currentIpfsBlock := chain[index]
-		nextIpfsBlock := chain[index+1]
+		if nextIpfsBlock.Payload.ChainHeightRange == nil {
+			continue
+		}
 
 		// check if the epochs are out of order
 		currentBlockChainRangeEnd := currentIpfsBlock.Payload.ChainHeightRange.End
