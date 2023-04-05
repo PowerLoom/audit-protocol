@@ -251,7 +251,7 @@ async def build_primary_indexes(ipfs_read_client: AsyncIPFSClient, httpx_client:
     # project ID -> {"series": ['24h', '7d']}
     registered_projects = await writer_redis_conn.hgetall(
         redis_keys.get_projects_registered_for_cache_indexing_key_with_namespace(settings.pooler_namespace)
-        )
+    )
     sliding_cacher_logger.debug('Got %d registered projects for indexing', len(registered_projects))
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
@@ -282,9 +282,9 @@ async def build_primary_indexes(ipfs_read_client: AsyncIPFSClient, httpx_client:
         sliding_cacher_logger.error("Can\'t find epoch end for projects: %s", non_indexable_projects)
         slack_alert_json = {
             'severity': 'MEDIUM',   
-            'Service': 'PrimaryIndexBuilder',
-            'errorDetails': f'\nEpoch end or DAG block height not found for projects: \n\n{non_indexable_projects}\n'
-                            f'Indexable projects and DAG head block heights found: \n\n{indexable_projects_to_dag_heights}'
+            'Service': f'PrimaryIndexBuilder-INSTANCE-{settings.instance_id}',
+            'errorDetails': f'\nEpoch end or DAG block height not found for projects: \n\n```\n{non_indexable_projects}\n```'
+                            f'Indexable projects and DAG head block heights found: \n\n```\n{indexable_projects_to_dag_heights}\n```'
         }
         # send slack alert
         try:
@@ -333,11 +333,10 @@ async def periodic_retrieval():
             common_epoch_end = await build_primary_indexes(ipfs_read_client=ipfs_read_client, httpx_client=async_httpx_client)
             if common_epoch_end:
                 try:
-                    await asyncio.gather(
-                        v2_pairs_data(async_httpx_client, common_epoch_end, ipfs_write_client, ipfs_read_client),
-                        v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
-                        asyncio.sleep(90),
-                    )
+                    await v2_pairs_data(async_httpx_client, common_epoch_end, ipfs_write_client, ipfs_read_client)
+                    # daily stats snapshotting should proceed only after v2 pairs data is aggregated
+                    await v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn)
+                    await asyncio.sleep(90)
                 except Exception as e:
                     sliding_cacher_logger.error('Error in uniswap summary aggregation: ')
                     sliding_cacher_logger.error(e, exc_info=True)

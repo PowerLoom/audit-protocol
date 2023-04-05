@@ -95,17 +95,18 @@ async def save_event_data(event_data: DAGFinalizerCallback, pending_tx_set_entry
 async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
     dag = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
     if dag is None:
-        logger.info("Failed to read dag-block with CID %s for project %s from local cache ",
+        logger.info("Failed to read DAG block with CID %s for project %s from local cache ",
         dag_cid,project_id)
-        try:
-            dag = await ipfs_read_client.dag.get(dag_cid)
-        except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as err:
-            return None
-        else:
-            dag = dag.as_json()
+        # try:
+        # let exceptions be propagated to the caller
+        dag = await ipfs_read_client.dag.get(dag_cid)
+        # except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as err:
+        # return None
+        # else:
+        write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", str(dag), logger)
+        return dag.as_json()
     else:
-        dag = json.loads(dag)
-    return dag
+        return json.loads(dag)
 
 async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncIPFSClient):
     dag_json = dag_json.encode('utf-8')
@@ -114,15 +115,8 @@ async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncI
     try:
         write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", dag_json, logger )
     except Exception as exc:
-        logger.error("Failed to write dag-block %s for project %s to local cache due to exception %s",
-        dag_json,project_id, exc, exc_info=True)
-
+        logger.error("Failed to write DAG block %s for project %s to local cache due to exception %s", dag_json,project_id, exc, exc_info=True)
     return dag_cid
-
-
-async def get_payload(payload_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
-    """ Given the payload cid, retrieve the payload. Payloads are also DAG blocks """
-    return await get_dag_block(payload_cid, project_id, ipfs_read_client)
 
 
 # TODO: exception handling around dag block creation failures

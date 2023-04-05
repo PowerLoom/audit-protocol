@@ -725,9 +725,9 @@ async def process_pairs_trade_volume_and_reserves(
                 if unqualified_sliding_window_blocks_back_chain_24h:
                     slack_alert_msg = {
                         'severity': 'MEDIUM',
-                        'Service': 'TradeVolumeProcessor',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
                         'errorDetails': f'\nFound unqualified blocks in sliding window back chain 24h for project {project_id_trade_volume} '
-                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_24h"]+1} to {tail_marker_24h}.\n\n```{unqualified_sliding_window_blocks_back_chain_24h}```' 
+                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_24h"]} to {tail_marker_24h}.\n\n```\n{unqualified_sliding_window_blocks_back_chain_24h}\n```' 
                     }
                     try:
                         await httpx_client.post(
@@ -738,14 +738,14 @@ async def process_pairs_trade_volume_and_reserves(
                         logger.error(
                             'Failed to send slack alert for unqualified blocks in sliding window back chain 24h for project %s while adjusting tail from %s - %s: %s',
                             project_id_trade_volume,
-                            cached_trade_volume_data['processed_tail_marker_24h'] + 1, tail_marker_24h,
+                            cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h,
                             e
                         )
                     logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_back_volume_24h:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_back_chain_24h)
                 logger.info(
                     'Calculated sliding window back volume 24h for project %s, while adjusting tail from %s - %s: %s',
-                    project_id_trade_volume, cached_trade_volume_data['processed_tail_marker_24h'] + 1, tail_marker_24h, sliding_window_back_volume_24h
+                    project_id_trade_volume, cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h, sliding_window_back_volume_24h
                     
                 )
                 cached_trade_volume_data["aggregated_volume_24h"] -= sliding_window_back_volume_24h.total_volume
@@ -761,9 +761,9 @@ async def process_pairs_trade_volume_and_reserves(
                 if unqualified_sliding_window_blocks_front_chain_24h:
                     slack_alert_msg = {
                         'severity': 'MEDIUM',
-                        'Service': 'TradeVolumeProcessor',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
                         'errorDetails': f'\nFound unqualified blocks in sliding window front chain 24h for project {project_id_trade_volume} '
-                                        f'while adjusting tail from {cached_trade_volume_data["processed_head_marker_24h"]+1} to {head_marker_24h}\n\n```{unqualified_sliding_window_blocks_front_chain_24h}```' 
+                                        f'while adjusting head from {cached_trade_volume_data["processed_head_marker_24h"]} to {head_marker_24h}\n\n```\n{unqualified_sliding_window_blocks_front_chain_24h}\n```' 
                     }
                     try:
                         await httpx_client.post(
@@ -774,15 +774,14 @@ async def process_pairs_trade_volume_and_reserves(
                         logger.error(
                             'Failed to send slack alert for unqualified blocks in sliding window front chain 24h for project %s while adjusting head from %s - %s: %s',
                             project_id_trade_volume,
-                            cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h,
+                            cached_trade_volume_data['processed_head_marker_24h'], head_marker_24h,
                             e
                         )
                     logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_front_volume_24h:PairTradeVolume =  calculate_pair_trade_volume(qualified_sliding_window_blocks_front_chain_24h)
                 logger.info(
                     'Calculated sliding window front volume 24h for project %s, while adjusting head from %s - %s: %s',
-                    project_id_trade_volume, cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h, sliding_window_front_volume_24h
-                    
+                    project_id_trade_volume, cached_trade_volume_data['processed_head_marker_24h'], head_marker_24h, sliding_window_front_volume_24h                    
                 )
                 cached_trade_volume_data["aggregated_volume_24h"] += sliding_window_front_volume_24h.total_volume
                 cached_trade_volume_data["aggregated_fees_24h"] += sliding_window_front_volume_24h.fees
@@ -803,9 +802,9 @@ async def process_pairs_trade_volume_and_reserves(
                 if unqualified_sliding_window_blocks_back_chain_7d:
                     slack_alert_msg = {
                         'severity': 'MEDIUM',
-                        'Service': 'TradeVolumeProcessor',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
                         'errorDetails': f'\nFound unqualified blocks in sliding window back chain 7d for project {project_id_trade_volume} '
-                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_7d"]+1} to {tail_marker_7d}\n\n```{unqualified_sliding_window_blocks_back_chain_7d}```' 
+                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_7d"]} to {tail_marker_7d}\n\n```\n{unqualified_sliding_window_blocks_back_chain_7d}\n```' 
                     }
                     try:
                         await httpx_client.post(
@@ -816,14 +815,14 @@ async def process_pairs_trade_volume_and_reserves(
                         logger.error(
                             'Failed to send slack alert for unqualified blocks in sliding window back chain 7d for project %s while adjusting tail from %s - %s: %s',
                             project_id_trade_volume,
-                            cached_trade_volume_data['processed_tail_marker_7d'] + 1, tail_marker_7d,
+                            cached_trade_volume_data['processed_tail_marker_7d'], tail_marker_7d,
                             e
                         )
                     logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_back_volume_7d:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_back_chain_7d)
                 logger.info(
                     'Calculated sliding window back volume 7d for project %s, while adjusting tail from %s - %s: %s',
-                    project_id_trade_volume, cached_trade_volume_data['processed_tail_marker_7d'] + 1, tail_marker_7d, sliding_window_back_volume_7d
+                    project_id_trade_volume, cached_trade_volume_data['processed_tail_marker_7d'], tail_marker_7d, sliding_window_back_volume_7d
                 )
                 cached_trade_volume_data["aggregated_volume_7d"] -= sliding_window_back_volume_7d.total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] -= sliding_window_back_volume_7d.token0_volume
@@ -837,9 +836,9 @@ async def process_pairs_trade_volume_and_reserves(
                 if unqualified_sliding_window_blocks_front_chain_7d:
                     slack_alert_msg = {
                         'severity': 'MEDIUM',
-                        'Service': 'TradeVolumeProcessor',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
                         'errorDetails': f'\nFound unqualified blocks in sliding window front chain 7d for project {project_id_trade_volume} '
-                                        f'while adjusting head from {cached_trade_volume_data["processed_head_marker_7d"]+1} to {head_marker_7d}\n\n```{unqualified_sliding_window_blocks_front_chain_7d}```' 
+                                        f'while adjusting head from {cached_trade_volume_data["processed_head_marker_7d"]} to {head_marker_7d}\n\n```\n{unqualified_sliding_window_blocks_front_chain_7d}\n```' 
                     }
                     try:
                         await httpx_client.post(
@@ -850,14 +849,14 @@ async def process_pairs_trade_volume_and_reserves(
                         logger.error(
                             'Failed to send slack alert for unqualified blocks in sliding window front chain 7d for project %s while adjusting head from %s - %s: %s',
                             project_id_trade_volume,
-                            cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d,
+                            cached_trade_volume_data['processed_head_marker_7d'], head_marker_7d,
                             e
                         )
                     logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_front_volume_7d:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_front_chain_7d)
                 logger.info(
                     'Calculated sliding window front volume 7d for project %s, while adjusting head from %s - %s: %s',
-                    project_id_trade_volume, cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d, sliding_window_front_volume_7d
+                    project_id_trade_volume, cached_trade_volume_data['processed_head_marker_7d'], head_marker_7d, sliding_window_front_volume_7d
                 )
                 cached_trade_volume_data["aggregated_volume_7d"] += sliding_window_front_volume_7d.total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] += sliding_window_front_volume_7d.token0_volume
