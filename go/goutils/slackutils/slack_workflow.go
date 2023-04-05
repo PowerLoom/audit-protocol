@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"time"
 
@@ -65,18 +65,17 @@ func NotifySlackWorkflow(reportData string, severity string, service string) err
 		}
 		req.Header.Add("Content-Type", "application/json")
 		req.Header.Add("accept", "application/json")
-		log.Debugf("Sending Req with params %+v to Slack Webhook URL %s.",
-			slackReq, reqURL)
+		log.Debugf("Sending Req with params to Slack Webhook URL %s.", reqURL)
 		res, err := SlackClient.Do(req)
 		if err != nil {
-			log.Errorf("Failed to send request %+v towards Slack Webhook URL %s with error %+v",
+			log.WithField("req", slackReq).Errorf("Failed to send request %+v towards Slack Webhook URL %s with error %+v",
 				req, reqURL, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		defer res.Body.Close()
 		var resp SlackResp
-		respBody, err := ioutil.ReadAll(res.Body)
+		respBody, err := io.ReadAll(res.Body)
 		if err != nil {
 			log.Errorf("Failed to read response body from Slack Webhook with error %+v",
 				err)

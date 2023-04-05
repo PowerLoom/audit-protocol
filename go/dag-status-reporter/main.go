@@ -106,18 +106,18 @@ func main() {
 	}()
 
 	if settingsObj.DagVerifierSettings.PruningVerification {
-		//pruningVerifier, err := verifiers.InitPruningVerifier()
-		//if err != nil {
+		// pruningVerifier, err := verifiers.InitPruningVerifier()
+		// if err != nil {
 		//	log.Error("failed to initialize the pruning verifier", err)
 		//
 		//	return
-		//}
+		// }
 		//
-		//wg.Add(1)
-		//go func() {
+		// wg.Add(1)
+		// go func() {
 		//	defer wg.Done()
 		//	pruningVerifier.Run()
-		//}()
+		// }()
 	}
 
 	wg.Wait()

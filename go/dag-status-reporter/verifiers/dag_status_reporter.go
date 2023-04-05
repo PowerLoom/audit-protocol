@@ -215,6 +215,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	}
 
 	l.Debug("getting dag cids")
+
 	dagBlockChain, err := d.redisCache.GetDagChainCIDs(context.Background(), projectID, startHeight, endHeight)
 	if err != nil {
 		l.WithError(err).Error("failed to get dag chain cids for verification")
@@ -223,6 +224,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	}
 
 	l.Debug("getting payload cids")
+
 	dagChainWithPayloadCIDs, err := d.redisCache.GetPayloadCIDs(context.Background(), projectID, startHeight, endHeight)
 	if err != nil {
 		l.WithError(err).Error("failed to get payload cids")
@@ -231,8 +233,14 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	}
 
 	defer func(projectID string, endHeight string) {
-		lastHeight, _ := strconv.ParseInt(endHeight, 10, 64)
+		if len(dagBlockChain) < 2 {
+			return
+		}
+
+		lastHeight := dagBlockChain[len(dagBlockChain)-1].Height
+
 		d.updateStatusReport(projectID, lastHeight)
+
 		l.Debug("dag verifier finished")
 	}(projectID, endHeight)
 
@@ -315,8 +323,6 @@ func (d *DagVerifier) GenesisRun() {
 		swg.Add()
 
 		go func(projectID string) {
-			swg.Add()
-
 			l := log.WithField("projectID", projectID)
 
 			l.Debug("genesis run started")
