@@ -125,6 +125,8 @@ func main() {
 
 // DagBlocksInsertedHandler handles the dag blocks inserted event callback
 func DagBlocksInsertedHandler(w http.ResponseWriter, r *http.Request) {
+	log.Info("received dag blocks inserted event")
+
 	// read body
 	reqBody, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -134,7 +136,7 @@ func DagBlocksInsertedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.WithField("reqBody", string(reqBody)).Info("received dag blocks inserted event")
+	log.WithField("reqBody", string(reqBody)).Debug("event request body")
 
 	// parse body
 	dagBlocksInserted := new(datamodel.DagBlocksInsertedReq)

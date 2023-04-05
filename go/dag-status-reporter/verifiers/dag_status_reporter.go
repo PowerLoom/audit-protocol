@@ -185,6 +185,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	lastReportedDagHeight := 0
 	var err error
 
+	l.Debug("getting last reported dag height from cache")
 	err = backoff.Retry(func() error {
 		lastReportedDagHeight, err = d.redisCache.GetLastReportedDagHeight(context.Background(), projectID)
 		if err != nil {
@@ -213,6 +214,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 		startHeight = strconv.Itoa(lastReportedDagHeight)
 	}
 
+	l.Debug("getting dag cids")
 	dagBlockChain, err := d.redisCache.GetDagChainCIDs(context.Background(), projectID, startHeight, endHeight)
 	if err != nil {
 		l.WithError(err).Error("failed to get dag chain cids for verification")
@@ -220,6 +222,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 		return
 	}
 
+	l.Debug("getting payload cids")
 	dagChainWithPayloadCIDs, err := d.redisCache.GetPayloadCIDs(context.Background(), projectID, startHeight, endHeight)
 	if err != nil {
 		l.WithError(err).Error("failed to get payload cids")
@@ -230,6 +233,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	defer func(projectID string, endHeight string) {
 		lastHeight, _ := strconv.ParseInt(endHeight, 10, 64)
 		d.updateStatusReport(projectID, lastHeight)
+		l.Debug("dag verifier finished")
 	}(projectID, endHeight)
 
 	// this is unlikely to happen but needs to be verified
@@ -275,9 +279,11 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	}
 
 	// check for null payload
+	l.Debug("checking for null payloads")
 	d.checkNullPayload(projectID, dagBlockChain)
 
 	// check for blocks out of order
+	l.Debug("checking for blocks out of order")
 	err = d.checkBlocksOutOfOrder(projectID, dagBlockChain)
 	if err != nil {
 		l.WithError(err).Error("error checking blocks out of order")
@@ -286,11 +292,14 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	}
 
 	// check for epoch skipped
+	l.Debug("checking for epoch skipped/missed")
 	d.checkEpochsOutOfOrder(projectID, dagBlockChain)
 }
 
 // GenesisRun runs the dag verifier from genesis block to the latest block for all the projects
 func (d *DagVerifier) GenesisRun() {
+	log.Debug("genesis run started for all projects")
+
 	// get all the projects
 	log.Debug("getting all the projects")
 
@@ -310,9 +319,11 @@ func (d *DagVerifier) GenesisRun() {
 
 			l := log.WithField("projectID", projectID)
 
+			l.Debug("genesis run started")
 			// get last verified dag height from cache
 			lastReportedDagHeight := 0
 
+			l.Debug("getting last reported dag height from cache")
 			err = backoff.Retry(func() error {
 				lastReportedDagHeight, err = d.redisCache.GetLastReportedDagHeight(context.Background(), projectID)
 				if err != nil {
@@ -342,13 +353,18 @@ func (d *DagVerifier) GenesisRun() {
 				StartHeight: "-inf",
 				EndHeight:   "+inf",
 			}, true)
+
+			l.Debug("finished genesis run")
 		}(projectID)
 	}
 
 	swg.Wait()
 
 	// run status report for cached projects when dag verifier was running
+	log.Debug("processing queued events for all projects")
 	d.runQueuedProjectEvents(projects)
+
+	log.Debug("genesis run finished for all projects")
 }
 
 // runQueuedProjectEvents runs the queued events for the projects
@@ -363,6 +379,8 @@ func (d *DagVerifier) runQueuedProjectEvents(projects []string) {
 
 			// run queued events one by one for the project
 			// mutex is used so that we will always get finalized queued events
+			l := log.WithField("projectID", projectID)
+			l.Debug("processing queued events for project")
 			for {
 				events, ok := d.eventMessagesMap[projectID]
 				if !ok {
@@ -385,12 +403,15 @@ func (d *DagVerifier) runQueuedProjectEvents(projects []string) {
 
 				events.mutex.Unlock()
 			}
+			l.Debug("finished processing queued events for project")
 
 			delete(d.genesisRunStatusMap, projectID)
 		}(projectID)
 	}
 
 	wg.Wait()
+
+	log.Debug("finished processing queued events for all projects")
 }
 
 // checkNullPayload checks if the payload cid is null
@@ -407,7 +428,7 @@ func (d *DagVerifier) checkNullPayload(projectID string, chain []*datamodel.DagB
 		}
 
 		if strings.HasPrefix(block.Data.PayloadLink.Cid, "null") {
-			l.Error("payload is null")
+			l.Error("payload is null/missing")
 
 			heightString := strconv.Itoa(int(block.Height))
 
@@ -639,6 +660,7 @@ func (d *DagVerifier) getDagBlockFromDiskCache(projectID, cid string) (*datamode
 func (d *DagVerifier) fillPayloadData(projectID string, dagBlockChain, dagChainWithPayloadCIDs []*datamodel.DagBlock) error {
 	l := log.WithField("projectID", projectID)
 
+	l.Debug("filling payload data for dag blocks")
 	swg := sizedwaitgroup.New(d.settings.DagVerifierSettings.Concurrency)
 
 	// getting payload data happens in separate goroutine of each block
@@ -743,6 +765,9 @@ func (d *DagVerifier) traverseArchivedDagSegments(projectID string, dagBlockChai
 	}
 
 	l := log.WithField("projectID", projectID)
+
+	l.Info("started traversing till genesis block")
+
 	fullChain := make([]*datamodel.DagBlock, dagBlockChain[len(dagBlockChain)-1].Height)
 
 	firstBlock := dagBlockChain[0]
@@ -904,6 +929,8 @@ func (d *DagVerifier) getDagBlock(projectID, blockCID string) (*datamodel.DagBlo
 
 func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64) {
 	l := log.WithField("projectID", projectID)
+
+	l.Debug("updating status report")
 
 	maxHeight := lastBlockHeight
 	if len(d.issues) != 0 {
