@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
@@ -288,13 +289,28 @@ func (r *RedisCache) GetProjectDagSegments(ctx context.Context, projectID string
 }
 
 func (r *RedisCache) StoreReportedIssues(ctx context.Context, issue *datamodel.IssueReport) error {
-	//TODO implement me
-	panic("implement me")
+	issueString, _ := json.Marshal(issue)
+
+	res := r.redisClient.ZAdd(ctx, redisutils.REDIS_KEY_ISSUES_REPORTED, &redis.Z{Score: float64(time.Now().UnixMicro()), Member: issueString})
+
+	if res.Err() != nil {
+		log.Errorf("Failed to add issue to redis due to error %+v", res.Err())
+
+		return res.Err()
+	}
+
+	return nil
 }
 
 func (r *RedisCache) RemoveOlderReportedIssues(ctx context.Context, tillTime int) error {
-	//TODO implement me
-	panic("implement me")
+	err := r.redisClient.ZRemRangeByScore(ctx, redisutils.REDIS_KEY_ISSUES_REPORTED, "0", fmt.Sprintf("%d", tillTime)).Err()
+	if err != nil {
+		log.WithError(err).Errorf("Failed to remove older issues from redis due")
+
+		return err
+	}
+
+	return nil
 }
 
 func (r *RedisCache) GetReportedIssues(ctx context.Context, projectID string) ([]*datamodel.IssueReport, error) {
