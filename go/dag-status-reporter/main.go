@@ -153,7 +153,7 @@ func DagBlocksInsertedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sortedCIDByHeight := sortCIDsByHeight(dagBlocksInserted.DagHeightCIDMap)
+	sortedCIDByHeight := sortCIDsByHeight(dagBlocksInserted.DagCIDInsertionMap)
 	if len(sortedCIDByHeight) == 0 {
 		log.Info("no dag blocks to verify")
 		w.WriteHeader(http.StatusBadRequest)
