@@ -149,6 +149,23 @@ class DAGFinalizationCallbackProcessor:
         )
         await writer_redis_conn.hset(redis_keys.get_project_dag_segments_key(project_id),
                                      new_project_dag_segment.endHeight, new_project_dag_segment.json())
+        async with self._rmq_channel_pool.acquire() as channel:
+            exchange = await channel.get_exchange(
+                        name=get_rabbitmq_core_exchange(),
+                        ensure=False
+                    )
+            message = Message(
+                json.dumps({'projectID': project_id}).encode('utf-8'),
+                delivery_mode=DeliveryMode.PERSISTENT,
+            )
+            await exchange.publish(
+                message=message,
+                routing_key=settings.rabbitmq.setup.queues['dag-pruning'].routing_key_prefix+'task'
+            )
+            self._logger.info(
+                'Published new segment callback for project ID %s to pruning service checker queue', 
+                project_id
+            )
 
     async def _in_order_block_creation_and_state_update(
             self,
