@@ -88,3 +88,4 @@ if `pruning_verification` is set to `true` in config/settings.
 - For consecutive dag blocks verify payload data
     - check if source chain is continuous (no gaps). nth block's source chain end height = (n-1)th block's source chain
       height - 1. Which also means checks for duplication of Epoch in payload data.
+
