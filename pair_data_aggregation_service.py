@@ -571,6 +571,7 @@ async def process_pairs_trade_volume_and_reserves(
                 cached_trade_volume_data['processed_head_marker_24h'], cached_trade_volume_data['processed_tail_marker_24h'],
                 project_id_trade_volume
             )
+            # TODO: condense window fetch logic
             # if 24h head moved ahead
             if head_marker_24h > cached_trade_volume_data["processed_head_marker_24h"]:
                 # front of the chain where head=current_head and tail=last_head
@@ -582,13 +583,13 @@ async def process_pairs_trade_volume_and_reserves(
                     ipfs_read_client
                 )
                 logger.debug(
-                    "Fetched 24h sliding window head: %s - %s | last seen range %s - %s | projectId: %s",
+                    "Fetched 24h sliding window head: %s - %s | last seen window range %s - %s | projectId: %s",
                     cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h,
                     cached_trade_volume_data['processed_head_marker_24h'], cached_trade_volume_data['processed_tail_marker_24h'],
                     project_id_trade_volume
                 )
             else:
-                logger.debug("24h head is at %d and did not move ahead for project %s | last seen range %s - %s",
+                logger.debug("24h head is at %d and did not move ahead for project %s | last seen window range %s - %s",
                     head_marker_24h,
                     cached_trade_volume_data["processed_head_marker_24h"],cached_trade_volume_data["processed_tail_marker_24h"],
                     project_id_trade_volume
@@ -606,13 +607,13 @@ async def process_pairs_trade_volume_and_reserves(
                     ipfs_read_client
                 )
                 logger.debug(
-                    "Fetched 24h sliding window tail: %s - %s | last seen range %s - %s | projectId: %s",
+                    "Fetched 24h sliding window tail: %s - %s | last seen window range %s - %s | projectId: %s",
                     cached_trade_volume_data['processed_tail_marker_24h'] + 1, tail_marker_24h,
                     cached_trade_volume_data['processed_head_marker_24h'], cached_trade_volume_data['processed_tail_marker_24h'],
                     project_id_trade_volume
                 )
             logger.debug(
-                "Attempting to fetch 7d sliding window, front: %s - %s, back: %s - %s | last seen range %s - %s | projectId: %s",
+                "Attempting to fetch 7d sliding window, front: %s - %s, back: %s - %s | last seen window range %s - %s | projectId: %s",
                 cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d,
                 cached_trade_volume_data['processed_tail_marker_7d']+1, tail_marker_7d,
                 cached_trade_volume_data['processed_head_marker_7d'], cached_trade_volume_data['processed_tail_marker_7d'],
@@ -629,13 +630,13 @@ async def process_pairs_trade_volume_and_reserves(
                     ipfs_read_client
                 )
                 logger.debug(
-                    "Fetched 7d sliding window head: %s - %s | last seen range %s - %s | projectId: %s",
+                    "Fetched 7d sliding window head: %s - %s | last seen window range %s - %s | projectId: %s",
                     cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d,
                     cached_trade_volume_data['processed_head_marker_7d'], cached_trade_volume_data['processed_tail_marker_7d'],
                     project_id_trade_volume
                 )
             else:
-                logger.debug("7d head is at %d and did not move ahead for project %s | last seen range %s - %s",
+                logger.debug("7d head is at %d and did not move ahead for project %s | last seen window range %s - %s",
                     head_marker_7d,
                     project_id_trade_volume,
                     cached_trade_volume_data["processed_head_marker_7d"], cached_trade_volume_data["processed_tail_marker_7d"]
@@ -652,7 +653,7 @@ async def process_pairs_trade_volume_and_reserves(
                     ipfs_read_client
                 )
                 logger.debug(
-                    "Fetched 7d sliding window tail: %s - %s | last seen range %s - %s | projectId: %s",
+                    "Fetched 7d sliding window tail: %s - %s | last seen window range %s - %s | projectId: %s",
                     cached_trade_volume_data['processed_tail_marker_7d'] + 1, tail_marker_7d,
                     cached_trade_volume_data['processed_head_marker_7d'], cached_trade_volume_data['processed_tail_marker_7d'],
                     project_id_trade_volume
@@ -756,8 +757,8 @@ async def process_pairs_trade_volume_and_reserves(
                 cached_trade_volume_data["aggregated_token1_volume_usd_24h"] -= sliding_window_back_volume_24h.token1_volume_usd
 
             if sliding_window_front_chain_24h:
-                qualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_back_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
-                unqualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_back_chain_24h if x is None or x.get('data') is None or x['data'].get('payload') is None]
+                qualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_front_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+                unqualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_front_chain_24h if x is None or x.get('data') is None or x['data'].get('payload') is None]
                 if unqualified_sliding_window_blocks_front_chain_24h:
                     slack_alert_msg = {
                         'severity': 'MEDIUM',
