@@ -4,7 +4,9 @@ from web3 import Web3
 from httpx import AsyncClient
 from redis import asyncio as aioredis
 from async_ipfshttpclient.main import AsyncIPFSClient
+# TODO: replace with async web3 or rpc helper clients
 from gnosis.eth import EthereumClient
+from web3.types import BlockData
 from config import settings
 from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, DAGBlockRange, PairLiquidity, PairTradeVolume
 from exceptions import MissingIndexException
@@ -550,12 +552,12 @@ async def process_pairs_trade_volume_and_reserves(
             await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h_intact_payloads, pair_contract_address)
 
             cids_volume_24h: DAGBlockRange = DAGBlockRange(
-                head_block_cid= dag_chain_24h[0]['dagCid'],
-                tail_block_cid=dag_chain_24h[-1]['dagCid']
+                head_block_cid= dag_chain_24h[-1]['dagCid'],
+                tail_block_cid=dag_chain_24h[0]['dagCid']
             )
             cids_volume_7d: DAGBlockRange = DAGBlockRange(
-                head_block_cid= dag_chain_7d[0]['dagCid'],
-                tail_block_cid=dag_chain_7d[-1]['dagCid']
+                head_block_cid= dag_chain_7d[-1]['dagCid'],
+                tail_block_cid=dag_chain_7d[0]['dagCid']
                 )
             block_height_trade_volume = common_epoch_end
         else:
@@ -883,6 +885,8 @@ async def process_pairs_trade_volume_and_reserves(
             pair_trade_volume_7d.token0_volume_usd = cached_trade_volume_data['aggregated_token0_volume_usd_7d']
             pair_trade_volume_7d.token1_volume_usd = cached_trade_volume_data['aggregated_token1_volume_usd_7d']
 
+        max_trade_volume_block_details: BlockData = ethereum_client.w3.eth.get_block(block_height_trade_volume)
+        max_trade_volume_block_timestamp = max_trade_volume_block_details['timestamp']
         # TODO: create data model for sliding window data
         sliding_window_data = {
             "processed_tail_marker_24h": tail_marker_24h,
@@ -904,7 +908,8 @@ async def process_pairs_trade_volume_and_reserves(
             "aggregated_token1_volume_usd_7d": pair_trade_volume_7d.token1_volume_usd,
             "processed_block_height_total_reserve": pair_liquidity.block_height_total_reserve,
             "processed_block_height_trade_volume": block_height_trade_volume,
-            "processed_block_timestamp_total_reserve": pair_liquidity.block_timestamp_total_reserve,
+            # TODO: achieve logical parity between timestamps and block heights maintained for different data points of token reserves and trade volumes
+            "processed_block_timestamp_total_reserve": max_trade_volume_block_timestamp,
         }
         prepared_snapshot = liquidityProcessedData(
             contractAddress=pair_contract_address,
@@ -915,8 +920,8 @@ async def process_pairs_trade_volume_and_reserves(
             fees_24h=f"US${round(abs(pair_trade_volume_24h.fees)):,}",
             cid_volume_24h=cids_volume_24h,
             cid_volume_7d=cids_volume_7d,
-            block_height=pair_liquidity.block_height_total_reserve,
-            block_timestamp=pair_liquidity.block_timestamp_total_reserve,
+            block_height=block_height_trade_volume,
+            block_timestamp=max_trade_volume_block_timestamp,
             token0Liquidity=pair_liquidity.token0_liquidity,
             token1Liquidity=pair_liquidity.token1_liquidity,
             token0LiquidityUSD=pair_liquidity.token0_liquidity_usd,
