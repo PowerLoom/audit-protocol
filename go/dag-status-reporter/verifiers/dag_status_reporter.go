@@ -156,7 +156,6 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	projectID := newBlocksAddedEvent.ProjectID
 	startHeight := newBlocksAddedEvent.StartHeight
 	endHeight := newBlocksAddedEvent.EndHeight
-
 	d.issues[projectID] = make(map[string][]*datamodel.DagVerifierStatus)
 
 	l := log.WithField("projectID", projectID).
@@ -234,7 +233,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 		return
 	}
 
-	defer func(projectID string, endHeight string) {
+	defer func(projectID string) {
 		if len(dagBlockChain) < 2 {
 			return
 		}
@@ -244,7 +243,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 		d.updateStatusReport(projectID, lastHeight)
 
 		l.Debug("dag verifier finished")
-	}(projectID, endHeight)
+	}(projectID)
 
 	// this is unlikely to happen but needs to be verified
 	if len(dagChainWithPayloadCIDs) != len(dagBlockChain) {
@@ -968,6 +967,8 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 
 	maxHeight := lastBlockHeight
 	if len(d.issues[projectID]) != 0 {
+		updateLastReportedHeight := true
+
 		err := d.redisCache.UpdateDagVerificationStatus(context.Background(), projectID, d.issues[projectID])
 		if err != nil {
 			l.WithError(err).Error("failed to update verification status in cache")
@@ -982,12 +983,19 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 						maxHeight = status.BlockHeight
 					}
 				}
+
+				if status.IssueType == CIDAndPayloadCIDCountMismatch {
+					log.Info("CIDAndPayloadCIDCountMismatch issue if found not updating last reported height")
+					updateLastReportedHeight = false
+				}
 			}
 		}
 
-		err = d.redisCache.UpdateLastReportedDagHeight(context.Background(), projectID, int(maxHeight))
-		if err != nil {
-			l.WithError(err).Error("failed to update last reported dag height in cache")
+		if updateLastReportedHeight {
+			err = d.redisCache.UpdateLastReportedDagHeight(context.Background(), projectID, int(maxHeight))
+			if err != nil {
+				l.WithError(err).Error("failed to update last reported dag height in cache")
+			}
 		}
 
 		data, _ := json.Marshal(d.issues)
