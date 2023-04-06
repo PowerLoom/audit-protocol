@@ -11,7 +11,7 @@ from aio_pika.pool import Pool
 from typing import Optional, Dict, List
 from urllib.parse import urljoin
 from data_models import (
-    EpochStatusRequest, PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
+    DAGBlock, DAGInsertionMap, DAGInsertionNotification, DAGInsertionType, EpochStatusRequest, PayloadCommit, PendingTransaction, ProjectDAGChainSegmentMetadata, DAGFinalizerCallback, DAGFinalizerCBEventData,
     AuditRecordTxEventData, SnapshotterIssue, SnapshotterIssueSeverity
 )
 from itertools import filterfalse
@@ -106,6 +106,12 @@ class DAGFinalizationCallbackProcessor:
         self._logger.addHandler(stderr_handler)
         self._asyncio_lock_map: Dict[str, asyncio.Lock] = dict()
 
+    async def _send_dag_insertion_notification(self, notification_obj: DAGInsertionNotification):
+        await self._httpx_client.post(
+            url=urljoin(f'http://{settings.dag_verifier.host}:{settings.dag_verifier.port}', '/dagBlocksInserted'),
+            json=notification_obj.dict()
+        )
+
     async def _identify_prune_target(self, project_id, tentative_max_height):
         # should be triggered when finalized_height (mod) segment_size == 1
         writer_redis_conn: aioredis.Redis = self._writer_redis_pool
@@ -143,6 +149,23 @@ class DAGFinalizationCallbackProcessor:
         )
         await writer_redis_conn.hset(redis_keys.get_project_dag_segments_key(project_id),
                                      new_project_dag_segment.endHeight, new_project_dag_segment.json())
+        async with self._rmq_channel_pool.acquire() as channel:
+            exchange = await channel.get_exchange(
+                        name=get_rabbitmq_core_exchange(),
+                        ensure=False
+                    )
+            message = Message(
+                json.dumps({'projectID': project_id}).encode('utf-8'),
+                delivery_mode=DeliveryMode.PERSISTENT,
+            )
+            await exchange.publish(
+                message=message,
+                routing_key=settings.rabbitmq.setup.queues['dag-pruning'].routing_key_prefix+'task'
+            )
+            self._logger.info(
+                'Published new segment callback for project ID %s to pruning service checker queue', 
+                project_id
+            )
 
     async def _in_order_block_creation_and_state_update(
             self,
@@ -153,7 +176,7 @@ class DAGFinalizationCallbackProcessor:
             reader_redis_conn: aioredis.Redis,
             writer_redis_conn: aioredis.Redis,
             _httpx_client: AsyncClient
-    ):
+    ) -> List[DAGBlock]:
         blocks_finalized = list()
         project_id = dag_finalizer_callback_obj.event_data.projectId
         top_level_tentative_height_cb = dag_finalizer_callback_obj.event_data.tentativeBlockHeight
@@ -476,6 +499,15 @@ class DAGFinalizationCallbackProcessor:
                             post_finalization_pending_txs=all_pending_tx_entries, parent_cid_height_diff=1,
                             custom_logger_obj=custom_logger, reader_redis_conn=reader_redis_conn,
                             writer_redis_conn=writer_redis_conn, _httpx_client=self._httpx_client)
+                        height_insertion_map  = dict()
+                        for b in blocks_created:
+                            if b.height == finalized_block_height_project + 1:
+                                height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.healing)
+                            else:
+                                height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.pending_to_in_order)
+                        asyncio.ensure_future(self._send_dag_insertion_notification(
+                            notification_obj=DAGInsertionNotification(projectID=project_id, dagCIDInsertionMap=height_insertion_map)
+                        ))
                         custom_logger.info(
                             'Finished processing self healing DAG block insertion at height %s | '
                             'DAG blocks finalized in total: %s',
@@ -667,6 +699,15 @@ class DAGFinalizationCallbackProcessor:
                                 post_finalization_pending_txs=post_pending_tx_entries, parent_cid_height_diff=1,
                                 custom_logger_obj=custom_logger, reader_redis_conn=reader_redis_conn,
                                 writer_redis_conn=writer_redis_conn, _httpx_client=self._httpx_client)
+                            height_insertion_map  = dict()
+                            for b in blocks_created:
+                                if b.height in epochs_to_fetch.keys():
+                                    height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.healing)
+                                else:
+                                    height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.pending_to_in_order)
+                            asyncio.ensure_future(self._send_dag_insertion_notification(
+                                notification_obj=DAGInsertionNotification(projectID=project_id, dagCIDInsertionMap=height_insertion_map)
+                            ))
                             custom_logger.info(
                                 'Consensus Self Healing| Project %s | '
                                 'Finished processing self healing DAG block insertion beginning height %s | '
@@ -725,6 +766,15 @@ class DAGFinalizationCallbackProcessor:
                         all_pending_tx_entries
                     ), parent_cid_height_diff=1, custom_logger_obj=custom_logger, reader_redis_conn=reader_redis_conn,
                     writer_redis_conn=writer_redis_conn, _httpx_client=self._httpx_client)
+                height_insertion_map  = dict()
+                for b in blocks_created:
+                    if b.height == finalized_block_height_project + 1:
+                        height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.in_order)
+                    else:
+                        height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.pending_to_in_order)
+                asyncio.ensure_future(self._send_dag_insertion_notification(
+                    notification_obj=DAGInsertionNotification(projectID=project_id, dagCIDInsertionMap=height_insertion_map)
+                ))
                 custom_logger.info(
                     'Finished processing in order DAG block insertion at height %s | '
                     'DAG blocks finalized in total: %s',

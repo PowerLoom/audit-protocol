@@ -33,7 +33,7 @@ import (
 var ctx = context.Background()
 
 var redisClient *redis.Client
-var ipfsClient ipfsutils.IpfsClient
+var ipfsClient *ipfsutils.IpfsClient
 var txMgrHttpClient http.Client
 var dagFinalizerClient http.Client
 var w3sHttpClient http.Client
@@ -143,17 +143,18 @@ func main() {
 
 	logger.InitLogger()
 	ParseSettings()
-	ipfsClient.Init(
+	ipfsClient = ipfsutils.InitClient(
 		settingsObj.IpfsConfig.URL,
 		settingsObj.PayloadCommit.Concurrency,
 		settingsObj.IpfsConfig.IPFSRateLimiter,
 		settingsObj.IpfsConfig.Timeout)
+
 	redisClient = redisutils.InitRedisClient(
 		settingsObj.Redis.Host,
 		settingsObj.Redis.Port,
 		settingsObj.Redis.Db,
 		settingsObj.PayloadCommit.Concurrency,
-		settingsObj.Redis.Password)
+		settingsObj.Redis.Password, 0)
 
 	InitTxManagerClient()
 	InitDAGFinalizerCallbackClient()
@@ -497,8 +498,8 @@ func AddToPendingTxns(payloadCommit *datamodel.PayloadCommit, txHash string, req
 	return true
 }
 
-func ReadPayloadFromCache(projectID string, payloadCid string) (*datamodel.PayloadData, error) {
-	var payload datamodel.PayloadData
+func ReadPayloadFromCache(projectID string, payloadCid string) (*datamodel.DagPayload, error) {
+	var payload datamodel.DagPayload
 	log.Debugf("Fetching payloadCid %s from local Cache", payloadCid)
 	bytes, err := filecache.ReadFromCache(settingsObj.PayloadCachePath+"/", projectID, payloadCid)
 	if err != nil {

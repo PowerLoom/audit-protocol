@@ -276,6 +276,7 @@ async def create_dag_block(
         raise IPFSDAGCreationException from e
     else:
         logger.debug("DAG created: %s", dag)
+    dag.cid = dag_cid
     """ Update redis keys """
     block_height_key = redis_keys.get_block_height_key(project_id=project_id)
     _ = await writer_redis_conn.set(block_height_key, tentative_block_height)

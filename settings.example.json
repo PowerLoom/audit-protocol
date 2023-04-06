@@ -21,7 +21,8 @@
 		"port": 5672,
 		"setup": {
 			"core": {
-				"exchange": "audit-protocol-backend"
+				"exchange": "audit-protocol-backend",
+				"dlx": "audit-protocol-backend-dlx"
 			},
 			"queues": {
 				"commit-payloads": {
@@ -31,6 +32,10 @@
 				"dag-processing": {
 					"queue_name_prefix": "audit-protocol-dag-processing:",
 					"routing_key_prefix": "dag-processing:"
+				},
+				"dag-pruning": {
+					"queue_name_prefix": "audit-protocol-dag-pruning:",
+					"routing_key_prefix": "dag-pruning:"
 				}
 			}
 		}

@@ -174,6 +174,7 @@ class DAGBlockPayloadLinkedPath(BaseModel):
 
 
 class DAGBlock(BaseModel):
+    cid: Optional[str] = None
     height: int
     prevCid: Optional[Dict[str, str]]
     prevRoot: Optional[str] = None
@@ -195,6 +196,22 @@ class DAGFinalizerCallback(BaseModel):
     txHash: str
     requestID: str
     event_data: DAGFinalizerCBEventData
+
+
+class DAGInsertionType(str, Enum):
+    pending_to_in_order = 'PENDING_TO_IN_ORDER'
+    in_order = 'IN_ORDER'
+    healing = 'HEALING'
+
+
+class DAGInsertionMap(BaseModel):
+    height: int
+    insertionType: DAGInsertionType
+
+
+class DAGInsertionNotification(BaseModel):
+    projectID: str
+    dagCIDInsertionMap: Dict[str, DAGInsertionMap]  # DAG CID mapped to insertion height and type
 
 
 class uniswapPairsSnapshotZset(BaseModel):

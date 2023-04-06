@@ -26,14 +26,15 @@ func (s asInt) Less(i, j int) bool {
 	return iInt < jInt
 }
 
-func SortKeysAsNumber(unsortedMap *map[string]string) *[]string {
-
-	//Sort DAGSegments by their height and then process.
-	sortedKeys := make([]string, 0, len(*unsortedMap))
-	for k := range *unsortedMap {
+func SortKeysAsNumber(unsortedMap map[string]string) []string {
+	// Sort DAGSegments by their height and then process.
+	sortedKeys := make([]string, 0, len(unsortedMap))
+	for k := range unsortedMap {
 		sortedKeys = append(sortedKeys, k)
-		//log.Debugf("Key %s", k)
+		// log.Debugf("Key %s", k)
 	}
+
 	sort.Sort(asInt(sortedKeys))
-	return &sortedKeys
+
+	return sortedKeys
 }

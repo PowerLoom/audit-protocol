@@ -2,13 +2,15 @@ package slackutils
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 type SlackNotifyReq struct {
@@ -27,20 +29,26 @@ type SlackResp struct {
 
 var SlackClient *http.Client
 var slackNotifyURL string
+var rateLimit *rate.Limiter
 
 func InitSlackWorkFlowClient(url string) {
 	slackNotifyURL = url
 	SlackClient = &http.Client{
 		Timeout: 10 * time.Second,
 	}
+
+	rateLimit = rate.NewLimiter(1, 1)
 }
 
 func NotifySlackWorkflow(reportData string, severity string, service string) error {
+	_ = rateLimit.Wait(context.Background())
 
 	reqURL := slackNotifyURL
+
 	if reqURL == "" {
 		return nil
 	}
+
 	var slackReq SlackNotifyReq
 
 	slackReq.Data = reportData
@@ -65,18 +73,17 @@ func NotifySlackWorkflow(reportData string, severity string, service string) err
 		}
 		req.Header.Add("Content-Type", "application/json")
 		req.Header.Add("accept", "application/json")
-		log.Debugf("Sending Req with params %+v to Slack Webhook URL %s.",
-			slackReq, reqURL)
+		log.Debugf("Sending Req with params to Slack Webhook URL %s.", reqURL)
 		res, err := SlackClient.Do(req)
 		if err != nil {
-			log.Errorf("Failed to send request %+v towards Slack Webhook URL %s with error %+v",
+			log.WithField("req", slackReq).Errorf("Failed to send request %+v towards Slack Webhook URL %s with error %+v",
 				req, reqURL, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		defer res.Body.Close()
 		var resp SlackResp
-		respBody, err := ioutil.ReadAll(res.Body)
+		respBody, err := io.ReadAll(res.Body)
 		if err != nil {
 			log.Errorf("Failed to read response body from Slack Webhook with error %+v",
 				err)

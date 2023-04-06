@@ -36,4 +36,4 @@ go/payload-commit/payload-commit
 go/go-tester/go-tester
 go/pruning-archival/pruning-archival
 go/token-aggregator/token-aggregator
-go/dag-verifier/dag-verifier
+go/dag-status-reporter/dag-status-reporter
