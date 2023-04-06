@@ -43,7 +43,7 @@ type (
 		diskCache  *caching.LocalDiskCache
 		settings   *settings.SettingsObj
 		ipfsClient *ipfsutils.IpfsClient
-		issues     map[string][]*datamodel.DagVerifierStatus
+		issues     map[string]map[string][]*datamodel.DagVerifierStatus
 		w3s        *w3storage.W3S
 
 		// in-memory event queue and status map
@@ -134,7 +134,7 @@ func InitDagVerifier() *DagVerifier {
 		diskCache:           diskCache,
 		settings:            settingsObj,
 		ipfsClient:          ipfsClient,
-		issues:              make(map[string][]*datamodel.DagVerifierStatus),
+		issues:              make(map[string]map[string][]*datamodel.DagVerifierStatus),
 		w3s:                 w3storageClient,
 		genesisRunStatusMap: make(map[string]bool),
 		eventMessagesMap:    make(map[string]*eventMessages),
@@ -156,6 +156,8 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 	projectID := newBlocksAddedEvent.ProjectID
 	startHeight := newBlocksAddedEvent.StartHeight
 	endHeight := newBlocksAddedEvent.EndHeight
+
+	d.issues[projectID] = make(map[string][]*datamodel.DagVerifierStatus)
 
 	l := log.WithField("projectID", projectID).
 		WithField("startHeight", startHeight).
@@ -250,7 +252,7 @@ func (d *DagVerifier) Run(newBlocksAddedEvent *NewBlocksAddedEvent, tillGenesis 
 
 		heightString := strconv.Itoa(int(dagBlockChain[0].Height))
 
-		d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+		d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 			Timestamp:   time.Now().UnixMicro(),
 			BlockHeight: dagBlockChain[0].Height,
 			IssueType:   CIDAndPayloadCIDCountMismatch,
@@ -438,7 +440,7 @@ func (d *DagVerifier) checkNullPayload(projectID string, chain []*datamodel.DagB
 
 			heightString := strconv.Itoa(int(block.Height))
 
-			d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+			d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 				IssueType:   PayloadMissing,
 				Timestamp:   time.Now().UnixMicro(),
 				BlockHeight: block.Height,
@@ -470,7 +472,7 @@ func (d *DagVerifier) checkBlocksOutOfOrder(projectID string, chain []*datamodel
 
 		heightString := strconv.Itoa(int(currentHeight))
 
-		d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+		d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 			Timestamp:   time.Now().UnixMicro(),
 			BlockHeight: currentHeight,
 			IssueType:   BlocksOutOfOrder,
@@ -490,7 +492,7 @@ func (d *DagVerifier) checkBlocksOutOfOrder(projectID string, chain []*datamodel
 
 				heightString = strconv.Itoa(int(currentHeight))
 
-				d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+				d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 					Timestamp:   time.Now().UnixMicro(),
 					BlockHeight: currentHeight,
 					IssueType:   InternalVerificationErrIssue,
@@ -509,7 +511,7 @@ func (d *DagVerifier) checkBlocksOutOfOrder(projectID string, chain []*datamodel
 
 				heightString = strconv.Itoa(int(currentHeight))
 
-				d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+				d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 					Timestamp:   time.Now().UnixMicro(),
 					BlockHeight: currentHeight,
 					IssueType:   InternalVerificationErrIssue,
@@ -526,7 +528,7 @@ func (d *DagVerifier) checkBlocksOutOfOrder(projectID string, chain []*datamodel
 
 			// check if blocks have same data cid
 			if dagBlock1.Data.PayloadLink.Cid == dagBlock2.Data.PayloadLink.Cid {
-				d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+				d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 					Timestamp:   time.Now().UnixMicro(),
 					BlockHeight: currentHeight,
 					IssueType:   DuplicateDagBlock,
@@ -534,7 +536,7 @@ func (d *DagVerifier) checkBlocksOutOfOrder(projectID string, chain []*datamodel
 				})
 			} else {
 				// else multiple blocks at same height
-				d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+				d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 					Timestamp:   time.Now().UnixMicro(),
 					BlockHeight: currentHeight,
 					IssueType:   MultipleBlocksAtSameHeight,
@@ -596,7 +598,7 @@ func (d *DagVerifier) checkEpochsOutOfOrder(projectID string, chain []*datamodel
 
 			heightString := strconv.Itoa(int(currentIpfsBlock.Height))
 
-			d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+			d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 				Timestamp:   time.Now().UnixMicro(),
 				BlockHeight: currentIpfsBlock.Height,
 				IssueType:   EpochSkipped,
@@ -702,7 +704,7 @@ func (d *DagVerifier) fillPayloadData(projectID string, dagBlockChain, dagChainW
 
 				heightString := strconv.Itoa(int(block.Height))
 
-				d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+				d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 					Timestamp:   time.Now().UnixMicro(),
 					BlockHeight: block.Height,
 					IssueType:   CidHeightsOutOfSyncInCache,
@@ -740,7 +742,7 @@ func (d *DagVerifier) fillPayloadData(projectID string, dagBlockChain, dagChainW
 
 					heightString := strconv.Itoa(int(dagBlockChain[index].Height))
 
-					d.issues[heightString] = append(d.issues[heightString], &datamodel.DagVerifierStatus{
+					d.issues[projectID][heightString] = append(d.issues[projectID][heightString], &datamodel.DagVerifierStatus{
 						Timestamp:   time.Now().UnixMicro(),
 						BlockHeight: dagBlockChain[index].Height,
 						IssueType:   InternalVerificationErrIssue,
@@ -965,14 +967,14 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 	l.Debug("updating status report")
 
 	maxHeight := lastBlockHeight
-	if len(d.issues) != 0 {
-		err := d.redisCache.UpdateDagVerificationStatus(context.Background(), projectID, d.issues)
+	if len(d.issues[projectID]) != 0 {
+		err := d.redisCache.UpdateDagVerificationStatus(context.Background(), projectID, d.issues[projectID])
 		if err != nil {
-			l.WithError(err).Error("failed to update last verified dag height in cache")
+			l.WithError(err).Error("failed to update verification status in cache")
 		}
 
 		// check if any issues are internal service errors
-		for _, statuses := range d.issues {
+		for _, statuses := range d.issues[projectID] {
 			// check if any issues are internal service errors
 			for _, status := range statuses {
 				if status.IssueType == InternalVerificationErrIssue {
@@ -985,7 +987,7 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 
 		err = d.redisCache.UpdateLastReportedDagHeight(context.Background(), projectID, int(maxHeight))
 		if err != nil {
-			l.WithError(err).Error("failed to update last verified dag height in cache")
+			l.WithError(err).Error("failed to update last reported dag height in cache")
 		}
 
 		data, _ := json.Marshal(d.issues)
@@ -999,5 +1001,4 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 			l.WithError(err).Error("failed to update last verified dag height in cache")
 		}
 	}
-
 }
