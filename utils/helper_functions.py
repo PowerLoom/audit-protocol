@@ -1,5 +1,7 @@
 import asyncio
 from functools import partial, wraps
+
+import httpx
 from utils import redis_keys
 from httpx import AsyncClient, Timeout, Limits
 from config import settings
@@ -22,11 +24,11 @@ stderr_handler.setLevel(logging.ERROR)
 logger.addHandler(stderr_handler)
 
 
-def raise_on_4xx_5xx(response):
+async def raise_on_4xx_5xx(response: httpx.Response):
     response.raise_for_status()
 
 
-def log_response(response):
+async def log_response(response):
     request = response.request
     logger.debug(f"Response event hook: {request.method} {request.url} - Status {response.status_code}")
 
