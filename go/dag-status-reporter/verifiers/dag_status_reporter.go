@@ -840,6 +840,19 @@ func (d *DagVerifier) traverseArchivedDagSegments(projectID string, dagBlockChai
 			}
 		}
 
+		if prevBlock.Data == nil {
+			l.Error("payload cid missing for the block")
+
+			return nil
+		}
+
+		if strings.HasPrefix(prevBlock.Data.PayloadLink.Cid, "null") {
+			fullChain[prevBlock.Height-1] = prevBlock
+			currentBlock = prevBlock
+
+			continue
+		}
+
 		payload, err := d.getPayloadFromDiskCache(projectID, prevBlock.Data.PayloadLink.Cid)
 		if err != nil {
 			l.WithError(err).Error("failed to get payload from disk cache")
@@ -978,10 +991,7 @@ func (d *DagVerifier) updateStatusReport(projectID string, lastBlockHeight int64
 		data, _ := json.Marshal(d.issues)
 
 		// notify on slack
-		err = slackutils.NotifySlackWorkflow(string(data), "High", "DagStatusReporter")
-		if err != nil {
-			l.WithError(err).Error("failed to notify slack")
-		}
+		go slackutils.NotifySlackWorkflow(string(data), "High", "DagStatusReporter")
 	} else {
 		// if no issues found, update last verified dag height in cache
 		err := d.redisCache.UpdateLastReportedDagHeight(context.Background(), projectID, int(maxHeight))

@@ -2,6 +2,7 @@ package slackutils
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 type SlackNotifyReq struct {
@@ -27,20 +29,26 @@ type SlackResp struct {
 
 var SlackClient *http.Client
 var slackNotifyURL string
+var rateLimit *rate.Limiter
 
 func InitSlackWorkFlowClient(url string) {
 	slackNotifyURL = url
 	SlackClient = &http.Client{
 		Timeout: 10 * time.Second,
 	}
+
+	rateLimit = rate.NewLimiter(1, 1)
 }
 
 func NotifySlackWorkflow(reportData string, severity string, service string) error {
+	_ = rateLimit.Wait(context.Background())
 
 	reqURL := slackNotifyURL
+
 	if reqURL == "" {
 		return nil
 	}
+
 	var slackReq SlackNotifyReq
 
 	slackReq.Data = reportData
