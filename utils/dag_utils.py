@@ -1,3 +1,4 @@
+import asyncio
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
@@ -203,11 +204,12 @@ async def create_dag_block_update_project_state(tx_hash, request_id, project_id,
     # retrieve callback URL for project ID
     cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
     if cb_url:
-        await send_commit_callback(httpx_session=httpx_client, url=cb_url, payload={
+        f = asyncio.ensure_future(send_commit_callback(httpx_session=httpx_client, url=cb_url, payload={
             'commitID': payload_commit_id,
             'projectID': project_id,
             'status': True
-        })
+        }))
+        f.add_done_callback(helper_functions.misc_notification_callback_result_handler)
     return _dag_cid, dag_block
 
 

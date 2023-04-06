@@ -1,3 +1,4 @@
+import asyncio
 from functools import partial, wraps
 from utils import redis_keys
 from httpx import AsyncClient, Timeout, Limits
@@ -19,6 +20,26 @@ stderr_handler = logging.StreamHandler(sys.stderr)
 stderr_handler.setFormatter(formatter)
 stderr_handler.setLevel(logging.ERROR)
 logger.addHandler(stderr_handler)
+
+
+def raise_on_4xx_5xx(response):
+    response.raise_for_status()
+
+
+def log_response(response):
+    request = response.request
+    logger.debug(f"Response event hook: {request.method} {request.url} - Status {response.status_code}")
+
+def misc_notification_callback_result_handler(fut: asyncio.Future):
+    try:
+        r = fut.result()
+    except Exception as e:
+        logger.info(
+            'Exception while sending callback or notification: %s', e, exc_info=True
+        )
+    else:
+        logger.debug('Callback or notification result: %s', r)
+
 
 async def get_tentative_block_height(
         project_id: str,
