@@ -77,7 +77,9 @@ func main() {
 		settingsObj.Redis.Port,
 		settingsObj.Redis.Db,
 		settingsObj.DagVerifierSettings.RedisPoolSize,
-		settingsObj.Redis.Password)
+		settingsObj.Redis.Password,
+		0,
+	)
 
 	InitAuditProtocolClient()
 	tokenList = make(map[string]*TokenData)

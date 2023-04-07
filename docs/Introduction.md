@@ -160,7 +160,7 @@ Refer to [94](https://github.com/PowerLoom/audit-protocol-private/issues/94) for
 
 **Call-flow of  pruning-archival service**
 
-![Call Flow](images/PruningArchival_CallFlow.png)
+![Call Flow](images/pruning-archival-sequence-dig.png)
 
 Code for this service is located at [pruning-archival](../go/pruning-archival)
 

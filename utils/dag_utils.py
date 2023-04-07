@@ -4,11 +4,9 @@ from utils import redis_keys
 from utils import helper_functions
 from data_models import PendingTransaction, DAGBlock, DAGFinalizerCallback, DAGBlockPayloadLinkedPath
 from tenacity import retry, wait_random_exponential, retry_if_exception_type, stop_after_attempt
-from typing import Tuple
+from typing import Optional, Tuple
 from httpx import AsyncClient
-import aiohttp
-import async_timeout
-import asyncio
+from httpx import _exceptions as httpx_exceptions
 import json
 import io
 import logging
@@ -95,22 +93,16 @@ async def save_event_data(event_data: DAGFinalizerCallback, pending_tx_set_entry
     )
 
 async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
-    e_obj = None
     dag = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
     if dag is None:
         logger.info("Failed to read dag-block with CID %s for project %s from local cache ",
         dag_cid,project_id)
         try:
-            async with async_timeout.timeout(settings.ipfs.timeout) as cm:
-                try:
-                    dag = await ipfs_read_client.dag.get(dag_cid)
-                    dag = dag.as_json()
-                except Exception as ex:
-                    e_obj = ex
-        except (asyncio.exceptions.CancelledError, asyncio.exceptions.TimeoutError) as err:
-            e_obj = err
-        if e_obj or cm.expired:
-            return {}
+            dag = await ipfs_read_client.dag.get(dag_cid)
+        except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as err:
+            return None
+        else:
+            dag = dag.as_json()
     else:
         dag = json.loads(dag)
     return dag
@@ -145,7 +137,7 @@ async def create_dag_block_update_project_state(tx_hash, request_id, project_id,
     if snapshot_cid.startswith('null'):
         logger.info("Creating an DAG block with null payload for project %s !!!!",
                     project_id)
-        snapshot_cid=""
+        snapshot_cid=None
     _dag_cid, dag_block = await create_dag_block(
         tx_hash=tx_hash,
         project_id=project_id,
@@ -236,7 +228,7 @@ async def create_dag_block(
         tx_hash: str,
         project_id: str,
         tentative_block_height: int,
-        payload_cid: str,
+        payload_cid: Optional[str],
         timestamp: int,
         reader_redis_conn: aioredis.Redis,
         writer_redis_conn: aioredis.Redis,
@@ -284,6 +276,7 @@ async def create_dag_block(
         raise IPFSDAGCreationException from e
     else:
         logger.debug("DAG created: %s", dag)
+    dag.cid = dag_cid
     """ Update redis keys """
     block_height_key = redis_keys.get_block_height_key(project_id=project_id)
     _ = await writer_redis_conn.set(block_height_key, tentative_block_height)

@@ -34,6 +34,8 @@ class RabbitMQQueueConfig(BaseModel):
 
 class RabbitMQCoreConfig(BaseModel):
     exchange: str
+    dlx: str
+
 
 class RabbitMQSetupConfig(BaseModel):
     core : RabbitMQCoreConfig
