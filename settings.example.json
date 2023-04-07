@@ -34,6 +34,10 @@
 				"dag-processing": {
 					"queue_name_prefix": "audit-protocol-dag-processing:",
 					"routing_key_prefix": "dag-processing:"
+				},
+				"dag-pruning": {
+					"queue_name_prefix": "audit-protocol-dag-pruning:",
+					"routing_key_prefix": "dag-pruning:"
 				}
 			}
 		}
