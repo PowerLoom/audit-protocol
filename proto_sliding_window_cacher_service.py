@@ -86,7 +86,7 @@ async def find_tail(
         sliding_cacher_logger.warning(
             "Seeking tail against head block DAG CID %s height %s for time period %s"
             "No payload found while fetching dag_block at height %s for projectId: %s. Skipping building of primary index",
-            head_block['data']['dag_cid'], head, time_period_ts,
+            head_block['data']['dagCid'], head, time_period_ts,
             current_height, project_id, exc_info=True
         )
         return None
@@ -110,7 +110,7 @@ async def find_tail(
             sliding_cacher_logger.warning(
                 "Seeking tail against head block DAG CID %s height %s for time period %s"
                 "Exception while fetching dag_block at height %s for projectId: %s. Error:%s",
-                head_block['data']['dag_cid'], head, time_period_ts,
+                head_block['data']['dagCid'], head, time_period_ts,
                 current_height, project_id, err, exc_info=True
             )
         current_height += 1
