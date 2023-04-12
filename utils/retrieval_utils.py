@@ -277,10 +277,9 @@ async def retrieve_payload_data(
         try:
             _payload_data = await ipfs_read_client.cat(payload_cid)
         except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as e:
-            retrieval_utils_logger.error("Failed to read payload with CID %s for project %s from IPFS ",
-            payload_cid,project_id)
-            retrieval_utils_logger.error(e)
-            payload_data = None
+            retrieval_utils_logger.error("Failed to read payload with CID %s for project %s from IPFS : %s",
+            payload_cid,project_id, e)
+            return None
         else:
             if not isinstance(_payload_data,str):
                 return _payload_data.decode('utf-8')
@@ -313,12 +312,12 @@ async def get_dag_block_by_height(
         dag_block['data'] = {'payload': None, 'cid': 'null'}
         if isinstance(e, httpx_exceptions.HTTPError) or isinstance(e, httpx_exceptions.StreamError):
             retrieval_utils_logger.error(
-            "Failed to read dag block with CID %s for project %s from IPFS because of IPFS read error %e | Assigned null payload to block structure: %s",
+            "Failed to read dag block with CID %s for project %s from IPFS because of IPFS read error %s | Assigned null payload to block structure: %s",
             dag_cid, project_id, e, dag_block
         )
         else:
             retrieval_utils_logger.error(
-                "Failed to read dag block with CID %s for project %s from IPFS because of exception %e | Assigned null payload to block structure: %s",
+                "Failed to read dag block with CID %s for project %s from IPFS because of exception %s | Assigned null payload to block structure: %s",
                 dag_cid, project_id, e, dag_block
             )
     dag_block["dagCid"] = dag_cid
