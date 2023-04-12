@@ -17,8 +17,8 @@ type SummaryProjectVerificationStatus struct {
 type DagChainReport struct {
 	InstanceId                  string                             `json:"instanceid"`
 	HostName                    string                             `json:"hostname"`
-	Severity                    string                             `json:"severity"`                               //HIGH,MEDIUM, LOW, CLEAR
-	ProjectsWithCacheIssueCount int                                `json:"projectsWithCacheIssuesCount,omitempty"` //Projects that have only issues in the cached data.
+	Severity                    string                             `json:"severity"`                               // HIGH,MEDIUM, LOW, CLEAR
+	ProjectsWithCacheIssueCount int                                `json:"projectsWithCacheIssuesCount,omitempty"` // Projects that have only issues in the cached data.
 	ProjectsTrackedCount        int                                `json:"projectsTrackedCount,omitempty"`
 	ProjectsWithIssuesCount     int                                `json:"projectsWithIssuesCount,omitempty"`
 	ProjectsWithStuckChainCount int                                `json:"projectsWithStuckChainCount,omitempty"`
@@ -41,7 +41,7 @@ type SlackResp struct {
 
 type DagChainIssue struct {
 	IssueType string `json:"issueType"`
-	//In case of missing blocks in chain or Gap
+	// In case of missing blocks in chain or Gap
 	MissingBlockHeightStart int64 `json:"missingBlockHeightStart"`
 	MissingBlockHeightEnd   int64 `json:"missingBlockHeightEnd"`
 	TimestampIdentified     int64 `json:"timestampIdentified"`
@@ -123,7 +123,7 @@ type PayloadCommit struct {
 	TentativeBlockHeight  int    `json:"tentativeBlockHeight"`
 	Resubmitted           bool   `json:"resubmitted"`
 	ResubmissionBlock     int    `json:"resubmissionBlock"` // corresponds to lastTouchedBlock in PendingTransaction model
-	Web3Storage           bool   `json:"web3Storage"`       //This flag indicates to store the payload in web3.storage instead of IPFS.
+	Web3Storage           bool   `json:"web3Storage"`       // This flag indicates to store the payload in web3.storage instead of IPFS.
 	SkipAnchorProof       bool   `json:"skipAnchorProof"`
 	ConsensusSubmissionTs int64  `json:"-"`
 	IsSummaryProject      bool   `json:"-"`
@@ -250,4 +250,19 @@ type DagBlocksInsertedReq struct {
 type DagCIDInsertionMap struct {
 	Height        int64  `json:"height"`
 	InsertionType string `json:"insertionType"`
+}
+
+type TokenPairMetadata struct {
+	Token0Name     string `json:"token0_name"`
+	Token0Symbol   string `json:"token0_symbol"`
+	Token0Decimals string `json:"token0_decimals"`
+	Token1Name     string `json:"token1_name"`
+	Token1Symbol   string `json:"token1_symbol"`
+	Token1Decimals string `json:"token1_decimals"`
+	PairSymbol     string `json:"pair_symbol"`
+}
+
+type TokenPairAddresses struct {
+	Token0Address string `json:"token0Addr"`
+	Token1Address string `json:"token1Addr"`
 }
