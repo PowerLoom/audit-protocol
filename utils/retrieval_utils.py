@@ -303,12 +303,24 @@ async def get_dag_block_by_height(
     if not dag_cid:
         return dict()
 
-    dag_block = await retrieve_block_data(
-        block_dag_cid=dag_cid, project_id=project_id,data_flag=1,
-        ipfs_read_client=ipfs_read_client
-    )
-
-    dag_block = dag_block if dag_block else dict()
+    try:
+        dag_block = await retrieve_block_data(
+            block_dag_cid=dag_cid, project_id=project_id,data_flag=1,
+            ipfs_read_client=ipfs_read_client
+        )
+    except Exception as e:
+        dag_block = dict()
+        dag_block['data'] = {'payload': None, 'cid': 'null'}
+        if isinstance(e, httpx_exceptions.HTTPError) or isinstance(e, httpx_exceptions.StreamError):
+            retrieval_utils_logger.error(
+            "Failed to read dag block with CID %s for project %s from IPFS because of IPFS read error %e | Assigned null payload to block structure: %s",
+            dag_cid, project_id, e, dag_block
+        )
+        else:
+            retrieval_utils_logger.error(
+                "Failed to read dag block with CID %s for project %s from IPFS because of exception %e | Assigned null payload to block structure: %s",
+                dag_cid, project_id, e, dag_block
+            )
     dag_block["dagCid"] = dag_cid
 
     return dag_block
