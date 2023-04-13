@@ -33,14 +33,12 @@ const pairSummaryProjectID string = "uniswap_V2PairsSummarySnapshot_%s"
 const dailyStatsSummaryProjectID string = "uniswap_V2DailyStatsSnapshot_%s"
 
 var lastSnapshotBlockHeight int64
+var auditProtocolBaseURL string
 
 type TokenDataRefs struct {
 	token0Ref *models.TokenData
 	token1Ref *models.TokenData
 }
-
-// relative path to audit-protocol
-var auditProtocolBaseURL string
 
 type TokenAggregator struct {
 	settingsObj *settings.SettingsObj
@@ -117,9 +115,11 @@ func (s *TokenAggregator) Run(pairContractAddress string) {
 
 	for {
 		log.Info("waiting for first Pairs Summary snapshot to be formed...")
+
 		pairsSummaryBlockHeight = s.redisCache.FetchPairsSummaryLatestBlockHeight(context.Background(), s.settingsObj.PoolerNamespace)
 		if pairsSummaryBlockHeight != 0 {
-			log.Infof("PairsSummary snapshot has been created at height %d", pairsSummaryBlockHeight)
+			log.Infof("pairsSummary snapshot has been created at height %d", pairsSummaryBlockHeight)
+
 			break
 		}
 
@@ -149,15 +149,17 @@ func (s *TokenAggregator) RegisterAggregatorCallbackKey() {
 		"callbackURL": fmt.Sprintf("http://localhost:%d/block_height_confirm_callback", s.settingsObj.TokenAggregatorSettings.Port),
 	})
 
-	tokenSummaryUrl := fmt.Sprintf("%s/%s/confirmations/callback", auditProtocolBaseURL, tokenSummaryProjectId)
-	pairSummaryUrl := fmt.Sprintf("%s/%s/confirmations/callback", auditProtocolBaseURL, pairSummaryProjectId)
-	dailyStatsUrl := fmt.Sprintf("%s/%s/confirmations/callback", auditProtocolBaseURL, dailyStatsSummaryProjectId)
+	tokenSummaryURL := fmt.Sprintf("%s/%s/confirmations/callback", auditProtocolBaseURL, tokenSummaryProjectId)
+	pairSummaryURL := fmt.Sprintf("%s/%s/confirmations/callback", auditProtocolBaseURL, pairSummaryProjectId)
+	dailyStatsURL := fmt.Sprintf("%s/%s/confirmations/callback", auditProtocolBaseURL, dailyStatsSummaryProjectId)
 
 	wg := new(sync.WaitGroup)
 	wg.Add(3)
-	go s.SetCallbackKeyInRedis(wg, tokenSummaryUrl, tokenSummaryProjectId, body)
-	go s.SetCallbackKeyInRedis(wg, pairSummaryUrl, pairSummaryProjectId, body)
-	go s.SetCallbackKeyInRedis(wg, dailyStatsUrl, dailyStatsSummaryProjectId, body)
+
+	go s.SetCallbackKeyInRedis(wg, tokenSummaryURL, tokenSummaryProjectId, body)
+	go s.SetCallbackKeyInRedis(wg, pairSummaryURL, pairSummaryProjectId, body)
+	go s.SetCallbackKeyInRedis(wg, dailyStatsURL, dailyStatsSummaryProjectId, body)
+
 	wg.Wait()
 }
 
@@ -188,21 +190,21 @@ func (s *TokenAggregator) SetCallbackKeyInRedis(wg *sync.WaitGroup, callbackUrl 
 
 // FetchTokensMetaData fetches token metadata from redis and fills it in the tokenList,
 func (s *TokenAggregator) FetchTokensMetaData() {
-	// wg := new(sync.WaitGroup)
+	wg := new(sync.WaitGroup)
 
 	for _, contract := range s.pairContracts {
-		// wg.Add(1)
+		wg.Add(1)
 		pairContractAddr := common.HexToAddress(contract).Hex()
-		// go func(pairContractAddr string) {
-		// 	defer wg.Done()
-		err := s.FetchAndFillTokenMetaData(pairContractAddr)
-		if err != nil {
-			log.WithField("address", pairContractAddr).WithError(err).Error("failed to fetch token metadata")
-		}
-		// }(pairContractAddr)
+		go func(pairContractAddr string) {
+			defer wg.Done()
+			err := s.FetchAndFillTokenMetaData(pairContractAddr)
+			if err != nil {
+				log.WithField("address", pairContractAddr).WithError(err).Error("failed to fetch token metadata")
+			}
+		}(pairContractAddr)
 	}
 
-	// wg.Wait()
+	wg.Wait()
 }
 
 // FetchAndFillTokenMetaData fetches token metadata from redis and fills it in the tokenList
@@ -269,8 +271,14 @@ func (s *TokenAggregator) FetchAndFillTokenMetaData(pairContractAddr string) err
 }
 
 func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
+	defer func() {
+		if err := recover(); err != nil {
+			log.WithField("recover", err).Error("recovered from panic")
+		}
+	}()
+
 	curBlockHeight := s.redisCache.FetchPairsSummaryLatestBlockHeight(context.Background(), s.settingsObj.PoolerNamespace)
-	dagChainProjectId := fmt.Sprintf(tokenSummaryProjectID, s.settingsObj.PoolerNamespace)
+	dagChainProjectID := fmt.Sprintf(tokenSummaryProjectID, s.settingsObj.PoolerNamespace)
 
 	if curBlockHeight <= lastSnapshotBlockHeight {
 		log.
@@ -295,9 +303,18 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	log.Debugf("collating tokenData at blockHeight %d", curBlockHeight)
 
 	for _, tokenPairProcessedData := range tokensPairData {
+		if tokenPairProcessedData == nil || tokenPairProcessedData.ContractAddress == "" {
+			continue
+		}
+
 		// TODO: Need to remove 0x from contractAddress saved as string.
-		token0Data := s.tokenPairMapping[common.HexToAddress(tokenPairProcessedData.ContractAddress).Hex()].token0Ref
-		token1Data := s.tokenPairMapping[common.HexToAddress(tokenPairProcessedData.ContractAddress).Hex()].token1Ref
+		ref, ok := s.tokenPairMapping[common.HexToAddress(tokenPairProcessedData.ContractAddress).Hex()]
+		if !ok {
+			continue
+		}
+
+		token0Data := ref.token0Ref
+		token1Data := ref.token1Ref
 
 		token0Data.Liquidity += tokenPairProcessedData.Token0Liquidity
 		token0Data.LiquidityUSD += tokenPairProcessedData.Token0LiquidityUSD
@@ -354,15 +371,16 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	for key, tokenData := range s.tokenList {
 		tokenData.Price, err = s.redisCache.FetchTokenPriceAtBlockHeight(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
 		if err != nil {
-			return err
+			delete(s.tokenList, key)
+
+			continue
 		}
 
 		if tokenData.Price != 0 {
-			// update TokenPrice in History Zset
+			// update token price in history zset
 			err = s.redisCache.UpdateTokenPriceHistoryInRedis(context.Background(), toTime, fromTime, tokenData, s.settingsObj.PoolerNamespace)
 			if err != nil {
-				// TODO: check if we need to return error here or continue with next token.
-				return err
+				continue
 			}
 
 			curTimeEpoch := float64(time.Now().Unix())
@@ -380,12 +398,10 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 				beginBlockHeight24h = priceHistory.BlockHeight
 				beginTimeStamp24h = priceHistory.Timestamp
 			}
-			// tokenList[key] = tokenData
 		} else {
 			// TODO: Should we create a snapshot if we don't have any tokenPrice at specified height?
 			log.Errorf("Price couldn't be retrieved for token %s with name %s at blockHeight %d hence removing token from the list.",
 				key, tokenData.Name, tokenData.BlockHeight)
-			// delete(tokenList, key)
 		}
 	}
 
@@ -405,7 +421,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	tokenSummarySnapshotMeta := new(models.TokenSummarySnapshotMeta)
 
 	err = backoff.Retry(func() error {
-		tokenSummarySnapshotMeta, err = s.WaitAndFetchBlockHeightStatus(dagChainProjectId, tentativeBlockHeight)
+		tokenSummarySnapshotMeta, err = s.WaitAndFetchBlockHeightStatus(dagChainProjectID, tentativeBlockHeight)
 
 		return err
 	}, backoff.WithMaxRetries(backoff.NewConstantBackOff(5*time.Second), 5))
@@ -442,6 +458,9 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	// prune TokenPrice ZSet as price already fetched for all tokens
 	for _, tokenData := range s.tokenList {
 		err = s.redisCache.PruneTokenPriceZSet(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
+		if err != nil {
+			log.WithError(err).Error("failed to prune price zset")
+		}
 	}
 
 	return nil
@@ -532,33 +551,6 @@ func (s *TokenAggregator) FetchAndUpdateStatusOfOlderSnapshots(projectId string)
 	return nil
 }
 
-// func (s *TokenAggregator) FetchTokenSummaryLatestBlockHeight() int64 {
-// 	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_TENTATIVE_HEIGHT, s.settingsObj.PoolerNamespace)
-// 	for retryCount := 0; retryCount < 3; retryCount++ {
-// 		res := redisClient.Get(ctx, key)
-// 		if res.Err() != nil {
-// 			if res.Err() == redis.Nil {
-// 				log.Debugf("Waiting for tentativeblock height key to be created for Token Summary project")
-// 				time.Sleep(time.Duration(retryInterval) * time.Second)
-// 				continue
-// 			}
-// 			log.Errorf("Could not fetch tentativeblock height Error %+v", res.Err())
-// 			time.Sleep(time.Duration(retryInterval) * time.Second)
-// 			continue
-// 		}
-//
-// 		tentativeHeight, err := strconv.Atoi(res.Val())
-// 		if err != nil {
-// 			log.Errorf("CRITICAL! Unable to extract tentativeHeight from redis result due to err %+v", err)
-// 			return 0
-// 		}
-//
-// 		log.Debugf("Latest tentative block height for TokenSummary project is : %d", tentativeHeight)
-// 		return int64(tentativeHeight)
-// 	}
-// 	return 0
-// }
-
 func (s *TokenAggregator) ResetTokenData() {
 	for _, tokenData := range s.tokenList {
 		tokenData.Liquidity = 0
@@ -569,181 +561,6 @@ func (s *TokenAggregator) ResetTokenData() {
 		tokenData.TradeVolumeUSD7d = 0
 	}
 }
-
-// func (s *TokenAggregator) CalculateAndFillPriceChange(fromTime float64, tokenData *models.TokenData) (*models.TokenPriceHistory, error) {
-// 	curTimeEpoch := float64(time.Now().Unix())
-// 	priceHistory, err := s.redisCache.FetchTokenPriceHistoryInRedis(context.Background(), fromTime, curTimeEpoch, tokenData.ContractAddress, s.settingsObj.PoolerNamespace)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-//
-// 	// key := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PRICE_HISTORY, s.settingsObj.PoolerNamespace, tokenData.ContractAddress)
-// 	//
-// 	// zRangeByScore := redisClient.ZRangeByScore(ctx, key, &redis.ZRangeBy{
-// 	// 	Min: fmt.Sprintf("%f", fromTime),
-// 	// 	Max: fmt.Sprintf("%f", curTimeEpoch),
-// 	// })
-// 	// if zRangeByScore.Err() != nil {
-// 	// 	log.Error("Could not fetch entries error: ", zRangeByScore.Err().Error(), "fromTime:", fromTime)
-// 	// 	return nil
-// 	// }
-// 	// // Fetch the oldest Value closest to 24h
-// 	// var tokenPriceHistoryEntry models.TokenPriceHistory
-// 	// err := json.Unmarshal([]byte(zRangeByScore.Val()[0]), &tokenPriceHistoryEntry)
-// 	// if err != nil {
-// 	// 	log.Error("Unable to decode value fetched from Zset...something wrong!!")
-// 	// 	return nil
-// 	// }
-// 	// TODO: Need to add validation if value is newer than x hours, should we still show as priceChange?
-// 	oldPrice := priceHistory.Price
-// 	tokenData.PriceChangePercent24h = (tokenData.Price - oldPrice) * 100 / tokenData.Price
-// 	return priceHistory
-// }
-
-// func (s *TokenAggregator) UpdateTokenPriceHistoryRedis(toTime float64, fromTime float64, tokenData *models.TokenData) {
-// 	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PRICE_HISTORY, s.settingsObj.PoolerNamespace, tokenData.ContractAddress)
-// 	var priceHistoryEntry = models.TokenPriceHistory{toTime, tokenData.Price, tokenData.BlockHeight}
-// 	val, err := json.Marshal(priceHistoryEntry)
-// 	if err != nil {
-// 		log.Error("Couldn't marshal json..something is really wrong with data.curTime:", toTime, " TokenData:", tokenData)
-// 		return
-// 	}
-// 	err = redisClient.ZAdd(ctx, key, &redis.Z{
-// 		Score:  float64(toTime),
-// 		Member: string(val),
-// 	}).Err()
-// 	if err != nil {
-// 		log.Error("Failed to add to redis ZSet, err:", err, " key :", key, ", Value:", val)
-// 	}
-// 	log.Debug("Updated TokenPriceHistory at Zset:", key, " with score:", toTime, ",val:", priceHistoryEntry)
-//
-// 	PrunePriceHistoryInRedis(key, fromTime)
-// }
-//
-// func (s *TokenAggregator) PrunePriceHistoryInRedis(key string, fromTime float64) {
-// 	// Remove any entries older than 1 hour from fromTime.
-// 	res := redisClient.ZRemRangeByScore(ctx, key, fmt.Sprintf("%f", 0.0),
-// 		fmt.Sprintf("%f", fromTime-60*60))
-// 	if res.Err() != nil {
-// 		log.Error("Pruning entries at key:", key, "failed with error:", res.Err().Error())
-// 	}
-// 	log.Debug("Pruning: Removed ", res.Val(), " entries in redis Zset at key:", key)
-// }
-
-// func (s *TokenAggregator) PruneTokenPriceZSet(tokenContractAddr string, blockHeight int64) {
-// 	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_BLOCK_HEIGHT_PRICE, s.settingsObj.PoolerNamespace, tokenContractAddr)
-// 	res := redisClient.ZRemRangeByScore(ctx,
-// 		redisKey,
-// 		"-inf",
-// 		fmt.Sprintf("%d", blockHeight))
-// 	if res.Err() != nil {
-// 		log.Error("Pruning entries at key:", redisKey, "failed with error:", res.Err().Error())
-// 	}
-// 	log.Debug("Pruning: Removed ", res.Val(), " entries in redis Zset at key:", redisKey)
-// }
-
-// func (s *TokenAggregator) FetchTokenPriceAtBlockHeight(tokenContractAddr string, blockHeight int64) float64 {
-// 	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_BLOCK_HEIGHT_PRICE, s.settingsObj.PoolerNamespace, tokenContractAddr)
-// 	type tokenPriceAtBlockHeight struct {
-// 		BlockHeight int     `json:"blockHeight"`
-// 		Price       float64 `json:"price"`
-// 	}
-// 	var tokenPriceAtHeight tokenPriceAtBlockHeight
-// 	tokenPriceAtHeight.Price = 0
-// 	for retryCount := 0; retryCount < 3; retryCount++ {
-// 		zRangeByScore := redisClient.ZRangeByScore(ctx, redisKey, &redis.ZRangeBy{
-// 			Min: fmt.Sprintf("%d", blockHeight),
-// 			Max: fmt.Sprintf("%d", blockHeight),
-// 		})
-// 		if zRangeByScore.Err() != nil {
-// 			log.Errorf("Failed to fetch tokenPrice for contract %s at blockHeight %d due to error %s, retrying %d",
-// 				tokenContractAddr, zRangeByScore.Err().Error(), blockHeight, retryCount)
-// 			time.Sleep(time.Duration(retryInterval) * time.Second)
-// 			continue
-// 		}
-// 		if len(zRangeByScore.Val()) == 0 {
-// 			log.Error("Could not fetch tokenPrice for contract ", tokenContractAddr, " at BlockHeight:", blockHeight, " and hence will be set to 0")
-// 			return tokenPriceAtHeight.Price
-// 		}
-//
-// 		err := json.Unmarshal([]byte(zRangeByScore.Val()[0]), &tokenPriceAtHeight)
-// 		if err != nil {
-// 			log.Fatalf("Unable to parse tokenPrice retrieved from redis key %s error is %+v", redisKey, err)
-// 			time.Sleep(time.Duration(retryInterval) * time.Second)
-// 			continue
-// 		}
-// 	}
-// 	log.Debugf("Fetched tokenPrice %f for tokenContract %s at blockHeight %d", tokenPriceAtHeight.Price, tokenContractAddr, blockHeight)
-// 	return tokenPriceAtHeight.Price
-// }
-
-// func (s *TokenAggregator) StoreTokensSummaryPayload(blockHeight int64) {
-// 	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOT_AT_BLOCKHEIGHT, s.settingsObj.PoolerNamespace, blockHeight)
-// 	payload := make([]*models.TokenData, len(s.tokenList))
-// 	var i int
-// 	for _, tokenData := range s.tokenList {
-// 		payload[i] = tokenData
-// 		i += 1
-// 	}
-//
-// 	tokenSummaryJson, err := json.Marshal(payload)
-// 	if err != nil {
-// 		log.Fatalf("Json marshal error %+v", err)
-// 		return
-// 	}
-//
-// 	res := r.redisClient.Set(ctx, key, string(tokenSummaryJson), 60*time.Minute) // TODO: Move to settings
-// 	if res.Err() != nil {
-// 		log.Errorf("Failed to add payload at blockHeight %d due to error %s, retrying %d", blockHeight, res.Err().Error(), retryCount)
-//
-// 	}
-// 	log.Debugf("Added payload at key %s", key)
-// }
-
-// func (s *TokenAggregator) StoreTokenSummaryCIDInSnapshotsZSet(ctx context.Context, blockHeight int64, poolerNamespace string, tokenSummarySnapshotMeta *models.TokenSummarySnapshotMeta) {
-// 	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOTS_ZSET, poolerNamespace)
-// 	ZsetMemberJson, err := json.Marshal(tokenSummarySnapshotMeta)
-// 	if err != nil {
-// 		log.Fatalf("Json marshal error %+v", err)
-// 		return
-// 	}
-// 	for retryCount := 0; retryCount < 3; retryCount++ {
-// 		err := redisClient.ZAdd(ctx, key, &redis.Z{
-// 			Score:  float64(blockHeight),
-// 			Member: ZsetMemberJson,
-// 		}).Err()
-// 		if err != nil {
-// 			log.Errorf("Failed to add payloadCID %s at blockHeight %d due to error %+v, retrying %d", tokenSummarySnapshotMeta.Cid, blockHeight, err, retryCount)
-// 			time.Sleep(time.Duration(retryInterval) * time.Second)
-// 			continue
-// 		}
-// 		log.Debugf("Added payloadCID %s at blockHeight %d successfully at key %s", tokenSummarySnapshotMeta.Cid, blockHeight, key)
-// 		break
-// 	}
-//
-// 	s.PruneTokenSummarySnapshotsZSet()
-// }
-//
-// func (s *TokenAggregator) PruneTokenSummarySnapshotsZSet(ctx context.Context, poolerNamespace string) error {
-// 	redisKey := fmt.Sprintf(redisutils.REDIS_KEY_TOKENS_SUMMARY_SNAPSHOTS_ZSET, poolerNamespace)
-// 	res := redisClient.ZCard(ctx, redisKey)
-// 	zsetLen := res.Val()
-// 	log.Debugf("ZSet length is %d", zsetLen)
-// 	if zsetLen > 20 {
-// 		for retryCount := 0; retryCount < 3; retryCount++ {
-// 			endRank := -1*(zsetLen-20) + 1
-// 			log.Debugf("Removing entries in ZSet from rank %d to rank %d", 0, endRank)
-// 			res = redisClient.ZRemRangeByRank(ctx, redisKey, 0, endRank)
-// 			if res.Err() != nil {
-// 				log.Error("Pruning entries at key:", redisKey, "failed with error:", res.Err().Error(), " , retrying ", retryCount)
-// 				time.Sleep(time.Duration(retryInterval) * time.Second)
-// 				continue
-// 			}
-// 			log.Debug("Pruning: Removed ", res.Val(), " entries in redis Zset at key:", redisKey)
-// 			break
-// 		}
-// 	}
-// }
 
 // CommitTokenSummaryPayload commits the token summary payload to the audit-protocol.
 func (s *TokenAggregator) CommitTokenSummaryPayload() error {
@@ -788,7 +605,7 @@ func (s *TokenAggregator) CommitTokenSummaryPayload() error {
 		log.WithError(err).Error("unable to read HTTP resp from audit-protocol for commit-payload")
 	}
 
-	log.WithField("respBody", body).Info("received response")
+	log.WithField("respBody", string(body)).Info("received response")
 
 	if resp.StatusCode != http.StatusOK {
 		errorResp := new(models.AuditProtocolErrorResp)
@@ -819,34 +636,6 @@ func (s *TokenAggregator) CommitTokenSummaryPayload() error {
 
 	return nil
 }
-
-// func (s *TokenAggregator) FetchPairSummarySnapshot(blockHeight int64) []models.TokenPairLiquidityProcessedData {
-// 	key := fmt.Sprintf(redisutils.REDIS_KEY_PAIRS_SUMMARY_SNAPSHOT_BLOCKHEIGHT, s.settingsObj.PoolerNamespace, blockHeight)
-// 	log.Debugf("Fetching latest PairSummary snapshot from redis key %s", key)
-// 	var pairsSummarySnapshot models.PairSummarySnapshot
-//
-// 	for retryCount := 0; retryCount < 3; retryCount++ {
-// 		res := redisClient.Get(ctx, key)
-// 		if res.Err() != nil {
-// 			if res.Err() == redis.Nil {
-// 				log.Errorf("Key %s not found in redis", key)
-// 				return nil
-// 			}
-// 			log.Errorf("Error: Could not fetch latest PairSummary snapshot from redis. Error %+v. Retrying %d", res.Err(), retryCount)
-// 			time.Sleep(time.Duration(retryInterval) * time.Second)
-// 			continue
-// 		}
-// 		res.Val()
-// 		log.Tracef("Rsp Body %s", res.Val())
-// 		if err := json.Unmarshal([]byte(res.Val()), &pairsSummarySnapshot); err != nil { // Parse []byte to the go struct pointer
-// 			log.Errorf("Can not unmarshal JSON due to error %+v", err)
-// 			continue
-// 		}
-// 		log.Debugf("Pairs Summary snapshot is : %+v", pairsSummarySnapshot)
-// 		return pairsSummarySnapshot.Data
-// 	}
-// 	return nil
-// }
 
 // WaitAndFetchBlockHeightStatus waits for the blockHeight to be committed to the audit-protocol and returns the status.
 func (s *TokenAggregator) WaitAndFetchBlockHeightStatus(projectID string, blockHeight int64) (*models.TokenSummarySnapshotMeta, error) {

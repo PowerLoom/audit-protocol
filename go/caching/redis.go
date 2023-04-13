@@ -381,6 +381,14 @@ func (r *RedisCache) FetchPairTokenAddresses(ctx context.Context, poolerNamespac
 	tokenContractAddresses, err := r.redisClient.HGetAll(ctx, redisKey).Result()
 	if err != nil {
 		log.WithField("key", redisKey).Error("failed to get PairContractTokensAddresses from redis")
+
+		return nil, err
+	}
+
+	if len(tokenContractAddresses) == 0 {
+		log.WithField("key", redisKey).Debug("no PairContractTokensAddresses found in redis")
+
+		return nil, errors.New("pair token contract addresses not found in redis")
 	}
 
 	log.WithField("key", redisKey).Debug("fetched PairContractTokensAddresses from redis")
@@ -482,7 +490,7 @@ func (r *RedisCache) FetchTokenPriceAtBlockHeight(ctx context.Context, tokenCont
 		log.WithError(err).Errorf("failed to fetch tokenPrice for contract %s at blockHeight %d",
 			tokenContractAddr, blockHeight)
 
-		return 0, err
+		return 0, errors.New("failed to fetch tokenPrice from redis")
 	}
 
 	err = json.Unmarshal([]byte(zRangeByScore[0]), tokenPriceAtHeight)
@@ -547,12 +555,11 @@ func (r *RedisCache) PrunePriceHistoryInRedis(ctx context.Context, key string, f
 }
 
 func (r *RedisCache) FetchTokenPriceHistoryInRedis(ctx context.Context, fromTime, toTime float64, contractAddress, poolerNamespace string) (*models.TokenPriceHistory, error) {
-	curTimeEpoch := float64(time.Now().Unix())
 	key := fmt.Sprintf(redisutils.REDIS_KEY_TOKEN_PRICE_HISTORY, poolerNamespace, contractAddress)
 
 	zRangeByScore, err := r.redisClient.ZRangeByScore(ctx, key, &redis.ZRangeBy{
 		Min: fmt.Sprintf("%f", fromTime),
-		Max: fmt.Sprintf("%f", curTimeEpoch),
+		Max: fmt.Sprintf("%f", toTime),
 	}).Result()
 	if err != nil {
 		log.WithError(err).
