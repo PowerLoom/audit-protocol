@@ -194,9 +194,12 @@ func (s *TokenAggregator) FetchTokensMetaData() {
 
 	for _, contract := range s.pairContracts {
 		wg.Add(1)
+
 		pairContractAddr := common.HexToAddress(contract).Hex()
+
 		go func(pairContractAddr string) {
 			defer wg.Done()
+
 			err := s.FetchAndFillTokenMetaData(pairContractAddr)
 			if err != nil {
 				log.WithField("address", pairContractAddr).WithError(err).Error("failed to fetch token metadata")
@@ -289,6 +292,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	}
 
 	var sourceBlockHeight int64
+
 	tokensPairData, err := s.redisCache.FetchPairSummarySnapshot(context.Background(), curBlockHeight, s.settingsObj.PoolerNamespace)
 	if err != nil {
 		return err
@@ -358,12 +362,6 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 
 	log.Debug("timeStamp for 1 day before is: ", fromTime)
 
-	// fetch lastTokenSummaryBlockHeight for the project
-	lastTokenSummaryBlockHeight, err := s.redisCache.FetchTokenSummaryLatestBlockHeight(context.Background(), s.settingsObj.PoolerNamespace)
-	if err != nil {
-		return err
-	}
-
 	// update tokenPrice
 	beginBlockHeight24h := 0
 	beginTimeStamp24h := 0.0
@@ -413,6 +411,12 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 
 		s.ResetTokenData()
 
+		return err
+	}
+
+	// fetch lastTokenSummaryBlockHeight for the project
+	lastTokenSummaryBlockHeight, err := s.redisCache.FetchTokenSummaryLatestBlockHeight(context.Background(), s.settingsObj.PoolerNamespace)
+	if err != nil {
 		return err
 	}
 
@@ -573,8 +577,10 @@ func (s *TokenAggregator) CommitTokenSummaryPayload() error {
 	request.SkipAnchorProof = s.settingsObj.ContractCallBackend.SkipSummaryProjectProof
 
 	var index int
+
 	for _, tokenData := range s.tokenList {
 		request.Payload.TokensData[index] = tokenData
+
 		index += 1
 	}
 
