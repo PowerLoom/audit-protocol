@@ -94,20 +94,19 @@ async def save_event_data(event_data: DAGFinalizerCallback, pending_tx_set_entry
     )
 
 async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
+    dag_ipfs_fetch = False
     dag = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
-    if dag is None:
-        logger.info("Failed to read DAG block with CID %s for project %s from local cache ",
-        dag_cid,project_id)
-        # try:
-        # let exceptions be propagated to the caller
-        dag = await ipfs_read_client.dag.get(dag_cid)
-        # except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as err:
-        # return None
-        # else:
-        write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", str(dag), logger)
-        return dag.as_json()
+    try:
+        dag_json = json.loads(dag)
+    except:
+        dag_ipfs_fetch = True
     else:
-        return json.loads(dag)
+        return dag_json
+    if dag_ipfs_fetch:
+        dag = await ipfs_read_client.dag.get(dag_cid)
+        # TODO: should be aiofiles
+        write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", str(dag).encode('utf-8'), logger)
+        return dag.as_json()
 
 async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncIPFSClient):
     dag_json = dag_json.encode('utf-8')

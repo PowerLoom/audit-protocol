@@ -281,6 +281,8 @@ async def retrieve_payload_data(
             payload_cid,project_id, e)
             return None
         else:
+            retrieval_utils_logger.info("Successfully read payload with CID %s for project %s from IPFS: %s ",
+            payload_cid,project_id, _payload_data)
             if not isinstance(_payload_data,str):
                 return _payload_data.decode('utf-8')
             else:
@@ -318,7 +320,7 @@ async def get_dag_block_by_height(
         else:
             retrieval_utils_logger.error(
                 "Failed to read dag block with CID %s for project %s from IPFS because of exception %s | Assigned null payload to block structure: %s",
-                dag_cid, project_id, e, dag_block
+                dag_cid, project_id, e, dag_block, exc_info=True
             )
     dag_block["dagCid"] = dag_cid
 
