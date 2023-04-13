@@ -202,7 +202,7 @@ async def retrieve_block_data(
     # handle case of no dag_block or null payload in dag_block
     if data_flag == 0 and block is None:
         return dict()
-    retrieval_utils_logger.debug('Retrieved dag block with CID %s: %s', block_dag_cid, block)
+    # retrieval_utils_logger.debug('Retrieved dag block with CID %s: %s', block_dag_cid, block)
     # the data field may not be present in the dag block because of the DAG finalizer omitting null fields in DAG block model while converting to JSON
     if 'data' not in block.keys() or block['data'] is None:  
         if data_flag == 1:
@@ -281,8 +281,8 @@ async def retrieve_payload_data(
             payload_cid,project_id, e)
             return None
         else:
-            retrieval_utils_logger.info("Successfully read payload with CID %s for project %s from IPFS: %s ",
-            payload_cid,project_id, _payload_data)
+            # retrieval_utils_logger.info("Successfully read payload with CID %s for project %s from IPFS: %s ",
+            # payload_cid,project_id, _payload_data)
             if not isinstance(_payload_data,str):
                 return _payload_data.decode('utf-8')
             else:
