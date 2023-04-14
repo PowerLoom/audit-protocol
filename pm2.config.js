@@ -73,9 +73,9 @@ module.exports = {
       }
     },
     {
-      name   : "ap-dag-verifier",
-      script : "./dag-verifier",
-      cwd : `${__dirname}/go/dag-verifier`,
+      name   : "ap-dag-status-reporter",
+      script : "./dag-status-reporter",
+      cwd : `${__dirname}/go/dag-status-reporter`,
       max_restarts: MAX_RESTART,
       min_uptime: MIN_UPTIME,
       kill_timeout : 3000,

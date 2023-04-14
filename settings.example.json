@@ -24,7 +24,8 @@
 		"port": 5672,
 		"setup": {
 			"core": {
-				"exchange": "audit-protocol-backend"
+				"exchange": "audit-protocol-backend",
+				"dlx": "audit-protocol-backend-dlx"
 			},
 			"queues": {
 				"commit-payloads": {

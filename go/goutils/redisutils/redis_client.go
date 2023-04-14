@@ -6,27 +6,38 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/swagftw/gi"
+
 	"audit-protocol/goutils/datamodel"
 
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 )
 
-func InitRedisClient(redisHost string, port int, redisDb int, poolSize int, password string) *redis.Client {
+func InitRedisClient(redisHost string, port int, redisDb int, poolSize int, password string, timeout time.Duration) *redis.Client {
 	redisURL := redisHost + ":" + strconv.Itoa(port)
 
 	log.Info("Connecting to redis at:", redisURL)
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:     redisURL,
-		Password: password,
-		DB:       redisDb,
-		PoolSize: poolSize,
+		Addr:        redisURL,
+		Password:    password,
+		DB:          redisDb,
+		PoolSize:    poolSize,
+		ReadTimeout: timeout,
 	})
 	pong, err := redisClient.Ping(context.Background()).Result()
 	if err != nil {
-		log.Error("Unable to connect to redis at:")
+		log.WithField("addr", redisURL).Fatal("Unable to connect to redis")
 	}
+
 	log.Info("Connected successfully to Redis and received ", pong, " back")
+
+	// exit if injection fails
+	err = gi.Inject(redisClient)
+	if err != nil {
+		log.Fatalln("Failed to inject redis client", err)
+	}
+
 	return redisClient
 }
 
@@ -131,7 +142,7 @@ func GetPayloadCidFromZSet(ctx context.Context, redisClient *redis.Client, proje
 		log.Debugf("Fetched %d Payload CIDs for key %s", len(res), key)
 		if len(res) == 1 {
 			payloadCid = fmt.Sprintf("%v", res[0].Member)
-			log.Debugf("PayloadCID %s fetched for project %s at height %s from redis", payloadCid, projectId, startScore)
+			log.Debugf("PayloadLink %s fetched for project %s at height %s from redis", payloadCid, projectId, startScore)
 		} else if len(res) > 1 {
 			log.Errorf("Found more than 1 payload CIDS at height %d for project %s which means project state is messed up due to an issue that has occured while previous snapshot processing, considering the first one so that current snapshot processing can proceed",
 				startScore, projectId)
