@@ -428,7 +428,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 		tokenSummarySnapshotMeta, err = s.WaitAndFetchBlockHeightStatus(dagChainProjectID, tentativeBlockHeight)
 
 		return err
-	}, backoff.WithMaxRetries(backoff.NewConstantBackOff(5*time.Second), 5))
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
 	if err != nil {
 		log.WithError(err).Errorf("failed to fetch payloadCID at blockHeight %d", tentativeBlockHeight)
 		s.ResetTokenData()
@@ -519,7 +519,7 @@ func (s *TokenAggregator) FetchAndUpdateStatusOfOlderSnapshots(projectId string)
 				updatedSnapshotMeta, err = s.WaitAndFetchBlockHeightStatus(projectId, int64(snapshotMeta.DAGHeight))
 
 				return err
-			}, backoff.WithMaxRetries(backoff.NewConstantBackOff(5*time.Second), 5))
+			}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
 			if err != nil {
 				log.WithError(err).Errorf("failed to fetch payloadCID at blockHeight %d", snapshotMeta.DAGHeight)
 
