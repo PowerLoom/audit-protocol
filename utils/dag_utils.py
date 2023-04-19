@@ -1,3 +1,4 @@
+import asyncio
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
 from utils import redis_keys
@@ -93,19 +94,19 @@ async def save_event_data(event_data: DAGFinalizerCallback, pending_tx_set_entry
     )
 
 async def get_dag_block(dag_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
+    dag_ipfs_fetch = False
     dag = read_text_file(settings.local_cache_path + "/" + project_id + "/"+ dag_cid + ".json", logger )
-    if dag is None:
-        logger.info("Failed to read dag-block with CID %s for project %s from local cache ",
-        dag_cid,project_id)
-        try:
-            dag = await ipfs_read_client.dag.get(dag_cid)
-        except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as err:
-            return None
-        else:
-            dag = dag.as_json()
+    try:
+        dag_json = json.loads(dag)
+    except:
+        dag_ipfs_fetch = True
     else:
-        dag = json.loads(dag)
-    return dag
+        return dag_json
+    if dag_ipfs_fetch:
+        dag = await ipfs_read_client.dag.get(dag_cid)
+        # TODO: should be aiofiles
+        write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", str(dag).encode('utf-8'), logger)
+        return dag.as_json()
 
 async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncIPFSClient):
     dag_json = dag_json.encode('utf-8')
@@ -114,15 +115,8 @@ async def put_dag_block(dag_json: str, project_id:str, ipfs_write_client: AsyncI
     try:
         write_bytes_to_file(settings.local_cache_path + "/" + project_id , "/" + dag_cid + ".json", dag_json, logger )
     except Exception as exc:
-        logger.error("Failed to write dag-block %s for project %s to local cache due to exception %s",
-        dag_json,project_id, exc, exc_info=True)
-
+        logger.error("Failed to write DAG block %s for project %s to local cache due to exception %s", dag_json,project_id, exc, exc_info=True)
     return dag_cid
-
-
-async def get_payload(payload_cid: str, project_id:str, ipfs_read_client: AsyncIPFSClient):
-    """ Given the payload cid, retrieve the payload. Payloads are also DAG blocks """
-    return await get_dag_block(payload_cid, project_id, ipfs_read_client)
 
 
 # TODO: exception handling around dag block creation failures
@@ -209,11 +203,12 @@ async def create_dag_block_update_project_state(tx_hash, request_id, project_id,
     # retrieve callback URL for project ID
     cb_url = await reader_redis_conn.get(f'powerloom:project:{project_id}:callbackURL')
     if cb_url:
-        await send_commit_callback(httpx_session=httpx_client, url=cb_url, payload={
+        f = asyncio.ensure_future(send_commit_callback(httpx_session=httpx_client, url=cb_url, payload={
             'commitID': payload_commit_id,
             'projectID': project_id,
             'status': True
-        })
+        }))
+        f.add_done_callback(helper_functions.misc_notification_callback_result_handler)
     return _dag_cid, dag_block
 
 

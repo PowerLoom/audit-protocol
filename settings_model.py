@@ -91,6 +91,9 @@ class TxnConfig(BaseModel):
     skip_summary_projects_anchor_proof: bool=False
 
 
+class IndexBuilderConfig(BaseModel):
+    slack_notify_URL: str
+
 
 class BackEndConfig(BaseModel):
     host: str
@@ -108,6 +111,7 @@ class Settings(BaseModel):
     local_cache_path: str
     pruning: PruneSettings
     dag_finalizer: Union[DAGFinalizer, dict]
+    primary_indexer: IndexBuilderConfig
     redis: Union[RedisConfig, dict]
     redis_reader: Union[RedisConfig, dict]
     contract_addresses: Union[ContractAddresses, dict]

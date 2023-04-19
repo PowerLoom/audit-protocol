@@ -16,7 +16,7 @@ from data_models import (
 )
 from itertools import filterfalse
 from tenacity import retry, wait_random_exponential, stop_after_attempt, retry_if_exception_type
-from httpx import AsyncClient, Timeout, Limits, AsyncHTTPTransport
+from httpx import AsyncClient, Response, Timeout, Limits, AsyncHTTPTransport
 import httpx._exceptions as httpx_exceptions
 from redis import asyncio as aioredis
 from config import settings
@@ -248,7 +248,14 @@ class DAGFinalizationCallbackProcessor:
             project_id=project_id,
             reader_redis_conn=reader_redis_conn
         )
-
+        project_epoch_size, project_first_epoch_end_height = await writer_redis_conn.mget(
+                                keys=[redis_keys.get_project_epoch_size(project_id),
+                                      redis_keys.get_project_first_epoch_end_height(project_id)]
+                            )
+        # these will be set to 0 for summary projects
+        # TODO: remove this hack
+        project_epoch_size = int(project_epoch_size) if project_epoch_size else 0
+        project_first_epoch_end_height = int(project_first_epoch_end_height) if project_first_epoch_end_height else 0 
         custom_logger.debug(
             "Event Data Tentative Block Height: %s | Finalized Project %s Block Height: %s",
             tentative_block_height_event_data, project_id, finalized_block_height_project
@@ -502,12 +509,20 @@ class DAGFinalizationCallbackProcessor:
                         height_insertion_map  = dict()
                         for b in blocks_created:
                             if b.height == finalized_block_height_project + 1:
-                                height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.healing)
+                                insertion_type = DAGInsertionType.healing
                             else:
-                                height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.pending_to_in_order)
-                        asyncio.ensure_future(self._send_dag_insertion_notification(
+                                insertion_type = DAGInsertionType.pending_to_in_order
+                            # happens when no CID was found finalized at the height
+                            if not b.cid:
+                                epoch_against_height = (b.height-1) * project_epoch_size + project_first_epoch_end_height
+                                cid_str = f'null_{epoch_against_height}'
+                            else:
+                                cid_str = b.cid
+                            height_insertion_map[cid_str] = DAGInsertionMap(height=b.height, insertionType=insertion_type)
+                        f = asyncio.ensure_future(self._send_dag_insertion_notification(
                             notification_obj=DAGInsertionNotification(projectID=project_id, dagCIDInsertionMap=height_insertion_map)
                         ))
+                        f.add_done_callback(helper_functions.misc_notification_callback_result_handler)
                         custom_logger.info(
                             'Finished processing self healing DAG block insertion at height %s | '
                             'DAG blocks finalized in total: %s',
@@ -543,12 +558,7 @@ class DAGFinalizationCallbackProcessor:
                             )
                             # 2. calculate epoch end heights to be fetched from consensus service corresponding to
                             #    missing DAG height
-                            project_epoch_size, project_first_epoch_end_height = await writer_redis_conn.mget(
-                                keys=[redis_keys.get_project_epoch_size(project_id),
-                                      redis_keys.get_project_first_epoch_end_height(project_id)]
-                            )
-                            project_epoch_size = int(project_epoch_size)
-                            project_first_epoch_end_height = int(project_first_epoch_end_height)
+                            
                             # map missing tentative height to expected epochEndHeight
                             epochs_to_fetch = {
                                 k: (k-1) * project_epoch_size + project_first_epoch_end_height
@@ -702,12 +712,20 @@ class DAGFinalizationCallbackProcessor:
                             height_insertion_map  = dict()
                             for b in blocks_created:
                                 if b.height in epochs_to_fetch.keys():
-                                    height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.healing)
+                                    insertion_type = DAGInsertionType.in_order
                                 else:
-                                    height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.pending_to_in_order)
-                            asyncio.ensure_future(self._send_dag_insertion_notification(
+                                    insertion_type = DAGInsertionType.pending_to_in_order
+                                # happens when no CID was found finalized at the height
+                                if not b.cid:
+                                    epoch_against_height = (b.height-1) * project_epoch_size + project_first_epoch_end_height
+                                    cid_str = f'null_{epoch_against_height}'
+                                else:
+                                    cid_str = b.cid
+                                height_insertion_map[cid_str] = DAGInsertionMap(height=b.height, insertionType=insertion_type)
+                            f = asyncio.ensure_future(self._send_dag_insertion_notification(
                                 notification_obj=DAGInsertionNotification(projectID=project_id, dagCIDInsertionMap=height_insertion_map)
                             ))
+                            f.add_done_callback(helper_functions.misc_notification_callback_result_handler)
                             custom_logger.info(
                                 'Consensus Self Healing| Project %s | '
                                 'Finished processing self healing DAG block insertion beginning height %s | '
@@ -769,12 +787,20 @@ class DAGFinalizationCallbackProcessor:
                 height_insertion_map  = dict()
                 for b in blocks_created:
                     if b.height == finalized_block_height_project + 1:
-                        height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.in_order)
+                        insertion_type = DAGInsertionType.in_order
                     else:
-                        height_insertion_map[b.cid] = DAGInsertionMap(height=b.height, insertionType=DAGInsertionType.pending_to_in_order)
-                asyncio.ensure_future(self._send_dag_insertion_notification(
+                        insertion_type = DAGInsertionType.pending_to_in_order
+                    # happens when no CID was found finalized at the height
+                    if not b.cid:
+                        epoch_against_height = (b.height-1) * project_epoch_size + project_first_epoch_end_height
+                        cid_str = f'null_{epoch_against_height}'
+                    else:
+                        cid_str = b.cid
+                    height_insertion_map[cid_str] = DAGInsertionMap(height=b.height, insertionType=insertion_type)
+                f = asyncio.ensure_future(self._send_dag_insertion_notification(
                     notification_obj=DAGInsertionNotification(projectID=project_id, dagCIDInsertionMap=height_insertion_map)
                 ))
+                f.add_done_callback(helper_functions.misc_notification_callback_result_handler)
                 custom_logger.info(
                     'Finished processing in order DAG block insertion at height %s | '
                     'DAG blocks finalized in total: %s',
@@ -833,15 +859,13 @@ class DAGFinalizationCallbackProcessor:
         await message.ack()
 
     @retry(
-        reraise=True, wait=wait_random_exponential(multiplier=1, max=20),
-        # Randomly wait up to 2^x * 1 seconds between each retry until the range reaches 20 seconds
-        # then randomly up to 20 seconds afterwards
+        reraise=True, wait=wait_random_exponential(multiplier=0.5, max=30),
         retry=retry_if_exception_type(httpx_exceptions.TransportError) | retry_if_exception_type(json.JSONDecodeError) | retry_if_exception_type(httpx_exceptions.HTTPStatusError)
     )
     async def _httpx_wrap_call(self, url, json_body):
         resp = await self._httpx_client.post(
             url=url,
-            json=json_body
+            json=json_body,
         )
         return resp.json()
 
@@ -862,7 +886,8 @@ class DAGFinalizationCallbackProcessor:
         self._httpx_client = AsyncClient(
             timeout=Timeout(timeout=5.0),
             follow_redirects=False,
-            transport=self._async_transport
+            transport=self._async_transport,
+            event_hooks={'response': [helper_functions.raise_on_4xx_5xx, helper_functions.log_response]}
         )
         self._ipfs_singleton = AsyncIPFSClientSingleton()
         await self._ipfs_singleton.init_sessions()

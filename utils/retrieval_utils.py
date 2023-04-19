@@ -202,7 +202,7 @@ async def retrieve_block_data(
     # handle case of no dag_block or null payload in dag_block
     if data_flag == 0 and block is None:
         return dict()
-    retrieval_utils_logger.debug('Retrieved dag block with CID %s: %s', block_dag_cid, block)
+    # retrieval_utils_logger.debug('Retrieved dag block with CID %s: %s', block_dag_cid, block)
     # the data field may not be present in the dag block because of the DAG finalizer omitting null fields in DAG block model while converting to JSON
     if 'data' not in block.keys() or block['data'] is None:  
         if data_flag == 1:
@@ -277,11 +277,12 @@ async def retrieve_payload_data(
         try:
             _payload_data = await ipfs_read_client.cat(payload_cid)
         except (httpx_exceptions.TransportError, httpx_exceptions.StreamError) as e:
-            retrieval_utils_logger.error("Failed to read payload with CID %s for project %s from IPFS ",
-            payload_cid,project_id)
-            retrieval_utils_logger.error(e)
-            payload_data = None
+            retrieval_utils_logger.error("Failed to read payload with CID %s for project %s from IPFS : %s",
+            payload_cid,project_id, e)
+            return None
         else:
+            # retrieval_utils_logger.info("Successfully read payload with CID %s for project %s from IPFS: %s ",
+            # payload_cid,project_id, _payload_data)
             if not isinstance(_payload_data,str):
                 return _payload_data.decode('utf-8')
             else:
@@ -303,12 +304,24 @@ async def get_dag_block_by_height(
     if not dag_cid:
         return dict()
 
-    dag_block = await retrieve_block_data(
-        block_dag_cid=dag_cid, project_id=project_id,data_flag=1,
-        ipfs_read_client=ipfs_read_client
-    )
-
-    dag_block = dag_block if dag_block else dict()
+    try:
+        dag_block = await retrieve_block_data(
+            block_dag_cid=dag_cid, project_id=project_id,data_flag=1,
+            ipfs_read_client=ipfs_read_client
+        )
+    except Exception as e:
+        dag_block = dict()
+        dag_block['data'] = {'payload': None, 'cid': 'null'}
+        if isinstance(e, httpx_exceptions.HTTPError) or isinstance(e, httpx_exceptions.StreamError):
+            retrieval_utils_logger.error(
+            "Failed to read dag block with CID %s for project %s from IPFS because of IPFS read error %s | Assigned null payload to block structure: %s",
+            dag_cid, project_id, e, dag_block
+        )
+        else:
+            retrieval_utils_logger.error(
+                "Failed to read dag block with CID %s for project %s from IPFS because of exception %s | Assigned null payload to block structure: %s",
+                dag_cid, project_id, e, dag_block, exc_info=True
+            )
     dag_block["dagCid"] = dag_cid
 
     return dag_block

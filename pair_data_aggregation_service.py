@@ -4,9 +4,12 @@ from web3 import Web3
 from httpx import AsyncClient
 from redis import asyncio as aioredis
 from async_ipfshttpclient.main import AsyncIPFSClient
+# TODO: replace with async web3 or rpc helper clients
 from gnosis.eth import EthereumClient
+from web3.types import BlockData
 from config import settings
 from data_models import liquidityProcessedData, uniswapPairsSnapshotZset, DAGBlockRange, PairLiquidity, PairTradeVolume
+from exceptions import MissingIndexException
 from utils import helper_functions
 from utils import redis_keys
 from utils import retrieval_utils
@@ -72,7 +75,6 @@ async def get_dag_blocks_in_range(
             dag_block = {}
         if dag_block:
             dag_chain.append(dag_block)
-    dag_chain.reverse()
     return dag_chain
 
 
@@ -396,7 +398,8 @@ async def process_pairs_trade_volume_and_reserves(
         writer_redis_conn: aioredis.Redis,
         common_epoch_end,
         pair_contract_address,
-        ipfs_read_client: AsyncIPFSClient
+        ipfs_read_client: AsyncIPFSClient,
+        httpx_client: AsyncClient
 ):
     try:
         project_id_trade_volume = f'uniswap_pairContract_trade_volume_{pair_contract_address}_{NAMESPACE}'
@@ -434,11 +437,11 @@ async def process_pairs_trade_volume_and_reserves(
             msg = 'Values of 24h head, tail and 7h head, tail marker - some of them might be null and hence returning |' 
             f'[tail_marker_24h, head_marker_24h,  tail_marker_7d, head_marker_7d] : {tail_marker_24h, head_marker_24h, tail_marker_7d, head_marker_7d}'
             logger.info(msg)
-            raise Exception(msg)
+            raise MissingIndexException(msg)
 
         # if head of 24h and 7d index at 1 or less then return
         if head_marker_24h <= 1 or head_marker_7d <= 1:
-            raise Exception('Values of 24 head and tail marker are not sufficient to calculate aggregates')
+            raise MissingIndexException('Values of 24 head and tail marker are not sufficient to calculate aggregates')
 
         # initialize returning variables
         block_height_trade_volume = 0
@@ -464,7 +467,7 @@ async def process_pairs_trade_volume_and_reserves(
             logger.warning(
                 alert_msg
             )
-            raise Exception(alert_msg)
+            raise MissingIndexException(alert_msg)
 
         if not cached_trade_volume_data:
             logger.debug(
@@ -490,25 +493,71 @@ async def process_pairs_trade_volume_and_reserves(
             )
             if not dag_chain_7d:
                 return
-
-            # calculate trade volume 24h
-            pair_trade_volume_24h = calculate_pair_trade_volume(dag_chain_24h)
-
-            # calculate trade volume 7d
-            pair_trade_volume_7d = calculate_pair_trade_volume(dag_chain_7d)
             dag_chain_24h_intact_payloads = [x for x in dag_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+            dag_chain_24h_bad_payloads = [x for x in dag_chain_24h if x is None or not x.get('data') or not x['data'].get('payload')]
             dag_chain_7d_intact_payloads = [x for x in dag_chain_7d if x is not None and x.get('data') and x['data'].get('payload')]
+            dag_chain_7d_bad_payloads = [x for x in dag_chain_7d if x is None or not x.get('data') or not x['data'].get('payload')]
+            if dag_chain_24h_bad_payloads:
+                logger.warning(
+                    "Found %s bad payloads in 24h dag-chain | projectId: %s",
+                    dag_chain_24h_bad_payloads,
+                    project_id_trade_volume
+                )
+                slack_alert_msg = {
+                    'severity': 'MEDIUM',
+                    'Service': 'TradeVolumeProcessor',
+                    'errorDetails': f"\nFound following DAG blocks with bad payloads in 24h dag-chain during first aggregation building | projectId: {project_id_trade_volume}\n"
+                                    f"{dag_chain_24h_bad_payloads}"
+                }
+                try:
+                    await httpx_client.post(
+                        url=settings.primary_indexer.slack_notify_URL,
+                        json=slack_alert_msg
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error while sending slack alert for bad payloads in 24h dag-chain during first aggregation building | projectId: %s | error: %s",
+                        project_id_trade_volume,
+                        e
+                    )
+            if dag_chain_7d_bad_payloads:
+                logger.warning(
+                    "Found %s bad payloads in 7d dag-chain | projectId: %s",
+                    dag_chain_7d_bad_payloads,
+                    project_id_trade_volume
+                )
+                slack_alert_msg = {
+                    'severity': 'MEDIUM',
+                    'Service': 'TradeVolumeProcessor',
+                    'errorDetails': f"\nFound following DAG blocks with bad payloads in 7d dag-chain during first aggregation building | projectId: {project_id_trade_volume}\n"
+                                    f"{dag_chain_7d_bad_payloads}"
+                }
+                try:
+                    await httpx_client.post(
+                        url=settings.primary_indexer.slack_notify_URL,
+                        json=slack_alert_msg
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error while sending slack alert for bad payloads in 7d dag-chain during first aggregation building | projectId: %s | error: %s",
+                        project_id_trade_volume,
+                        e
+                    )   
+            # calculate trade volume 24h
+            pair_trade_volume_24h = calculate_pair_trade_volume(dag_chain_24h_intact_payloads)
+            # calculate trade volume 7d
+            pair_trade_volume_7d = calculate_pair_trade_volume(dag_chain_7d_intact_payloads)
             # store last recent logs, these will be used to show recent transaction for perticular contract
             # using only 24h dag chain as we just need 75 log at max
             await store_recent_transactions_logs(writer_redis_conn, dag_chain_24h_intact_payloads, pair_contract_address)
 
             cids_volume_24h: DAGBlockRange = DAGBlockRange(
-                head_block_cid= dag_chain_24h[0]['dagCid'],
-                tail_block_cid=dag_chain_24h[-1]['dagCid']
+                head_block_cid= dag_chain_24h[-1]['dagCid'],
+                tail_block_cid=dag_chain_24h[0]['dagCid']
             )
             cids_volume_7d: DAGBlockRange = DAGBlockRange(
-                head_block_cid= dag_chain_7d[0]['dagCid'],
-                tail_block_cid=dag_chain_7d[-1]['dagCid']
+                head_block_cid= dag_chain_7d[-1]['dagCid'],
+                tail_block_cid=dag_chain_7d[0]['dagCid']
                 )
             block_height_trade_volume = common_epoch_end
         else:
@@ -518,21 +567,13 @@ async def process_pairs_trade_volume_and_reserves(
             sliding_window_back_chain_7d = []
 
             logger.debug(
-                "Starting to fetch 24h sliding window, front: %s - %s, back: %s - %s | projectId: %s",
-                    cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h,
-                    cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h - 1,
-                    project_id_trade_volume
-                )
-
-            logger.debug(
-                "Starting to fetch 24h sliding window, front: {0} - {1}, back: {2} - {3} | projectId: {4}"
-                .format(
-                    cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h,
-                    cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h - 1,
-                    project_id_trade_volume
-                )
+                "Attempting to fetch 24h sliding window, front: %s - %s, back: %s - %s | last seen range %s - %s | projectId: %s",
+                cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h,
+                cached_trade_volume_data['processed_tail_marker_24h']+1, tail_marker_24h,
+                cached_trade_volume_data['processed_head_marker_24h'], cached_trade_volume_data['processed_tail_marker_24h'],
+                project_id_trade_volume
             )
-
+            # TODO: condense window fetch logic
             # if 24h head moved ahead
             if head_marker_24h > cached_trade_volume_data["processed_head_marker_24h"]:
                 # front of the chain where head=current_head and tail=last_head
@@ -543,33 +584,46 @@ async def process_pairs_trade_volume_and_reserves(
                     writer_redis_conn,
                     ipfs_read_client
                 )
+                logger.debug(
+                    "Fetched 24h sliding window head: %s - %s | last seen window range %s - %s | projectId: %s",
+                    cached_trade_volume_data['processed_head_marker_24h'] + 1, head_marker_24h,
+                    cached_trade_volume_data['processed_head_marker_24h'], cached_trade_volume_data['processed_tail_marker_24h'],
+                    project_id_trade_volume
+                )
             else:
-                logger.debug("24h head is at %d and did not move ahead for project %s",
-                head_marker_24h,
-                project_id_trade_volume)
-                return
+                logger.debug("24h head is at %d and did not move ahead for project %s | last seen window range %s - %s",
+                    head_marker_24h,
+                    cached_trade_volume_data["processed_head_marker_24h"],cached_trade_volume_data["processed_tail_marker_24h"],
+                    project_id_trade_volume
+                )
+                
 
             # if 24h tail moved ahead
             if tail_marker_24h > cached_trade_volume_data["processed_tail_marker_24h"]:
                 # back of the chain where head=current_tail and tail=last_tail
                 sliding_window_back_chain_24h = await get_dag_blocks_in_range(
                     project_id_trade_volume,
-                    cached_trade_volume_data["processed_tail_marker_24h"],
-                    tail_marker_24h-1,
+                    cached_trade_volume_data["processed_tail_marker_24h"]+1,
+                    tail_marker_24h,
                     writer_redis_conn,
                     ipfs_read_client
                 )
-
-            logger.debug(
-                "Starting to fetch 7d sliding window, front: %s - %s, back: %s - %s | projectId: %s",
-                    cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d,
-                    cached_trade_volume_data['processed_tail_marker_7d'], tail_marker_7d - 1,
+                logger.debug(
+                    "Fetched 24h sliding window tail: %s - %s | last seen window range %s - %s | projectId: %s",
+                    cached_trade_volume_data['processed_tail_marker_24h'] + 1, tail_marker_24h,
+                    cached_trade_volume_data['processed_head_marker_24h'], cached_trade_volume_data['processed_tail_marker_24h'],
                     project_id_trade_volume
+                )
+            logger.debug(
+                "Attempting to fetch 7d sliding window, front: %s - %s, back: %s - %s | last seen window range %s - %s | projectId: %s",
+                cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d,
+                cached_trade_volume_data['processed_tail_marker_7d']+1, tail_marker_7d,
+                cached_trade_volume_data['processed_head_marker_7d'], cached_trade_volume_data['processed_tail_marker_7d'],
+                project_id_trade_volume
             )
 
             # if 7d head moved ahead
-            if head_marker_7d > cached_trade_volume_data["processed_head_marker_24h"]:
-                # front of the chain where head=current_head and tail=last_head
+            if head_marker_7d > cached_trade_volume_data["processed_head_marker_7d"]:
                 sliding_window_front_chain_7d = await get_dag_blocks_in_range(
                     project_id_trade_volume,
                     cached_trade_volume_data["processed_head_marker_7d"] + 1,
@@ -577,46 +631,126 @@ async def process_pairs_trade_volume_and_reserves(
                     writer_redis_conn,
                     ipfs_read_client
                 )
+                logger.debug(
+                    "Fetched 7d sliding window head: %s - %s | last seen window range %s - %s | projectId: %s",
+                    cached_trade_volume_data['processed_head_marker_7d'] + 1, head_marker_7d,
+                    cached_trade_volume_data['processed_head_marker_7d'], cached_trade_volume_data['processed_tail_marker_7d'],
+                    project_id_trade_volume
+                )
+            else:
+                logger.debug("7d head is at %d and did not move ahead for project %s | last seen window range %s - %s",
+                    head_marker_7d,
+                    project_id_trade_volume,
+                    cached_trade_volume_data["processed_head_marker_7d"], cached_trade_volume_data["processed_tail_marker_7d"]
+                    
+                )
 
             # if 7d tail moved ahead
             if tail_marker_7d > cached_trade_volume_data["processed_tail_marker_7d"]:
-                # back of the chain where head=current_tail and tail=last_tail
                 sliding_window_back_chain_7d = await get_dag_blocks_in_range(
                     project_id_trade_volume,
-                    cached_trade_volume_data["processed_tail_marker_7d"],
-                    tail_marker_7d-1,
+                    cached_trade_volume_data["processed_tail_marker_7d"]+1,
+                    tail_marker_7d,
                     writer_redis_conn,
                     ipfs_read_client
                 )
+                logger.debug(
+                    "Fetched 7d sliding window tail: %s - %s | last seen window range %s - %s | projectId: %s",
+                    cached_trade_volume_data['processed_tail_marker_7d'] + 1, tail_marker_7d,
+                    cached_trade_volume_data['processed_head_marker_7d'], cached_trade_volume_data['processed_tail_marker_7d'],
+                    project_id_trade_volume
+                )
+            else:
+                logger.debug("7d tail is at %d and did not move ahead for project %s | last seen range %s - %s",
+                    tail_marker_7d,
+                    cached_trade_volume_data["processed_head_marker_7d"],cached_trade_volume_data["processed_tail_marker_7d"],
+                    project_id_trade_volume
+                )
 
-            if not sliding_window_front_chain_24h and not sliding_window_back_chain_24h:
-                return
 
-            if not sliding_window_front_chain_7d and not sliding_window_back_chain_7d:
-                return
-            #TODO: Need to fix this index based access to data model based access.
-            cids_volume_24h.head_block_cid = sliding_window_front_chain_24h[0]['dagCid']
-            tail_dag_block = await get_dag_blocks_in_range(
-                project_id_trade_volume,
-                tail_marker_24h,
-                tail_marker_24h,
-                writer_redis_conn,
-                ipfs_read_client
-            )
-            cids_volume_24h.tail_block_cid = tail_dag_block[0]['dagCid']
-            cids_volume_7d.head_block_cid = sliding_window_front_chain_7d[0]['dagCid']
-            tail_dag_block = await get_dag_blocks_in_range(
-                project_id_trade_volume,
-                tail_marker_7d,
-                tail_marker_7d,
-                writer_redis_conn,
-                ipfs_read_client
-            )
-            cids_volume_7d.tail_block_cid = tail_dag_block[0]['dagCid']
+            if (not sliding_window_front_chain_24h and not sliding_window_back_chain_24h) or (not sliding_window_front_chain_7d and not sliding_window_back_chain_7d):
+                logger.debug("No new sliding window to process for project %s, returning last cached reserves and trade volume data", project_id_trade_volume)    
+                prepared_snapshot = liquidityProcessedData(
+                    contractAddress=pair_contract_address,
+                    name=pair_token_metadata['pair']['symbol'],
+                    liquidity=f"US${round(abs(pair_liquidity.total_liquidity)):,}",
+                    volume_24h=f"US${round(abs(cached_trade_volume_data['aggregated_volume_24h'])):,}",
+                    volume_7d=f"US${round(abs(cached_trade_volume_data['aggregated_volume_7d'])):,}",
+                    fees_24h=f"US${round(abs(cached_trade_volume_data['aggregated_fees_24h'])):,}",
+                    cid_volume_24h=DAGBlockRange(head_block_cid=cached_trade_volume_data['aggregated_volume_cid_24h']['head_block_cid'], tail_block_cid=cached_trade_volume_data['aggregated_volume_cid_24h']['tail_block_cid']),
+                    cid_volume_7d=DAGBlockRange(head_block_cid=cached_trade_volume_data['aggregated_volume_cid_7d']['head_block_cid'], tail_block_cid=cached_trade_volume_data['aggregated_volume_cid_7d']['tail_block_cid']),
+                    block_height=pair_liquidity.block_height_total_reserve,
+                    block_timestamp=pair_liquidity.block_timestamp_total_reserve,
+                    token0Liquidity=pair_liquidity.token0_liquidity,
+                    token1Liquidity=pair_liquidity.token1_liquidity,
+                    token0LiquidityUSD=pair_liquidity.token0_liquidity_usd,
+                    token1LiquidityUSD=pair_liquidity.token1_liquidity_usd,
+                    token0TradeVolume_24h=cached_trade_volume_data['aggregated_token0_volume_24h'],
+                    token1TradeVolume_24h=cached_trade_volume_data['aggregated_token1_volume_24h'],
+                    token0TradeVolumeUSD_24h=cached_trade_volume_data['aggregated_token0_volume_usd_24h'],
+                    token1TradeVolumeUSD_24h=cached_trade_volume_data['aggregated_token1_volume_usd_24h'],
+                    token0TradeVolume_7d=cached_trade_volume_data['aggregated_token0_volume_7d'],
+                    token1TradeVolume_7d=cached_trade_volume_data['aggregated_token1_volume_7d'],
+                    token0TradeVolumeUSD_7d=cached_trade_volume_data['aggregated_token0_volume_usd_7d'],
+                    token1TradeVolumeUSD_7d=cached_trade_volume_data['aggregated_token1_volume_usd_7d']
+                )
+                return prepared_snapshot
+
+            
+            cids_volume_24h.head_block_cid = sliding_window_front_chain_24h[-1]['dagCid']
+            
+            if sliding_window_back_chain_24h:
+                cids_volume_24h.tail_block_cid = sliding_window_back_chain_24h[-1]['dagCid']
+            else:
+                # this is to deal with the case when collected snapshots have not reached 24 hours yet
+                tail_block_24h = await get_dag_block_by_height(
+                    project_id=project_id_trade_volume,
+                    block_height=tail_marker_24h,
+                    reader_redis_conn=writer_redis_conn,
+                    ipfs_read_client=ipfs_read_client
+                )
+                cids_volume_24h.tail_block_cid = tail_block_24h['dagCid']
+            cids_volume_7d.head_block_cid = sliding_window_front_chain_7d[-1]['dagCid']
+            if sliding_window_back_chain_7d:
+                cids_volume_7d.tail_block_cid = sliding_window_back_chain_7d[-1]['dagCid']
+            else:
+                tail_block_7d = await get_dag_block_by_height(
+                    project_id=project_id_trade_volume,
+                    block_height=tail_marker_7d,
+                    reader_redis_conn=writer_redis_conn,
+                    ipfs_read_client=ipfs_read_client
+                )
+                cids_volume_7d.tail_block_cid = tail_block_7d['dagCid']
 
             if sliding_window_back_chain_24h:
                 qualified_sliding_window_blocks_back_chain_24h = [x for x in sliding_window_back_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+                unqualified_sliding_window_blocks_back_chain_24h = [x for x in sliding_window_back_chain_24h if x is None or x.get('data') is None or x['data'].get('payload') is None]
+                if unqualified_sliding_window_blocks_back_chain_24h:
+                    slack_alert_msg = {
+                        'severity': 'MEDIUM',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
+                        'errorDetails': f'\nFound unqualified blocks in sliding window back chain 24h for project {project_id_trade_volume} '
+                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_24h"]} to {tail_marker_24h}.\n\n```\n{unqualified_sliding_window_blocks_back_chain_24h}\n```' 
+                    }
+                    try:
+                        await httpx_client.post(
+                            url=settings.primary_indexer.slack_notify_URL,
+                            json=slack_alert_msg
+                        )
+                    except Exception as e:
+                        logger.error(
+                            'Failed to send slack alert for unqualified blocks in sliding window back chain 24h for project %s while adjusting tail from %s - %s: %s',
+                            project_id_trade_volume,
+                            cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h,
+                            e
+                        )
+                    logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_back_volume_24h:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_back_chain_24h)
+                logger.info(
+                    'Calculated sliding window back volume 24h for project %s, while adjusting tail from %s - %s: %s',
+                    project_id_trade_volume, cached_trade_volume_data['processed_tail_marker_24h'], tail_marker_24h, sliding_window_back_volume_24h
+                    
+                )
                 cached_trade_volume_data["aggregated_volume_24h"] -= sliding_window_back_volume_24h.total_volume
                 cached_trade_volume_data["aggregated_fees_24h"] -= sliding_window_back_volume_24h.fees
                 cached_trade_volume_data["aggregated_token0_volume_24h"] -= sliding_window_back_volume_24h.token0_volume
@@ -625,8 +759,33 @@ async def process_pairs_trade_volume_and_reserves(
                 cached_trade_volume_data["aggregated_token1_volume_usd_24h"] -= sliding_window_back_volume_24h.token1_volume_usd
 
             if sliding_window_front_chain_24h:
-                qualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_back_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+                qualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_front_chain_24h if x is not None and x.get('data') and x['data'].get('payload')]
+                unqualified_sliding_window_blocks_front_chain_24h = [x for x in sliding_window_front_chain_24h if x is None or x.get('data') is None or x['data'].get('payload') is None]
+                if unqualified_sliding_window_blocks_front_chain_24h:
+                    slack_alert_msg = {
+                        'severity': 'MEDIUM',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
+                        'errorDetails': f'\nFound unqualified blocks in sliding window front chain 24h for project {project_id_trade_volume} '
+                                        f'while adjusting head from {cached_trade_volume_data["processed_head_marker_24h"]} to {head_marker_24h}\n\n```\n{unqualified_sliding_window_blocks_front_chain_24h}\n```' 
+                    }
+                    try:
+                        await httpx_client.post(
+                            url=settings.primary_indexer.slack_notify_URL,
+                            json=slack_alert_msg
+                        )
+                    except Exception as e:
+                        logger.error(
+                            'Failed to send slack alert for unqualified blocks in sliding window front chain 24h for project %s while adjusting head from %s - %s: %s',
+                            project_id_trade_volume,
+                            cached_trade_volume_data['processed_head_marker_24h'], head_marker_24h,
+                            e
+                        )
+                    logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_front_volume_24h:PairTradeVolume =  calculate_pair_trade_volume(qualified_sliding_window_blocks_front_chain_24h)
+                logger.info(
+                    'Calculated sliding window front volume 24h for project %s, while adjusting head from %s - %s: %s',
+                    project_id_trade_volume, cached_trade_volume_data['processed_head_marker_24h'], head_marker_24h, sliding_window_front_volume_24h                    
+                )
                 cached_trade_volume_data["aggregated_volume_24h"] += sliding_window_front_volume_24h.total_volume
                 cached_trade_volume_data["aggregated_fees_24h"] += sliding_window_front_volume_24h.fees
                 cached_trade_volume_data["aggregated_token0_volume_24h"] += sliding_window_front_volume_24h.token0_volume
@@ -642,7 +801,32 @@ async def process_pairs_trade_volume_and_reserves(
 
             if sliding_window_back_chain_7d:
                 qualified_sliding_window_blocks_back_chain_7d = [x for x in sliding_window_back_chain_7d if x is not None and x.get('data') and x['data'].get('payload')]
+                unqualified_sliding_window_blocks_back_chain_7d = [x for x in sliding_window_back_chain_7d if x is None or x.get('data') is None or x['data'].get('payload') is None]
+                if unqualified_sliding_window_blocks_back_chain_7d:
+                    slack_alert_msg = {
+                        'severity': 'MEDIUM',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
+                        'errorDetails': f'\nFound unqualified blocks in sliding window back chain 7d for project {project_id_trade_volume} '
+                                        f'while adjusting tail from {cached_trade_volume_data["processed_tail_marker_7d"]} to {tail_marker_7d}\n\n```\n{unqualified_sliding_window_blocks_back_chain_7d}\n```' 
+                    }
+                    try:
+                        await httpx_client.post(
+                            url=settings.primary_indexer.slack_notify_URL,
+                            json=slack_alert_msg
+                        )
+                    except Exception as e:
+                        logger.error(
+                            'Failed to send slack alert for unqualified blocks in sliding window back chain 7d for project %s while adjusting tail from %s - %s: %s',
+                            project_id_trade_volume,
+                            cached_trade_volume_data['processed_tail_marker_7d'], tail_marker_7d,
+                            e
+                        )
+                    logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_back_volume_7d:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_back_chain_7d)
+                logger.info(
+                    'Calculated sliding window back volume 7d for project %s, while adjusting tail from %s - %s: %s',
+                    project_id_trade_volume, cached_trade_volume_data['processed_tail_marker_7d'], tail_marker_7d, sliding_window_back_volume_7d
+                )
                 cached_trade_volume_data["aggregated_volume_7d"] -= sliding_window_back_volume_7d.total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] -= sliding_window_back_volume_7d.token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_7d"] -= sliding_window_back_volume_7d.token1_volume
@@ -651,7 +835,32 @@ async def process_pairs_trade_volume_and_reserves(
 
             if sliding_window_front_chain_7d:
                 qualified_sliding_window_blocks_front_chain_7d = [x for x in sliding_window_front_chain_7d if x is not None and x.get('data') and x['data'].get('payload')]
+                unqualified_sliding_window_blocks_front_chain_7d = [x for x in sliding_window_front_chain_7d if x is None or x.get('data') is None or x['data'].get('payload') is None]
+                if unqualified_sliding_window_blocks_front_chain_7d:
+                    slack_alert_msg = {
+                        'severity': 'MEDIUM',
+                        'Service': f'TradeVolumeAggregator-INSTANCE-{settings.instance_id}',
+                        'errorDetails': f'\nFound unqualified blocks in sliding window front chain 7d for project {project_id_trade_volume} '
+                                        f'while adjusting head from {cached_trade_volume_data["processed_head_marker_7d"]} to {head_marker_7d}\n\n```\n{unqualified_sliding_window_blocks_front_chain_7d}\n```' 
+                    }
+                    try:
+                        await httpx_client.post(
+                            url=settings.primary_indexer.slack_notify_URL,
+                            json=slack_alert_msg
+                        )
+                    except Exception as e:
+                        logger.error(
+                            'Failed to send slack alert for unqualified blocks in sliding window front chain 7d for project %s while adjusting head from %s - %s: %s',
+                            project_id_trade_volume,
+                            cached_trade_volume_data['processed_head_marker_7d'], head_marker_7d,
+                            e
+                        )
+                    logger.warning(slack_alert_msg['errorDetails'])
                 sliding_window_front_volume_7d:PairTradeVolume = calculate_pair_trade_volume(qualified_sliding_window_blocks_front_chain_7d)
+                logger.info(
+                    'Calculated sliding window front volume 7d for project %s, while adjusting head from %s - %s: %s',
+                    project_id_trade_volume, cached_trade_volume_data['processed_head_marker_7d'], head_marker_7d, sliding_window_front_volume_7d
+                )
                 cached_trade_volume_data["aggregated_volume_7d"] += sliding_window_front_volume_7d.total_volume
                 cached_trade_volume_data["aggregated_token0_volume_7d"] += sliding_window_front_volume_7d.token0_volume
                 cached_trade_volume_data["aggregated_token1_volume_7d"] += sliding_window_front_volume_7d.token1_volume
@@ -676,6 +885,9 @@ async def process_pairs_trade_volume_and_reserves(
             pair_trade_volume_7d.token0_volume_usd = cached_trade_volume_data['aggregated_token0_volume_usd_7d']
             pair_trade_volume_7d.token1_volume_usd = cached_trade_volume_data['aggregated_token1_volume_usd_7d']
 
+        max_trade_volume_block_details: BlockData = ethereum_client.w3.eth.get_block(block_height_trade_volume)
+        max_trade_volume_block_timestamp = max_trade_volume_block_details['timestamp']
+        # TODO: create data model for sliding window data
         sliding_window_data = {
             "processed_tail_marker_24h": tail_marker_24h,
             "processed_head_marker_24h": head_marker_24h,
@@ -696,7 +908,8 @@ async def process_pairs_trade_volume_and_reserves(
             "aggregated_token1_volume_usd_7d": pair_trade_volume_7d.token1_volume_usd,
             "processed_block_height_total_reserve": pair_liquidity.block_height_total_reserve,
             "processed_block_height_trade_volume": block_height_trade_volume,
-            "processed_block_timestamp_total_reserve": pair_liquidity.block_timestamp_total_reserve,
+            # TODO: achieve logical parity between timestamps and block heights maintained for different data points of token reserves and trade volumes
+            "processed_block_timestamp_total_reserve": max_trade_volume_block_timestamp,
         }
         prepared_snapshot = liquidityProcessedData(
             contractAddress=pair_contract_address,
@@ -707,8 +920,8 @@ async def process_pairs_trade_volume_and_reserves(
             fees_24h=f"US${round(abs(pair_trade_volume_24h.fees)):,}",
             cid_volume_24h=cids_volume_24h,
             cid_volume_7d=cids_volume_7d,
-            block_height=pair_liquidity.block_height_total_reserve,
-            block_timestamp=pair_liquidity.block_timestamp_total_reserve,
+            block_height=block_height_trade_volume,
+            block_timestamp=max_trade_volume_block_timestamp,
             token0Liquidity=pair_liquidity.token0_liquidity,
             token1Liquidity=pair_liquidity.token1_liquidity,
             token0LiquidityUSD=pair_liquidity.token0_liquidity_usd,
@@ -763,28 +976,37 @@ async def v2_pairs_data(
             aioredis_pool.writer_redis_pool,
             common_epoch_end,
             pair_contract_address,
-            ipfs_read_client
+            ipfs_read_client,
+            async_httpx_client
         )
         process_data_list.append(trade_volume_reserves)
 
-    final_results: Iterable[Union[liquidityProcessedData, BaseException]] = await asyncio.gather(
+    final_results: Iterable[Union[liquidityProcessedData, None, BaseException]] = await asyncio.gather(
         *process_data_list, return_exceptions=True
     )
-    
-    try:
-        common_block_timestamp = max(
-            map(lambda x: x.block_timestamp, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
-        )
-    except ValueError:
+
+    final_results_map = dict(zip(PAIR_CONTRACTS, final_results))
+    results_without_missing_index = {k: v for k, v in final_results_map.items() if not isinstance(v, MissingIndexException)}
+    contracts_results_with_missing_index = {k for k, v in final_results_map.items() if isinstance(v, MissingIndexException)}
+    # logger.debug(list(map(lambda x: x if not isinstance(x, liquidityProcessedData) else None, results_without_missing_index.values())))
+    # filter out exceptions around missing indexes
+    if not all(map(lambda x: isinstance(x, liquidityProcessedData), results_without_missing_index.values())):
         logger.error(
-                'Aggregation on all pair contracts\' trade volume and reserves incomplete. Waiting to build v2 pairs summary in next cycle '
-            )
+            'Aggregation on all pair contracts\' trade volume and reserves incomplete. Waiting to build v2 pairs summary in next cycle.\nErrors: %s',
+            {k: v for k, v in results_without_missing_index.items() if not isinstance(v, liquidityProcessedData)}
+        )
         return
+    
+    
+    common_block_timestamp = max(
+        filter(lambda x: isinstance(x, liquidityProcessedData) ,results_without_missing_index.values()), 
+        key=lambda x: x.block_timestamp).block_timestamp
+    
     pair_addresses = map(lambda x: x.contractAddress, filter(lambda y: isinstance(y, liquidityProcessedData), final_results))
     pair_contract_address = next(pair_addresses)
     logger.debug('Setting common blockheight for v2 pairs aggregation %s', common_epoch_end)
     
-    summarized_result_l = [x.dict() for x in final_results if not (isinstance(x, BaseException) or x is None)]
+    summarized_result_l = [x.dict() for x in results_without_missing_index.values()]
     summarized_payload = {'data': summarized_result_l}
     # get last processed v2 pairs snapshot height
     l_ = await redis_conn.get(
@@ -927,7 +1149,7 @@ async def v2_pairs_data(
                     logger.info('V2 pairs summary snapshot updated...')
                     break
 
-                return final_results
+                return results_without_missing_index
 
 if __name__ == '__main__':
     print("", "")

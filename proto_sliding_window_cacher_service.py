@@ -4,8 +4,13 @@ import logging
 import sys
 from functools import wraps
 from typing import Tuple
+from urllib.parse import urljoin
+
+import httpx
 from config import settings
 from async_ipfshttpclient.main import AsyncIPFSClient
+from data_models import SnapshotterIssue, SnapshotterIssueSeverity
+from exceptions import ProjectFinalizedHeightError
 from utils import redis_keys
 from utils.redis_conn import RedisPool
 from utils import retrieval_utils
@@ -42,8 +47,10 @@ def acquire_bounded_semaphore(fn):
         result = None
         try:
             result = await fn(*args, **kwargs)
-        except:
-            pass
+        except Exception as e:
+            sliding_cacher_logger.error('Error in semaphore acquisition decorator: %s', e, exc_info=True)
+            if isinstance(e, ProjectFinalizedHeightError):
+                result = e  # so that the caller can filter out such bad results
         finally:
             sem.release()
             return result
@@ -79,7 +86,7 @@ async def find_tail(
         sliding_cacher_logger.warning(
             "Seeking tail against head block DAG CID %s height %s for time period %s"
             "No payload found while fetching dag_block at height %s for projectId: %s. Skipping building of primary index",
-            head_block['data']['dag_cid'], head, time_period_ts,
+            head_block['data']['dagCid'], head, time_period_ts,
             current_height, project_id, exc_info=True
         )
         return None
@@ -103,7 +110,7 @@ async def find_tail(
             sliding_cacher_logger.warning(
                 "Seeking tail against head block DAG CID %s height %s for time period %s"
                 "Exception while fetching dag_block at height %s for projectId: %s. Error:%s",
-                head_block['data']['dag_cid'], head, time_period_ts,
+                head_block['data']['dagCid'], head, time_period_ts,
                 current_height, project_id, err, exc_info=True
             )
         current_height += 1
@@ -193,7 +200,7 @@ async def get_epoch_end_per_project(
     project_height_key = redis_keys.get_block_height_key(project_id)
     max_height = await writer_redis_conn.get(project_height_key)
     if not max_height:
-        raise Exception("Can\'t fetch max block height against project ID: %s", project_id)
+        raise ProjectFinalizedHeightError("Can\'t fetch max block height against project ID: %s", project_id)
     dag_block = await retrieval_utils.get_dag_block_by_height(
         project_id=project_id,
         block_height=int(max_height.decode('utf-8')),
@@ -236,38 +243,15 @@ async def get_max_height_pair_project(
     finally:
         return max_height
 
-async def adjust_projects_head_by_source_height(
-        source_height_map,
-        smallest_source_height,
-        registered_projects,
-        writer_redis_conn,
-        ipfs_read_client: AsyncIPFSClient
-):
-    for project_map_id, project_map in source_height_map.items():
-        dag_block_height = int(project_map["dag_block_height"])
-        cycles = 0
-        while cycles <= 10 and int(smallest_source_height) != int(source_height_map[project_map_id]["source_height"]):
-            cycles += 1
-            dag_block_height -= 1
-            dag_block = await retrieval_utils.get_dag_block_by_height(
-                project_id=project_map_id,
-                block_height=dag_block_height,
-                reader_redis_conn=writer_redis_conn,
-                ipfs_read_client=ipfs_read_client
-            )
-            if dag_block:
-                source_height_map[project_map_id]["source_height"] = dag_block["data"]["payload"]["chainHeightRange"]["end"]
-                source_height_map[project_map_id]["dag_block_height"] = dag_block_height
 
-
-async def build_primary_indexes(ipfs_read_client):
+async def build_primary_indexes(ipfs_read_client: AsyncIPFSClient, httpx_client: httpx.AsyncClient):
     aioredis_pool = RedisPool()
     await aioredis_pool.populate()
     writer_redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     # project ID -> {"series": ['24h', '7d']}
     registered_projects = await writer_redis_conn.hgetall(
         redis_keys.get_projects_registered_for_cache_indexing_key_with_namespace(settings.pooler_namespace)
-        )
+    )
     sliding_cacher_logger.debug('Got %d registered projects for indexing', len(registered_projects))
     registered_project_ids = [x.decode('utf-8') for x in registered_projects.keys()]
     registered_projects_ts = [json.loads(v)['series'] for v in registered_projects.values()]
@@ -293,8 +277,24 @@ async def build_primary_indexes(ipfs_read_client):
         sliding_cacher_logger.error("Can\'t find max epoch end for all projects, sleeping till next cycle")
         return
     indexable_projects_to_dag_heights = {k: epoch_ends_map[idx][0] for idx, k in enumerate(registered_project_ids) if not(isinstance(epoch_ends_map[idx], Exception) or epoch_ends_map[idx][1] == 0)}
-    
-    sliding_cacher_logger.debug(f"Start building indexes for all projects | project_count:{len(project_id_to_register_series)}")
+    non_indexable_projects = {k: str(epoch_ends_map[idx][1]) for idx, k in enumerate(registered_project_ids) if isinstance(epoch_ends_map[idx], Exception) or epoch_ends_map[idx][1] == 0}
+    if non_indexable_projects:
+        sliding_cacher_logger.error("Can\'t find epoch end for projects: %s", non_indexable_projects)
+        slack_alert_json = {
+            'severity': 'MEDIUM',   
+            'Service': f'PrimaryIndexBuilder-INSTANCE-{settings.instance_id}',
+            'errorDetails': f'\nEpoch end or DAG block height not found for projects: \n\n```\n{non_indexable_projects}\n```'
+                            f'Indexable projects and DAG head block heights found: \n\n```\n{indexable_projects_to_dag_heights}\n```'
+        }
+        # send slack alert
+        try:
+            await httpx_client.post(
+                url=settings.primary_indexer.slack_notify_URL,
+                json=slack_alert_json
+            )
+        except Exception as e:
+            sliding_cacher_logger.error("Error while sending slack alert: %s | Alert body: %s", e, slack_alert_json, exc_info=True)
+    sliding_cacher_logger.debug(f"Start building indexes for %s projects", len(indexable_projects_to_dag_heights))
     tasks = list()
     for project_id, head_dag_height in indexable_projects_to_dag_heights.items():
         for time_period in project_id_to_register_series[project_id]:
@@ -330,14 +330,13 @@ async def periodic_retrieval():
     redis_conn: aioredis.Redis = aioredis_pool.writer_redis_pool
     while True:
         try:
-            common_epoch_end = await build_primary_indexes(ipfs_read_client=ipfs_read_client)
+            common_epoch_end = await build_primary_indexes(ipfs_read_client=ipfs_read_client, httpx_client=async_httpx_client)
             if common_epoch_end:
                 try:
-                    await asyncio.gather(
-                        v2_pairs_data(async_httpx_client, common_epoch_end, ipfs_write_client, ipfs_read_client),
-                        v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn),
-                        asyncio.sleep(90),
-                    )
+                    await v2_pairs_data(async_httpx_client, common_epoch_end, ipfs_write_client, ipfs_read_client)
+                    # daily stats snapshotting should proceed only after v2 pairs data is aggregated
+                    await v2_pairs_daily_stats_snapshotter(async_httpx_client, ipfs_write_client, redis_conn)
+                    await asyncio.sleep(90)
                 except Exception as e:
                     sliding_cacher_logger.error('Error in uniswap summary aggregation: ')
                     sliding_cacher_logger.error(e, exc_info=True)

@@ -223,7 +223,7 @@ def get_uniswap_pair_cached_recent_logs(pair_address, pooler_namespace):
 
 
 def get_uniswap_pair_cache_daily_stats(pair_address, pooler_namespace):
-    return 'uniswap:pairContract:'+pooler_namespace+':{pair_address}:dailyCache'
+    return f'uniswap:pairContract:{pooler_namespace}:{pair_address}:dailyCache'
 
 def get_uniswap_pair_cache_sliding_window_data(pair_address, pooler_namespace):
     return 'uniswap:pairContract:'+pooler_namespace+':{}:slidingWindowData'.format(pair_address)
