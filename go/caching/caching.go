@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"audit-protocol/goutils/datamodel"
+	"audit-protocol/token-aggregator/models"
 )
 
 // DbCache is responsible for data caching in db stores like redis, memcache etc.
@@ -25,13 +26,30 @@ type DbCache interface {
 	StoreReportedIssues(ctx context.Context, issue *datamodel.IssueReport) error
 	RemoveOlderReportedIssues(ctx context.Context, tillTime int) error
 
-	//GetPayloadCIDs - startHeight and endHeight are string because they can be "-inf" or "+inf"
+	// GetPayloadCIDs - startHeight and endHeight are string because they can be "-inf" or "+inf"
 	// -inf & +inf are just alias for start and end respectively, though the values must be changed according to cache implementation
 	GetPayloadCIDs(ctx context.Context, projectID string, startHeight, endHeight string) ([]*datamodel.DagBlock, error)
 
-	//GetDagChainCIDs - startHeight and endHeight are string because they can be "-inf" or "+inf"
+	// GetDagChainCIDs - startHeight and endHeight are string because they can be "-inf" or "+inf"
 	// -inf & +inf are just alias for start and end respectively, though the values must be changed according to cache implementation
 	GetDagChainCIDs(ctx context.Context, projectID string, startHeight, endHeight string) ([]*datamodel.DagBlock, error)
+
+	FetchPairsSummaryLatestBlockHeight(ctx context.Context, poolerNamespace string) int64
+	FetchPairTokenMetadata(ctx context.Context, poolerNamespace, pairContractAddr string) (*datamodel.TokenPairMetadata, error)
+	FetchPairTokenAddresses(ctx context.Context, poolerNamespace, pairContractAddr string) (*datamodel.TokenPairAddresses, error)
+	FetchTokenSummaryLatestBlockHeight(ctx context.Context, poolerNamespace string) (int64, error)
+	FetchPairSummarySnapshot(ctx context.Context, blockHeight int64, poolerNamespace string) ([]*models.TokenPairLiquidityProcessedData, error)
+	FetchTokenPriceAtBlockHeight(ctx context.Context, tokenContractAddr string, blockHeight int64, poolerNamespace string) (float64, error)
+	UpdateTokenPriceHistoryInRedis(ctx context.Context, toTime, fromTime float64, tokenData *models.TokenData, poolerNamespace string) error
+	PrunePriceHistoryInRedis(ctx context.Context, key string, fromTime float64) error
+	FetchTokenPriceHistoryInRedis(ctx context.Context, fromTime, toTime float64, contractAddress, poolerNamespace string) (*models.TokenPriceHistory, error)
+	PruneTokenPriceZSet(ctx context.Context, tokenContractAddr string, blockHeight int64, poolerNamespace string) error
+	FetchSummaryProjectSnapshots(ctx context.Context, key, min, max string) ([]*models.TokenSummarySnapshotMeta, error)
+	RemoveOlderSnapshot(ctx context.Context, key string, snapshot *models.TokenSummarySnapshotMeta) error
+	AddSnapshot(ctx context.Context, key string, score int, snapshot *models.TokenSummarySnapshotMeta) error
+	StoreTokensSummaryPayload(ctx context.Context, blockHeight int64, poolerNamespace string, tokenList map[string]*models.TokenData) error
+	StoreTokenSummaryCIDInSnapshotsZSet(ctx context.Context, blockHeight int64, poolerNamespace string, tokenSummarySnapshotMeta *models.TokenSummarySnapshotMeta) error
+	PruneTokenSummarySnapshotsZSet(ctx context.Context, poolerNamespace string) error
 }
 
 // DiskCache is responsible for data caching in local disk
