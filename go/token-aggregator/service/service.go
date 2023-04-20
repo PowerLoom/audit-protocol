@@ -123,6 +123,8 @@ func (s *TokenAggregator) Run(pairContractAddress string) {
 			break
 		}
 
+		log.Infof("pairsSummary snapshot has not been created yet, sleeping for %d secs", s.settingsObj.TokenAggregatorSettings.RunIntervalSecs)
+
 		time.Sleep(time.Duration(s.settingsObj.TokenAggregatorSettings.RunIntervalSecs) * time.Second)
 	}
 
@@ -255,9 +257,7 @@ func (s *TokenAggregator) FetchAndFillTokenMetaData(pairContractAddr string) err
 		tokenData.Name = pairContractMetadata.Token1Name
 		tokenData.ContractAddress = token1Addr
 
-		s.tokenListLock.Lock()
 		s.tokenList[token1Addr] = tokenData
-		s.tokenListLock.Unlock()
 
 		tokenRefs.token1Ref = tokenData
 		log.WithField("token1", tokenData).Debug("token1 Data")
@@ -371,9 +371,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	for key, tokenData := range s.tokenList {
 		tokenData.Price, err = s.redisCache.FetchTokenPriceAtBlockHeight(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
 		if err != nil {
-			s.tokenListLock.Lock()
 			delete(s.tokenList, key)
-			s.tokenListLock.Unlock()
 
 			continue
 		}
@@ -389,6 +387,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 
 			priceHistory, err := s.redisCache.FetchTokenPriceHistoryInRedis(context.Background(), fromTime, curTimeEpoch, tokenData.ContractAddress, s.settingsObj.PoolerNamespace)
 			if err != nil {
+				s.tokenListLock.Unlock()
 				return err
 			}
 
