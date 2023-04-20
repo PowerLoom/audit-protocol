@@ -232,6 +232,7 @@ func (s *TokenAggregator) FetchAndFillTokenMetaData(pairContractAddr string) err
 	tokenRefs := new(TokenDataRefs)
 
 	// FIX: TOKEN Symbol and name not getting stored in tokenData.
+	s.tokenListLock.Lock()
 	if _, ok := s.tokenList[token0Addr]; !ok {
 		tokenData := new(models.TokenData)
 
@@ -239,9 +240,7 @@ func (s *TokenAggregator) FetchAndFillTokenMetaData(pairContractAddr string) err
 		tokenData.Name = pairContractMetadata.Token0Name
 		tokenData.ContractAddress = token0Addr
 
-		s.tokenListLock.Lock()
 		s.tokenList[token0Addr] = tokenData
-		s.tokenListLock.Unlock()
 
 		tokenRefs.token0Ref = tokenData
 		log.WithField("token0", tokenData).Debug("token0 Data")
@@ -265,6 +264,7 @@ func (s *TokenAggregator) FetchAndFillTokenMetaData(pairContractAddr string) err
 	}
 
 	tokenRefs.token1Ref = s.tokenList[token1Addr]
+	s.tokenListLock.Unlock()
 
 	s.tokenPairMappingLock.Lock()
 	s.tokenPairMapping[pairContractAddr] = tokenRefs
@@ -367,10 +367,13 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	beginBlockHeight24h := 0
 	beginTimeStamp24h := 0.0
 
+	s.tokenListLock.Lock()
 	for key, tokenData := range s.tokenList {
 		tokenData.Price, err = s.redisCache.FetchTokenPriceAtBlockHeight(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
 		if err != nil {
+			s.tokenListLock.Lock()
 			delete(s.tokenList, key)
+			s.tokenListLock.Unlock()
 
 			continue
 		}
@@ -403,6 +406,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 				key, tokenData.Name, tokenData.BlockHeight)
 		}
 	}
+	s.tokenListLock.Unlock()
 
 	err = s.CommitTokenSummaryPayload()
 	if err != nil {
@@ -461,12 +465,14 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	lastSnapshotBlockHeight = curBlockHeight
 
 	// prune TokenPrice ZSet as price already fetched for all tokens
+	s.tokenListLock.Lock()
 	for _, tokenData := range s.tokenList {
 		err = s.redisCache.PruneTokenPriceZSet(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
 		if err != nil {
 			log.WithError(err).Error("failed to prune price zset")
 		}
 	}
+	s.tokenListLock.Unlock()
 
 	return nil
 }
@@ -557,6 +563,7 @@ func (s *TokenAggregator) FetchAndUpdateStatusOfOlderSnapshots(projectId string)
 }
 
 func (s *TokenAggregator) ResetTokenData() {
+	s.tokenListLock.Lock()
 	for _, tokenData := range s.tokenList {
 		tokenData.Liquidity = 0
 		tokenData.LiquidityUSD = 0
@@ -565,6 +572,7 @@ func (s *TokenAggregator) ResetTokenData() {
 		tokenData.TradeVolume7d = 0
 		tokenData.TradeVolumeUSD7d = 0
 	}
+	s.tokenListLock.Unlock()
 }
 
 // CommitTokenSummaryPayload commits the token summary payload to the audit-protocol.
@@ -579,11 +587,13 @@ func (s *TokenAggregator) CommitTokenSummaryPayload() error {
 
 	var index int
 
+	s.tokenListLock.Lock()
 	for _, tokenData := range s.tokenList {
 		request.Payload.TokensData[index] = tokenData
 
 		index += 1
 	}
+	s.tokenListLock.Unlock()
 
 	body, err := json.Marshal(request)
 	if err != nil {
