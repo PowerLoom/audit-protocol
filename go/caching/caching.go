@@ -50,6 +50,10 @@ type DbCache interface {
 	StoreTokensSummaryPayload(ctx context.Context, blockHeight int64, poolerNamespace string, tokenList map[string]*models.TokenData) error
 	StoreTokenSummaryCIDInSnapshotsZSet(ctx context.Context, blockHeight int64, poolerNamespace string, tokenSummarySnapshotMeta *models.TokenSummarySnapshotMeta) error
 	PruneTokenSummarySnapshotsZSet(ctx context.Context, poolerNamespace string) error
+
+	CheckIfProjectExists(ctx context.Context, projectID string) (bool, error)
+	GetTentativeBlockHeight(ctx context.Context, projectID string) (int, error)
+	GetProjectEpochSize(ctx context.Context, id string) (int, error)
 }
 
 // DiskCache is responsible for data caching in local disk

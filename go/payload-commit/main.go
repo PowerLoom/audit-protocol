@@ -22,12 +22,17 @@ import (
 	"github.com/streadway/amqp"
 	"golang.org/x/time/rate"
 
+	"audit-protocol/caching"
 	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/filecache"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
+	taskmgr "audit-protocol/goutils/taskmgr/rabbitmq"
+	w3storage "audit-protocol/goutils/w3s"
+	"audit-protocol/payload-commit/service"
+	"audit-protocol/payload-commit/worker"
 )
 
 var ctx = context.Background()
@@ -39,7 +44,8 @@ var dagFinalizerClient http.Client
 var w3sHttpClient http.Client
 var settingsObj *settings.SettingsObj
 var consts ConstsObj
-var rmqConnection *Conn
+
+// var rmqConnection *Conn
 var exitChan chan bool
 var WaitQueueForConsensus map[string]*datamodel.PayloadCommit
 var QueueLock sync.Mutex
@@ -53,11 +59,70 @@ var commonTxReqParams datamodel.CommonTxRequestParams
 
 type retryType int64
 
+func main() {
+	logger.InitLogger()
+	ParseSettings()
+
+	ipfsutils.InitClient(
+		settingsObj.IpfsConfig.URL,
+		settingsObj.PayloadCommit.Concurrency,
+		settingsObj.IpfsConfig.IPFSRateLimiter,
+		settingsObj.IpfsConfig.Timeout,
+	)
+
+	_ = redisutils.InitRedisClient(
+		settingsObj.Redis.Host,
+		settingsObj.Redis.Port,
+		settingsObj.Redis.Db,
+		settingsObj.DagVerifierSettings.RedisPoolSize,
+		settingsObj.Redis.Password,
+		-1,
+	)
+
+	caching.NewRedisCache()
+	service.InitPayloadCommitService()
+	taskmgr.NewRabbitmqTaskMgr()
+	w3storage.InitW3S()
+
+	mqWorker := worker.NewWorker()
+
+	defer mqWorker.ShutdownWorker()
+
+	for {
+		err := mqWorker.ConsumeTask()
+		if err != nil {
+			log.WithError(err).Error("error while consuming task")
+		}
+	}
+
+	// InitTxManagerClient()
+	// InitDAGFinalizerCallbackClient()
+	// InitW3sClient()
+	var wg sync.WaitGroup
+	if settingsObj.UseConsensus {
+		wg.Add(1)
+		InitConsensusClient()
+		WaitQueueForConsensus = make(map[string]*datamodel.PayloadCommit, 100)
+		go func() {
+			defer wg.Done()
+			PollConsensusForConfirmations()
+		}()
+	}
+
+	log.Info("Starting RabbitMq Consumer")
+	RegisterSignalHandles()
+
+	InitRabbitmqConsumer()
+	if settingsObj.UseConsensus {
+		wg.Wait()
+	}
+}
+
 const (
 	NO_RETRY_SUCCESS retryType = iota
-	RETRY_IMMEDIATE            //TO be used in timeout scenarios or non server returned error scenarios.
-	RETRY_WITH_DELAY           //TO be used when immediate error is returned so that server is not overloaded.
-	NO_RETRY_FAILURE           //This is to be used for unexpected conditions which are not recoverable and hence no retry
+	RETRY_IMMEDIATE            // TO be used in timeout scenarios or non server returned error scenarios.
+	RETRY_WITH_DELAY           // TO be used when immediate error is returned so that server is not overloaded.
+	NO_RETRY_FAILURE           // This is to be used for unexpected conditions which are not recoverable and hence no retry
 )
 
 func (r retryType) String() string {
@@ -116,7 +181,7 @@ func RegisterSignalHandles() {
 }
 
 func GracefulShutDown() {
-	rmqConnection.StopConsumer()
+	// rmqConnection.StopConsumer()
 	time.Sleep(2 * time.Second)
 	redisClient.Close()
 	exitChan <- true
@@ -136,47 +201,8 @@ func ParseSettings() {
 		log.Fatalf("InstanceID is set to null, please generate and set a unique instanceID")
 		os.Exit(1)
 	}
+
 	ParseConsts(os.Getenv("CONFIG_PATH") + "/dev_consts.json")
-}
-
-func main() {
-
-	logger.InitLogger()
-	ParseSettings()
-	ipfsClient = ipfsutils.InitClient(
-		settingsObj.IpfsConfig.URL,
-		settingsObj.PayloadCommit.Concurrency,
-		settingsObj.IpfsConfig.IPFSRateLimiter,
-		settingsObj.IpfsConfig.Timeout)
-
-	redisClient = redisutils.InitRedisClient(
-		settingsObj.Redis.Host,
-		settingsObj.Redis.Port,
-		settingsObj.Redis.Db,
-		settingsObj.PayloadCommit.Concurrency,
-		settingsObj.Redis.Password, 0)
-
-	InitTxManagerClient()
-	InitDAGFinalizerCallbackClient()
-	InitW3sClient()
-	var wg sync.WaitGroup
-	if settingsObj.UseConsensus {
-		wg.Add(1)
-		InitConsensusClient()
-		WaitQueueForConsensus = make(map[string]*datamodel.PayloadCommit, 100)
-		go func() {
-			defer wg.Done()
-			PollConsensusForConfirmations()
-		}()
-	}
-
-	log.Info("Starting RabbitMq Consumer")
-	RegisterSignalHandles()
-
-	InitRabbitmqConsumer()
-	if settingsObj.UseConsensus {
-		wg.Wait()
-	}
 }
 
 func ParseConsts(constsFile string) {
@@ -196,28 +222,28 @@ func ParseConsts(constsFile string) {
 }
 
 func InitRabbitmqConsumer() {
-	var err error
-	rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
-	rmqConnection, err = GetConn(rabbitMqURL)
-	log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, settingsObj.PayloadCommit.Concurrency)
-	if err != nil {
-		panic(err)
-	}
-	rmqExchangeName := settingsObj.Rabbitmq.Setup.Core.Exchange
-	rmqQueueName := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.QueueNamePrefix + settingsObj.InstanceId
-	rmqRoutingKey := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + settingsObj.InstanceId
-
-	err = rmqConnection.StartConsumer(rmqQueueName,
-		rmqExchangeName,
-		rmqRoutingKey,
-		RabbitmqMsgHandler,
-		settingsObj.PayloadCommit.Concurrency)
-	if err != nil {
-		panic(err)
-	}
-
-	exitChan = make(chan bool)
-	<-exitChan
+	// var err error
+	// rabbitMqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", settingsObj.Rabbitmq.User, settingsObj.Rabbitmq.Password, settingsObj.Rabbitmq.Host, settingsObj.Rabbitmq.Port)
+	// // rmqConnection, err = GetConn(rabbitMqURL)
+	// log.Infof("Starting rabbitMQ consumer connecting to URL: %s with concurreny %d", rabbitMqURL, settingsObj.PayloadCommit.Concurrency)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// rmqExchangeName := settingsObj.Rabbitmq.Setup.Core.Exchange
+	// rmqQueueName := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.QueueNamePrefix + settingsObj.InstanceId
+	// rmqRoutingKey := settingsObj.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + settingsObj.InstanceId
+	//
+	// err = rmqConnection.StartConsumer(rmqQueueName,
+	// 	rmqExchangeName,
+	// 	rmqRoutingKey,
+	// 	RabbitmqMsgHandler,
+	// 	settingsObj.PayloadCommit.Concurrency)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	//
+	// exitChan = make(chan bool)
+	// <-exitChan
 }
 
 func AssignTentativeHeight(payloadCommit *datamodel.PayloadCommit) int {
@@ -235,7 +261,7 @@ func AssignTentativeHeight(payloadCommit *datamodel.PayloadCommit) int {
 
 func GetFirstEpochDetails(payloadCommit *datamodel.PayloadCommit) (int, int) {
 
-	//Record Project epoch size for the first epoch and also the endHeight.
+	// Record Project epoch size for the first epoch and also the endHeight.
 	epochSize := FetchProjectEpochSize(payloadCommit.ProjectId)
 	firstEpochEndHeight := 0
 	if epochSize == 0 {
@@ -259,18 +285,18 @@ func GetFirstEpochDetails(payloadCommit *datamodel.PayloadCommit) (int, int) {
 func ProcessUnCommittedSnapshot(payloadCommit *datamodel.PayloadCommit) bool {
 	tentativeBlockHeight := 0
 	updateTentativeBlockHeightState := false
-	//TODO: Need to think of a better way to do this in future,
-	//probably some kind of projectLevel Data which indicates ordering requirements for the project.
+	// TODO: Need to think of a better way to do this in future,
+	// probably some kind of projectLevel Data which indicates ordering requirements for the project.
 	if payloadCommit.SourceChainDetails.EpochStartHeight == 0 || payloadCommit.SourceChainDetails.EpochEndHeight == 0 {
 		/*In case of projects which need not be ordered based on sourceChainHeight such as SummaryProjects
-		Arrive at tentativeHeight by storing it in redis and assigning the next one*/
+		  Arrive at tentativeHeight by storing it in redis and assigning the next one*/
 		lastTentativeBlockHeight, err := GetTentativeBlockHeight(payloadCommit.ProjectId)
 		if err != nil {
 			return false
 		}
 		tentativeBlockHeight = lastTentativeBlockHeight + 1
 		updateTentativeBlockHeightState = true
-		//TODO: For now taking this shortcut..but this should ideally be derived from projectState.
+		// TODO: For now taking this shortcut..but this should ideally be derived from projectState.
 		payloadCommit.IsSummaryProject = true
 	} else {
 		tentativeBlockHeight = AssignTentativeHeight(payloadCommit)
@@ -307,8 +333,8 @@ func ProcessUnCommittedSnapshot(payloadCommit *datamodel.PayloadCommit) bool {
 			}
 			log.Debugf("web3.storage upload Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
 				snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-			//SnapshotCID from web3.storage is not used directly.
-			//payloadCommit.SnapshotCID = snapshotCid
+			// SnapshotCID from web3.storage is not used directly.
+			// payloadCommit.SnapshotCID = snapshotCid
 		}()
 
 		wg.Wait()
@@ -317,7 +343,7 @@ func ProcessUnCommittedSnapshot(payloadCommit *datamodel.PayloadCommit) bool {
 			return false
 		}
 		if !w3sStatus {
-			//Since web3.storage is only used as a backup, we proceed even if web3.storage upload fails as IPFS upload is successful
+			// Since web3.storage is only used as a backup, we proceed even if web3.storage upload fails as IPFS upload is successful
 			log.Errorf("Failed to upload to web3.storage status %b. Continuing with processing.", w3sStatus)
 		}
 	} else {
@@ -342,7 +368,7 @@ func ProcessUnCommittedSnapshot(payloadCommit *datamodel.PayloadCommit) bool {
 		return false
 	}
 	if updateTentativeBlockHeightState {
-		//Update TentativeBlockHeight for the project
+		// Update TentativeBlockHeight for the project
 		err = UpdateTentativeBlockHeight(payloadCommit)
 		if err != nil {
 			log.Errorf("Failed to update tentativeBlockHeight for the project %s with commitId %s due to error %+v",
@@ -420,8 +446,8 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 			return true
 		} else {
-			//What if payload is present and snapshotCID is empty?? Currently there is no scenario where this can happen, but need to handle in future.
-			//This would require soem kind of reorg of DAGChain if required as this is a resubmission of payload already submitted.
+			// What if payload is present and snapshotCID is empty?? Currently there is no scenario where this can happen, but need to handle in future.
+			// This would require soem kind of reorg of DAGChain if required as this is a resubmission of payload already submitted.
 			log.Debugf("Received incoming Payload commit message at tentative DAG Height %d for project %s for resubmission at block %d from rabbitmq.",
 				payloadCommit.TentativeBlockHeight, payloadCommit.ProjectId, payloadCommit.ResubmissionBlock)
 		}
@@ -432,7 +458,7 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	if !payloadCommit.SkipAnchorProof {
 		requestID, txHash, retryType = PrepareAndSubmitTxnToChain(&payloadCommit)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
-			//Not retrying further, expecting sel-healing to take care of recovery
+			// Not retrying further, expecting sel-healing to take care of recovery
 			log.Warnf("MAX Retries reached while trying to invoke tx-manager for project %s and commitId %s with tentativeBlockHeight %d.",
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further.")
 			requestID = ""
@@ -445,19 +471,19 @@ func RabbitmqMsgHandler(d amqp.Delivery) bool {
 	} else {
 		requestID = uuid.New().String()
 		payloadCommit.RequestID = requestID
-		//Wait for consensus.
-		//Skip consensus in case of summmaryProject until aggregation logic is fixed.
+		// Wait for consensus.
+		// Skip consensus in case of summmaryProject until aggregation logic is fixed.
 		if settingsObj.UseConsensus && !payloadCommit.IsSummaryProject && !payloadCommit.Resubmitted {
-			//In case of resubmission, no need to go for consensus again.
-			//Not storing this queue to redis, because in a worst-case scenario
-			//if the process crashes and we loose this state information, self-healing shall take care of it.
+			// In case of resubmission, no need to go for consensus again.
+			// Not storing this queue to redis, because in a worst-case scenario
+			// if the process crashes and we loose this state information, self-healing shall take care of it.
 			status, err := SubmitSnapshotForConsensus(&payloadCommit)
 			if status == SNAPSHOT_CONSENSUS_STATUS_ACCEPTED {
 				QueueLock.Lock()
 				WaitQueueForConsensus[payloadCommit.ProjectId] = &payloadCommit
 				QueueLock.Unlock()
 				return true
-			} else if status == "" { //This check is added as protection, ideally this condition should not be hit.
+			} else if status == "" { // This check is added as protection, ideally this condition should not be hit.
 				log.Fatalf("Snapshot is not accepted for project %s due to error %+v", payloadCommit.ProjectId, err)
 				return true
 			}
@@ -478,16 +504,16 @@ func AddToPendingTxns(payloadCommit *datamodel.PayloadCommit, txHash string, req
 	/*Add to redis pendingTransactions*/
 	err := UpdatePendingTxnInRedis(payloadCommit, requestID, txHash)
 	if err != nil {
-		//Not retrying further..expecting self-healing to take care.
+		// Not retrying further..expecting self-healing to take care.
 		log.Errorf("Unable to add transaction to PendingTxns after max retries for project %s and commitId %s with tentativeBlockHeight %d.",
 			payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
 		return true
 	}
 	if payloadCommit.SkipAnchorProof {
-		//Notify DAG finalizer service as we are skipping proof anchor on chain.
+		// Notify DAG finalizer service as we are skipping proof anchor on chain.
 		retryType := InvokeDAGFinalizerCallback(payloadCommit, requestID)
 		if retryType == RETRY_IMMEDIATE || retryType == RETRY_WITH_DELAY {
-			//Not retrying further..expecting self-healing to take care.
+			// Not retrying further..expecting self-healing to take care.
 			log.Warnf("MAX Retries reached while trying to invoke DAG finalizer for project %s and commitId %s with tentativeBlockHeight %d.",
 				payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight, " Not retrying further as this could be a system level issue!")
 			return true
@@ -531,7 +557,7 @@ func UpdatePendingTxnInRedis(payload *datamodel.PayloadCommit, requestID string,
 
 	if payload.Resubmitted {
 		pendingtxn.LastTouchedBlock = payload.ResubmissionBlock
-		//Check if a pendingEntry Exists, if so remove the old one and then create the new entry
+		// Check if a pendingEntry Exists, if so remove the old one and then create the new entry
 		res := redisClient.ZRangeByScore(ctx, key,
 			&redis.ZRangeBy{
 				Min: strconv.Itoa(payload.TentativeBlockHeight),
@@ -919,7 +945,7 @@ func SubmitTxnToChain(payload *datamodel.PayloadCommit, tokenHash string) (reque
 func InitTxManagerClient() {
 	log.Info("InitTxManagerClient")
 	t := http.Transport{
-		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+		// TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
 		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
 		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
@@ -934,8 +960,8 @@ func InitTxManagerClient() {
 
 	commonTxReqParams.Method = "commitRecord"
 
-	//Default values
-	tps := rate.Limit(50) //50 TPS
+	// Default values
+	tps := rate.Limit(50) // 50 TPS
 	burst := 50
 	if settingsObj.ContractCallBackend.RateLimiter != nil {
 		burst = settingsObj.ContractCallBackend.RateLimiter.Burst
@@ -954,7 +980,7 @@ func InitW3sClient() {
 	log.Info("InitW3sClient")
 
 	t := http.Transport{
-		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+		// TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.Web3Storage.MaxIdleConns,
 		MaxConnsPerHost:     settingsObj.Web3Storage.MaxIdleConns,
 		MaxIdleConnsPerHost: settingsObj.Web3Storage.MaxIdleConns,
@@ -967,8 +993,8 @@ func InitW3sClient() {
 		Transport: &t,
 	}
 
-	//Default values
-	tps := rate.Limit(3) //3 TPS
+	// Default values
+	tps := rate.Limit(3) // 3 TPS
 	burst := 3
 	if settingsObj.Web3Storage.RateLimiter != nil {
 		burst = settingsObj.Web3Storage.RateLimiter.Burst
@@ -987,7 +1013,7 @@ func InitDAGFinalizerCallbackClient() {
 	log.Info("InitDAGFinalizerCallbackClient")
 
 	t := http.Transport{
-		//TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
+		// TLSClientConfig:    &tls.Config{KeyLogWriter: kl, InsecureSkipVerify: true},
 		MaxIdleConns:        settingsObj.PayloadCommit.Concurrency,
 		MaxConnsPerHost:     settingsObj.PayloadCommit.Concurrency,
 		MaxIdleConnsPerHost: settingsObj.PayloadCommit.Concurrency,
@@ -999,8 +1025,8 @@ func InitDAGFinalizerCallbackClient() {
 		Timeout:   time.Duration(settingsObj.HttpClientTimeoutSecs) * time.Second,
 		Transport: &t,
 	}
-	//Default values
-	tps := rate.Limit(50) //50 TPS
+	// Default values
+	tps := rate.Limit(50) // 50 TPS
 	burst := 20
 	if settingsObj.PayloadCommit.DAGFinalizerRateLimiter != nil {
 		burst = settingsObj.PayloadCommit.DAGFinalizerRateLimiter.Burst

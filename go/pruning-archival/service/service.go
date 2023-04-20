@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-retryablehttp"
 	log "github.com/sirupsen/logrus"
+	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/commonutils"
 	"audit-protocol/goutils/httpclient"
@@ -39,11 +40,17 @@ type PruningTask struct {
 }
 
 func InitPruningService(settingsObj *settings.SettingsObj, redisClient *redis.Client, ipfsClient *ipfsutils.IpfsClient) *PruningService {
-	return &PruningService{
+	pruningService := &PruningService{
 		settingsObj: settingsObj,
 		caching:     &caching{redisClient: redisClient},
 		ipfsClient:  ipfsClient,
 	}
+
+	if err := gi.Inject(pruningService); err != nil {
+		log.WithError(err).Fatalf("failed to inject pruning service")
+	}
+
+	return pruningService
 }
 
 // Run runs the pruning task

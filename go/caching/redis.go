@@ -741,8 +741,66 @@ func (r *RedisCache) PruneTokenSummarySnapshotsZSet(ctx context.Context, poolerN
 
 			return err
 		}
-
 	}
 
 	return nil
+}
+
+func (r *RedisCache) CheckIfProjectExists(ctx context.Context, projectID string) (bool, error) {
+	res, err := r.redisClient.Keys(ctx, fmt.Sprintf("projectID:%s:*", projectID)).Result()
+	if err != nil {
+		log.WithError(err).Error("failed to check if project exists")
+
+		return false, err
+	}
+
+	if len(res) == 0 {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (r *RedisCache) GetTentativeBlockHeight(ctx context.Context, projectID string) (int, error) {
+	res, err := r.redisClient.Get(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_TENTATIVE_BLOCK_HEIGHT, projectID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, nil
+		}
+
+		log.WithError(err).Error("failed to get tentative block height")
+
+		return 0, err
+	}
+
+	blockHeight, err := strconv.Atoi(res)
+	if err != nil {
+		log.WithError(err).Error("failed to convert tentative block height to int")
+
+		return 0, err
+	}
+
+	return blockHeight, nil
+}
+
+func (r *RedisCache) GetProjectEpochSize(ctx context.Context, id string) (int, error) {
+	res, err := r.redisClient.Get(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_EPOCH_SIZE, id)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, nil
+		}
+
+		log.WithError(err).Error("failed to get project epoch size")
+
+		return 0, err
+	}
+
+	epochSize, err := strconv.Atoi(res)
+	if err != nil {
+		log.WithError(err).Error("failed to convert epoch size to int")
+
+		return 0, err
+	}
+
+	return epochSize, nil
 }

@@ -1,206 +1,261 @@
 package taskmgr
 
 import (
-	"context"
-	"fmt"
-	"net"
-	"strconv"
-	"time"
+    "context"
+    "errors"
+    "fmt"
+    "net"
+    "strconv"
+    "strings"
 
-	"audit-protocol/goutils/settings"
-	"audit-protocol/goutils/taskmgr"
-	"audit-protocol/goutils/taskmgr/worker"
+    "github.com/swagftw/gi"
 
-	log "github.com/sirupsen/logrus"
-	"github.com/streadway/amqp"
+    "audit-protocol/goutils/settings"
+    "audit-protocol/goutils/taskmgr"
+    "audit-protocol/goutils/taskmgr/worker"
+
+    log "github.com/sirupsen/logrus"
+    "github.com/streadway/amqp"
 )
-
-const (
-	taskSuffix string = "task"
-	dlxSuffix  string = "dlx"
-)
-
-type Config struct {
-	queueName string
-}
 
 type RabbitmqTaskMgr struct {
-	conn     *amqp.Connection
-	settings *settings.SettingsObj
+    conn     *amqp.Connection
+    settings *settings.SettingsObj
 }
 
-func NewRabbitmqTaskMgr(settings *settings.SettingsObj) taskmgr.TaskMgr {
-	return &RabbitmqTaskMgr{
-		conn:     Dial(settings),
-		settings: settings,
-	}
+var _ taskmgr.TaskMgr = &RabbitmqTaskMgr{}
+
+func NewRabbitmqTaskMgr() *RabbitmqTaskMgr {
+    settingsObj, err := gi.Invoke[*settings.SettingsObj]()
+    if err != nil {
+        log.WithError(err).Fatalf("failed to invoke settingsObj object")
+    }
+
+    taskMgr := &RabbitmqTaskMgr{
+        conn:     Dial(settingsObj),
+        settings: settingsObj,
+    }
+
+    if err := gi.Inject(taskMgr); err != nil {
+        log.WithError(err).Fatalf("failed to inject dependencies")
+    }
+
+    log.Debug("rabbitmq task manager initialized")
+
+    return taskMgr
 }
 
-func (r RabbitmqTaskMgr) Publish(ctx context.Context) error {
-	//TODO implement me
-	panic("implement me")
+func (r *RabbitmqTaskMgr) Publish(ctx context.Context) error {
+    // TODO implement me
+    panic("implement me")
 }
 
 // getChannel returns a channel from the connection
 // this method is also used to create a new channel if channel is closed
-func (r RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, error) {
-	channel, err := r.conn.Channel()
-	if err != nil {
-		log.Errorf("Failed to open a channel on rabbitmq: %v", err)
+func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, error) {
+    channel, err := r.conn.Channel()
+    if err != nil {
+        log.Errorf("failed to open a channel on rabbitmq: %v", err)
 
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
+        return nil, taskmgr.ErrConsumerInitFailed
+    }
 
-	exchange := r.getExchange(workerType)
-	err = channel.ExchangeDeclare(exchange, "direct", true, false, false, false, nil)
-	if err != nil {
-		log.Errorf("Failed to declare an exchange on rabbitmq: %v", err)
+    exchange := r.getExchange(workerType)
 
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
+    err = channel.ExchangeDeclare(exchange, "direct", true, false, false, false, nil)
+    if err != nil {
+        log.Errorf("failed to declare an exchange on rabbitmq: %v", err)
 
-	// dead letter exchange
-	dlxExchange := r.settings.Rabbitmq.Setup.Core.DLX
-	err = channel.ExchangeDeclare(dlxExchange, "direct", true, false, false, false, nil)
-	if err != nil {
-		log.Errorf("Failed to declare an exchange on rabbitmq: %v", err)
+        return nil, taskmgr.ErrConsumerInitFailed
+    }
 
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
+    // dead letter exchange
+    dlxExchange := r.settings.Rabbitmq.Setup.Core.DLX
 
-	// declare the queue
-	dlxRoutingKey := r.getRoutingKey(workerType, taskSuffix) // dag-pruning:task
-	queue, err := channel.QueueDeclare(r.getQueue(workerType, taskSuffix), true, false, false, false, map[string]interface{}{
-		"x-dead-letter-exchange":    dlxExchange,
-		"x-dead-letter-routing-key": dlxRoutingKey,
-	})
-	if err != nil {
-		log.Errorf("Failed to declare a queue on rabbitmq: %v", err)
+    err = channel.ExchangeDeclare(dlxExchange, "direct", true, false, false, false, nil)
+    if err != nil {
+        log.Errorf("failed to declare an exchange on rabbitmq: %v", err)
 
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
+        return nil, taskmgr.ErrConsumerInitFailed
+    }
 
-	taskRoutingKey := r.getRoutingKey(workerType, taskSuffix)
-	err = channel.QueueBind(queue.Name, taskRoutingKey, exchange, false, nil)
-	if err != nil {
-		log.Errorf("Failed to bind a queue on rabbitmq: %v", err)
+    // declare the queue
+    routingKeys := r.getRoutingKeys(workerType) // dag-pruning:task
+    dlxRoutingKey := ""
+    for _, routingKey := range routingKeys {
+        if strings.Contains(routingKey, ":dlx") {
+            dlxRoutingKey = routingKey
+        }
+    }
 
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
+    if dlxRoutingKey == "" {
+        log.Errorf("failed to get dlx routing key")
 
-	err = channel.QueueBind(queue.Name, dlxRoutingKey, dlxExchange, false, nil)
-	if err != nil {
-		log.Errorf("Failed to bind a queue on rabbitmq: %v", err)
+        return nil, taskmgr.ErrConsumerInitFailed
+    }
 
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
+    queue, err := channel.QueueDeclare(r.getQueue(workerType, taskmgr.FinalizedSuffix), true, false, false, false, map[string]interface{}{
+        "x-dead-letter-exchange":    dlxExchange,
+        "x-dead-letter-routing-key": dlxRoutingKey,
+    })
+    if err != nil {
+        log.Errorf("failed to declare a queue on rabbitmq: %v", err)
 
-	return channel, nil
+        return nil, taskmgr.ErrConsumerInitFailed
+    }
+
+    // bind the queue to the exchange
+    for _, routingKey := range routingKeys {
+        ex := exchange
+        if strings.Contains(routingKey, ":dlx") {
+            ex = dlxExchange
+        }
+
+        err = channel.QueueBind(queue.Name, routingKey, ex, false, nil)
+        if err != nil {
+            log.WithField("routingKey", routingKey).Errorf("failed to bind a queue on rabbitmq: %v", err)
+
+            return nil, taskmgr.ErrConsumerInitFailed
+        }
+    }
+
+    // err = channel.QueueBind(queue.Name, dlxRoutingKey, dlxExchange, false, nil)
+    // if err != nil {
+    // 	log.Errorf("failed to bind a queue on rabbitmq: %v", err)
+    //
+    // 	return nil, taskmgr.ErrConsumerInitFailed
+    // }
+
+    return channel, nil
 }
 
-func (r RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, msgChan chan taskmgr.TaskHandler, errChan chan error) error {
-	channel, err := r.getChannel(workerType)
-	if err != nil {
-		return err
-	}
+// Consume consumes messages from the queue
+func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, msgChan chan taskmgr.TaskHandler, errChan chan error) error {
+    channel, err := r.getChannel(workerType)
+    if err != nil {
+        return err
+    }
 
-	defer func(channel *amqp.Channel) {
-		err = channel.Close()
-		if err != nil && err != amqp.ErrClosed {
-			log.Errorf("Failed to close channel on rabbitmq: %v", err)
-		}
-	}(channel)
+    defer func(channel *amqp.Channel) {
+        err = channel.Close()
+        if err != nil && !errors.Is(err, amqp.ErrClosed) {
+            log.Errorf("failed to close channel on rabbitmq: %v", err)
+        }
+    }(channel)
 
-	defer func() {
-		err = r.conn.Close()
-		if err != nil && err != amqp.ErrClosed {
-			log.Errorf("Failed to close connection on rabbitmq: %v", err)
-		}
-	}()
+    defer func() {
+        err = r.conn.Close()
+        if err != nil && !errors.Is(err, amqp.ErrClosed) {
+            log.Errorf("failed to close connection on rabbitmq: %v", err)
+        }
+    }()
 
-	queueName := r.getQueue(workerType, taskSuffix)
-	// consume messages
-	msgs, err := channel.Consume(
-		queueName,
-		"",
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		log.Errorf("Failed to register a consumer on rabbitmq: %v", err)
+    queueName := r.getQueue(workerType, taskmgr.TaskSuffix)
+    // consume messages
+    msgs, err := channel.Consume(
+        queueName,
+        "",
+        false,
+        false,
+        false,
+        false,
+        nil,
+    )
+    if err != nil {
+        log.Errorf("failed to register a consumer on rabbitmq: %v", err)
 
-		return err
-	}
+        return err
+    }
 
-	log.Infof("RabbitmqTaskMgr: consuming messages from queue %s", queueName)
+    log.Infof("RabbitmqTaskMgr: consuming messages from queue %s", queueName)
 
-	forever := make(chan *amqp.Error)
+    forever := make(chan *amqp.Error)
 
-	forever = channel.NotifyClose(forever)
+    forever = channel.NotifyClose(forever)
 
-	go func() {
-		for msg := range msgs {
-			log.Debug(msg.Headers)
+    go func() {
+        for msg := range msgs {
+            log.Debug(msg.Headers)
 
-			log.Infof("received new message")
+            log.Infof("received new message")
 
-			task := taskmgr.Task{Msg: msg}
+            task := &taskmgr.Task{Msg: msg, Topic: msg.RoutingKey}
 
-			msgChan <- task
-		}
-	}()
+            msgChan <- task
+        }
+    }()
 
-	err = <-forever
-	if err != nil {
-		log.Errorf("RabbitmqTaskMgr: connection closed while consuming messages from queue %s: %s", queueName, err)
-	}
+    err = <-forever
+    if err != nil {
+        log.WithError(err).WithField("queueName", queueName).Error("connection closed while consuming messages")
+    }
 
-	// send back error due to rabbitmq channel closed
-	errChan <- err
+    // send back error due to rabbitmq channel closed
+    errChan <- err
 
-	return nil
+    return nil
 }
 
 func Dial(config *settings.SettingsObj) *amqp.Connection {
-	rabbitmqConfig := config.Rabbitmq
+    rabbitmqConfig := config.Rabbitmq
 
-	url := fmt.Sprintf("amqp://%s:%s@%s/", rabbitmqConfig.User, rabbitmqConfig.Password, net.JoinHostPort(rabbitmqConfig.Host, strconv.Itoa(rabbitmqConfig.Port)))
+    url := fmt.Sprintf("amqp://%s:%s@%s/", rabbitmqConfig.User, rabbitmqConfig.Password, net.JoinHostPort(rabbitmqConfig.Host, strconv.Itoa(rabbitmqConfig.Port)))
 
-	// TODO: remove this before committing
-	conn, err := amqp.DialConfig(url, amqp.Config{Heartbeat: 10 * time.Hour})
-	if err != nil {
-		log.Panicf("Failed to connect to RabbitMQ: %v", err)
-	}
+    conn, err := amqp.Dial(url)
+    if err != nil {
+        log.Panicf("failed to connect to RabbitMQ: %v", err)
+    }
 
-	return conn
+    return conn
 }
 
-func (r RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
-	switch workerType {
-	case worker.TypePruningServiceWorker:
-		return r.settings.Rabbitmq.Setup.Core.Exchange
-	default:
-		return ""
-	}
+func (r *RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
+    switch workerType {
+    case worker.TypePruningServiceWorker:
+        return r.settings.Rabbitmq.Setup.Core.Exchange
+    case worker.TypePayloadCommitWorker:
+        return r.settings.Rabbitmq.Setup.Core.Exchange
+    default:
+        return ""
+    }
 }
 
-func (r RabbitmqTaskMgr) getQueue(workerType worker.Type, suffix string) string {
-	switch workerType {
-	case worker.TypePruningServiceWorker:
-		return r.settings.Rabbitmq.Setup.Queues.DagPruning.QueueNamePrefix + suffix
-	default:
-		return ""
-	}
+func (r *RabbitmqTaskMgr) getQueue(workerType worker.Type, suffix string) string {
+    switch workerType {
+    case worker.TypePruningServiceWorker:
+        return r.settings.Rabbitmq.Setup.Queues.DagPruning.QueueNamePrefix + suffix
+    case worker.TypePayloadCommitWorker:
+        return r.settings.Rabbitmq.Setup.Queues.CommitPayloads.QueueNamePrefix + suffix
+    default:
+        return ""
+    }
 }
 
-func (r RabbitmqTaskMgr) getRoutingKey(workerType worker.Type, suffix string) string {
-	switch workerType {
-	case worker.TypePruningServiceWorker:
-		return r.settings.Rabbitmq.Setup.Queues.DagPruning.RoutingKeyPrefix + suffix
-	default:
-		return ""
-	}
+// getRoutingKeys returns the routing key(s) for the given worker type
+func (r *RabbitmqTaskMgr) getRoutingKeys(workerType worker.Type) []string {
+    switch workerType {
+    case worker.TypePruningServiceWorker:
+        return []string{
+            r.settings.Rabbitmq.Setup.Queues.DagPruning.RoutingKeyPrefix + taskmgr.TaskSuffix,
+            r.settings.Rabbitmq.Setup.Queues.DagPruning.RoutingKeyPrefix + taskmgr.DLXSuffix,
+        }
+    case worker.TypePayloadCommitWorker:
+        return []string{
+            r.settings.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + r.settings.InstanceId + taskmgr.FinalizedSuffix,
+            r.settings.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + r.settings.InstanceId + taskmgr.DataSuffix,
+            r.settings.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + taskmgr.DLXSuffix,
+        }
+    default:
+        return nil
+    }
+}
+
+func (r *RabbitmqTaskMgr) Shutdown(ctx context.Context) error {
+    if err := r.conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
+        log.Errorf("failed to close connection on rabbitmq: %v", err)
+
+        return err
+    }
+
+    return nil
 }

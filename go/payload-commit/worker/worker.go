@@ -12,21 +12,21 @@ import (
 	"audit-protocol/goutils/taskmgr"
 	rabbitmqMgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	worker2 "audit-protocol/goutils/taskmgr/worker"
-	"audit-protocol/pruning-archival/service"
+	"audit-protocol/payload-commit/service"
 )
 
-type worker struct {
-	service  *service.PruningService
+type Worker struct {
+	service  *service.PayloadCommitService
 	taskmgr  taskmgr.TaskMgr
 	settings *settings.SettingsObj
 }
 
-func (w worker) ConsumeTask() error {
+func (w *Worker) ConsumeTask() error {
 	// create buffered channel to limit the number of concurrent tasks.
 	// buffered channel can is used to accept multiple messages and then process them in parallel.
 	// as messages are generated at lower pace than they are consumed, we can use unbuffered channel as well.
 	// TBD: we can use unbuffered channel as well.
-	taskChan := make(chan taskmgr.TaskHandler, w.settings.PruningServiceSettings.Concurrency)
+	taskChan := make(chan taskmgr.TaskHandler, w.settings.PayloadCommit.Concurrency)
 	defer close(taskChan)
 
 	// start consuming messages in separate go routine.
@@ -51,13 +51,13 @@ func (w worker) ConsumeTask() error {
 			}, backoff.NewExponentialBackOff())
 
 		if err != nil {
-			log.Fatalf("Failed to consume the message: %v", err)
+			log.WithError(err).Error("failed to consume the message")
 		}
 	}()
 
 	// create a wait group to wait for previous the tasks to finish.
-	// limit number of concurrent tasks per worker
-	swg := sizedwaitgroup.New(w.settings.PruningServiceSettings.Concurrency)
+	// limit number of concurrent tasks per Worker
+	swg := sizedwaitgroup.New(w.settings.PayloadCommit.Concurrency)
 
 	for {
 		swg.Add()
@@ -70,7 +70,7 @@ func (w worker) ConsumeTask() error {
 
 			log.WithField("msg", string(msgBody)).Debug("received message")
 
-			err := w.service.Run(msgBody)
+			err := w.service.Run(msgBody, taskHandler.GetTopic())
 			if err != nil {
 				log.WithError(err).Error("failed to run the task")
 
@@ -97,11 +97,14 @@ func (w worker) ConsumeTask() error {
 	}
 }
 
-// NewWorker creates a new worker listening for pruning tasks published by service responsible for creating segments
-// a single worker has capability to run multiple tasks concurrently using go routines.
+// should be implemented by all the workers
+var _ worker2.Worker = (*Worker)(nil)
+
+// NewWorker creates a new *Worker listening for pruning tasks published by service responsible for creating segments
+// a single Worker has capability to run multiple tasks concurrently using go routines.
 // running multiple instances of this whole service will create multiple workers which can horizontally scale the service.
-func NewWorker() worker2.Worker {
-	pruningService, err := gi.Invoke[*service.PruningService]()
+func NewWorker() *Worker {
+	pcService, err := gi.Invoke[*service.PayloadCommitService]()
 	if err != nil {
 		log.WithError(err).Fatal("failed to invoke payload commit service")
 	}
@@ -116,5 +119,9 @@ func NewWorker() worker2.Worker {
 		log.WithError(err).Fatal("failed to invoke rabbitmq task manager")
 	}
 
-	return &worker{service: pruningService, settings: settingsObj, taskmgr: mgr}
+	return &Worker{service: pcService, settings: settingsObj, taskmgr: mgr}
+}
+
+func (w *Worker) ShutdownWorker() {
+	_ = w.taskmgr.Shutdown(context.Background())
 }

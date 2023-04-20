@@ -41,17 +41,19 @@ func main() {
 		0,
 	)
 
-	pruningService := ps.InitPruningService(settingsObj, redisClient, ipfsClient)
+	ps.InitPruningService(settingsObj, redisClient, ipfsClient)
 
 	slackutils.InitSlackWorkFlowClient(settingsObj.DagVerifierSettings.SlackNotifyURL)
 
 	// this rabbitmq task manager
-	taskMgr := taskmgr.NewRabbitmqTaskMgr(settingsObj)
+	taskmgr.NewRabbitmqTaskMgr()
 
 	// init worker and start consuming tasks
-	wkr := worker.NewWorker(pruningService, settingsObj, taskMgr)
+	wkr := worker.NewWorker()
 
-	if err := wkr.ConsumeTask(); err != nil {
-		log.Errorf("Error while consuming task: %v", err)
+	for {
+		if err := wkr.ConsumeTask(); err != nil {
+			log.WithError(err).Error("error while consuming task")
+		}
 	}
 }

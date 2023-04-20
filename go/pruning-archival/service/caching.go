@@ -17,6 +17,7 @@ import (
 	"audit-protocol/pruning-archival/models"
 )
 
+// TODO move this to /audit-protocol/caching/redis.go
 type caching struct {
 	redisClient *redis.Client
 }
@@ -185,7 +186,7 @@ func (c *caching) DeleteContentFromLocalDrive(projectId, cachePath string, dagCi
 		err := os.Remove(fileName)
 		if err != nil {
 			log.Errorf("Failed to remove file %s from local cache due to error %+v", fileName, err)
-			//TODO: Need to have some sort of pruning files older than 8 days logic to handle failures.
+			// TODO: Need to have some sort of pruning files older than 8 days logic to handle failures.
 			return err
 		}
 
@@ -241,7 +242,7 @@ func (c *caching) UpdatePruningCycleDetailsInRedis(taskDetails *models.PruningTa
 		c.redisClient.Expire(context.Background(), key, time.Duration(25*intervalMins*int(time.Minute)))
 	}
 
-	//TODO: Migrate to using slack App.
+	// TODO: Migrate to using slack App.
 
 	return nil
 }
@@ -259,7 +260,7 @@ func (c *caching) UpdatePruningProjectReportInRedis(taskDetails *models.PruningT
 	}
 
 	log.Debugf("Successfully update projectPruningReport Details in redis as %+v", *projectPruningReport)
-	//TODO: Migrate to using slack App.
+	// TODO: Migrate to using slack App.
 	/* 		if projectPruningReport.DAGSegmentsArchivalFailed > 0 || projectPruningReport.UnPinFailed > 0 {
 	   			projectPruningReport.HostName, _ = os.Hostname()
 	   			report, _ := json.MarshalIndent(projectPruningReport, "", "\t")
