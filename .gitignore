@@ -37,3 +37,4 @@ go/go-tester/go-tester
 go/pruning-archival/pruning-archival
 go/token-aggregator/token-aggregator
 go/dag-status-reporter/dag-status-reporter
+go/goutils/smartcontract/abi

@@ -205,7 +205,6 @@ func (r *RedisCache) GetPayloadCIDs(ctx context.Context, projectID string, start
 		Min: startHeight,
 		Max: endHeight,
 	}).Result()
-
 	if err != nil {
 		log.Error("Could not fetch payload CIDs error: ", err)
 
@@ -803,4 +802,44 @@ func (r *RedisCache) GetProjectEpochSize(ctx context.Context, id string) (int, e
 	}
 
 	return epochSize, nil
+}
+
+// StoreProjects stores the given projects in the redis cache
+func (r *RedisCache) StoreProjects(background context.Context, projects []string) error {
+	_, err := r.redisClient.SAdd(background, redisutils.REDIS_KEY_STORED_PROJECTS, projects).Result()
+
+	if err != nil {
+		log.WithError(err).Error("failed to store projects")
+
+		return err
+	}
+
+	return nil
+}
+
+func (r *RedisCache) AddPayloadCID(ctx context.Context, projectID, payloadCID string, height float64) error {
+	err := r.redisClient.ZAdd(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), &redis.Z{
+		Score:  height,
+		Member: payloadCID,
+	}).Err()
+
+	if err != nil {
+		log.WithError(err).Error("failed to add payload CID to zset")
+	}
+
+	return err
+}
+
+func (r *RedisCache) RemovePayloadCIDAtHeight(ctx context.Context, projectID string, dagHeight int) error {
+	err := r.redisClient.ZRemRangeByScore(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), strconv.Itoa(dagHeight), strconv.Itoa(dagHeight)).Err()
+
+	if err != nil {
+		if err == redis.Nil {
+			return nil
+		}
+
+		log.WithError(err).Error("failed to remove payload CID from zset")
+	}
+
+	return err
 }

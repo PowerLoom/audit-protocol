@@ -18,6 +18,7 @@ import (
 	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/settings"
+	datamodel2 "audit-protocol/payload-commit/datamodel"
 )
 
 type IpfsClient struct {
@@ -151,36 +152,35 @@ func (client *IpfsClient) GetPayloadChainHeightRang(payloadCid string) (*datamod
 	return payload.ChainHeightRange, nil
 }
 
-func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadCommit,
-	retryIntervalSecs int, retryCountConfig int) bool {
+func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel2.PayloadCommitMessage) error {
+	err := client.ipfsClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		log.WithError(err).Error("ipfs rate limiter errored")
 
-	for retryCount := 0; ; {
-
-		err := client.ipfsClientRateLimiter.Wait(context.Background())
-		if err != nil {
-			log.Errorf("IPFSClient Rate Limiter wait timeout with error %+v", err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		snapshotCid, err := client.ipfsClient.Add(bytes.NewReader(payloadCommit.Payload), shell.CidVersion(1))
-
-		if err != nil {
-			if retryCount == retryCountConfig {
-				log.Errorf("IPFS Add failed for message %+v after max-retry of %d, with err %v", payloadCommit, retryCount, err)
-				return false
-			}
-			time.Sleep(time.Duration(retryIntervalSecs) * time.Second)
-			retryCount++
-			log.Errorf("IPFS Add failed for message %v, with err %v..retryCount %d .", payloadCommit, err, retryCount)
-			continue
-		}
-		log.Debugf("IPFS add Successful. Snapshot CID is %s for project %s with commitId %s at tentativeBlockHeight %d",
-			snapshotCid, payloadCommit.ProjectId, payloadCommit.CommitId, payloadCommit.TentativeBlockHeight)
-		payloadCommit.SnapshotCID = snapshotCid
-		break
+		return err
 	}
-	return true
+
+	msg, err := json.Marshal(payloadCommit.Message)
+	if err != nil {
+		log.WithError(err).Error("failed to marshal payload commit message")
+
+		return err
+	}
+
+	snapshotCid, err := client.ipfsClient.Add(bytes.NewReader(msg), shell.CidVersion(1))
+	if err != nil {
+		log.WithError(err).Error("failed to add snapshot to ipfs")
+
+		return err
+	}
+
+	log.WithField("snapshotCID", snapshotCid).
+		WithField("tentativeBlockHeight", payloadCommit.TentativeBlockHeight).
+		Debug("ipfs add Successful")
+
+	payloadCommit.SnapshotCID = snapshotCid
+
+	return nil
 }
 
 func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string) (*datamodel.DagPayload, error) {

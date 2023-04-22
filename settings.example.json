@@ -1,166 +1,175 @@
 {
-	"instance_id": "generated-uuid",
-	"pooler_namespace": "relevant-namespace",
-	"rpc_url": "https://rpc-url",
-	"local_cache_path": "/home/ubuntu/local_cache/",
-	"ap_backend": {
-		"host": "0.0.0.0",
-		"port": 9000,
-		"keepalive_secs": 600
-	},
-	"dag_finalizer": {
-		"host": "0.0.0.0",
-		"port": 9002,
-		"validate_header_sig": false,
-		"keepalive_secs": 600
-	},
-	"primary_indexer": {
-		"slack_notify_URL": ""
-	},
-	"rabbitmq": {
-		"user": "guest",
-		"password": "guest",
-		"host": "rabbitmq",
-		"port": 5672,
-		"setup": {
-			"core": {
-				"exchange": "audit-protocol-backend",
-				"dlx": "audit-protocol-backend-dlx"
-			},
-			"queues": {
-				"commit-payloads": {
-					"queue_name_prefix": "audit-protocol-commit-payloads:",
-					"routing_key_prefix": "commit-payloads:"
-				},
-				"dag-processing": {
-					"queue_name_prefix": "audit-protocol-dag-processing:",
-					"routing_key_prefix": "dag-processing:"
-				},
-				"dag-pruning": {
-					"queue_name_prefix": "audit-protocol-dag-pruning:",
-					"routing_key_prefix": "dag-pruning:"
-				}
-			}
-		}
-	},
-	"contract_addresses": {
-		"MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
-	},
-	"ipfs": {
-		"url": "/dns/ipfs/tcp/5001",
-		"reader_url": "/dns/ipfs/tcp/5001",
-		"write_rate_limit": {
-			"req_per_sec": 10,
-			"burst": 10
-		},
-		"timeout": 20
-	},
-	"txn_config": {
-		"url": "http://host.docker.internal:8085/commitRecord",
-		"rate_limit": {
-			"req_per_sec": 10,
-			"burst": 10
-		},
-		"skip_summary_projects_anchor_proof": true
-	},
-	"retry_count": 3,
-	"retry_interval_secs": 5,
-	"http_client_timeout_secs": 10,
-	"redis": {
-		"host": "redis",
-		"port": 6379,
-		"db": 0,
-		"password": null
-	},
-	"redis_reader": {
-		"host": "redis",
-		"port": 6379,
-		"db": 0,
-		"password": null
-	},
-	"rlimit": {
-		"file_descriptors": 2048
-	},
-	"payload_commit": {
-		"concurrency": 20,
-		"dag_finalizer_rate_limit": {
-			"req_per_sec": 50,
-			"burst": 20
-		}
-	},
-	"web3_storage": {
-		"url": "https://api.web3.storage",
-		"upload_url_suffix": "/upload",
-		"api_token": "",
-		"timeout_secs": 30,
-		"max_idle_conns": 5,
-		"idle_conn_timeout": 0,
-		"rate_limit": {
-			"req_per_sec": 3,
-			"burst": 6
-		}
-	},
-	"dag_verifier": {
-		"host": "0.0.0.0",
-		"port": 9030,
-		"slack_notify_URL": "",
-		"notify_suppress_time_secs": 1800,
-		"concurrency": 10,
-		"ipfs_rate_limit": {
-			"req_per_sec": 10,
-			"burst": 10
-		},
-		"redis_pool_size": 20,
-		"run_interval_secs": 300,
-		"additional_projects_to_track_prefixes": [
-			"uniswap_V2PairsSummarySnapshot",
-			"uniswap_V2TokensSummarySnapshot",
-			"uniswap_V2DailyStatsSnapshot"
-		],
-		"pruning_verification": false
-	},
-	"pruning": {
-		"run_interval_mins": 600,
-		"segment_size": 720,
-		"concurrency": 1,
-		"car_storage_path": "/tmp/",
-		"ipfs_rate_limit": {
-			"req_per_sec": 10,
-			"burst": 10
-		},
-		"ipfs_timeout_secs": 300,
-		"perform_archival": false,
-		"perform_ipfs_unpin": true,
-		"prune_redis_zsets": true,
-		"backup_redis_zsets_to_file": false,
-		"oldest_project_index": "7d",
-		"pruning_height_behind_oldest_index": 100,
-		"summary_projects_prune_height_behind_head": 1000,
-		"web3_storage": {
-			"timeout_secs": 600,
-			"rate_limit": {
-				"req_per_sec": 1,
-				"burst": 1
-			},
-			"upload_chunk_size_mb": 50
-		}
-	},
-	"use_consensus": true,
-	"consensus_config": {
-		"service_url": "http://offchain-consensus:9030",
-		"rate_limit": {
-			"req_per_sec": 5,
-			"burst": 5
-		},
-		"timeout_secs": 30,
-		"max_idle_conns": 5,
-		"idle_conn_timeout": 0,
-		"finalization_wait_time_secs": 300,
-		"polling_interval_secs": 10
-	},
-	"token_aggregator": {
-		"port": 8000,
-		"run_interval_secs": 60,
-		"ap_host": "localhost"
-	}
+  "instance_id": "generated-uuid",
+  "pooler_namespace": "relevant-namespace",
+  "rpc_url": "https://rpc-url",
+  "local_cache_path": "/home/ubuntu/local_cache/",
+  "ap_backend": {
+    "host": "0.0.0.0",
+    "port": 9000,
+    "keepalive_secs": 600
+  },
+  "dag_finalizer": {
+    "host": "0.0.0.0",
+    "port": 9002,
+    "validate_header_sig": false,
+    "keepalive_secs": 600
+  },
+  "rabbitmq": {
+    "user": "guest",
+    "password": "guest",
+    "host": "rabbitmq",
+    "port": 5672,
+    "setup": {
+      "core": {
+        "exchange": "audit-protocol-backend",
+        "dlx": "audit-protocol-backend-dlx"
+      },
+      "queues": {
+        "commit-payloads": {
+          "queue_name_prefix": "audit-protocol-commit-payloads:",
+          "routing_key_prefix": "commit-payloads:"
+        },
+        "dag-processing": {
+          "queue_name_prefix": "audit-protocol-dag-processing:",
+          "routing_key_prefix": "dag-processing:"
+        },
+        "dag-pruning": {
+          "queue_name_prefix": "audit-protocol-dag-pruning:",
+          "routing_key_prefix": "dag-pruning:"
+        }
+      }
+    }
+  },
+  "contract_addresses": {
+    "MAKER": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
+  },
+  "ipfs": {
+    "url": "/dns/ipfs/tcp/5001",
+    "reader_url": "/dns/ipfs/tcp/5001",
+    "write_rate_limit": {
+      "req_per_sec": 10,
+      "burst": 10
+    },
+    "timeout": 20
+  },
+  "txn_config": {
+    "url": "http://host.docker.internal:8085/commitRecord",
+    "rate_limit": {
+      "req_per_sec": 10,
+      "burst": 10
+    },
+    "skip_summary_projects_anchor_proof": true
+  },
+  "retry_count": 3,
+  "retry_interval_secs": 5,
+  "http_client_timeout_secs": 10,
+  "redis": {
+    "host": "redis",
+    "port": 6379,
+    "db": 0,
+    "password": null
+  },
+  "redis_reader": {
+    "host": "redis",
+    "port": 6379,
+    "db": 0,
+    "password": null
+  },
+  "rlimit": {
+    "file_descriptors": 2048
+  },
+  "payload_commit": {
+    "concurrency": 20,
+    "dag_finalizer_rate_limit": {
+      "req_per_sec": 50,
+      "burst": 20
+    }
+  },
+  "web3_storage": {
+    "url": "https://api.web3.storage",
+    "upload_url_suffix": "/upload",
+    "api_token": "",
+    "timeout_secs": 30,
+    "max_idle_conns": 5,
+    "idle_conn_timeout": 0,
+    "rate_limit": {
+      "req_per_sec": 3,
+      "burst": 6
+    }
+  },
+  "dag_verifier": {
+    "host": "0.0.0.0",
+    "port": 9030,
+    "slack_notify_URL": "",
+    "notify_suppress_time_secs": 1800,
+    "concurrency": 10,
+    "ipfs_rate_limit": {
+      "req_per_sec": 10,
+      "burst": 10
+    },
+    "redis_pool_size": 20,
+    "run_interval_secs": 300,
+    "additional_projects_to_track_prefixes": [
+      "uniswap_V2PairsSummarySnapshot",
+      "uniswap_V2TokensSummarySnapshot",
+      "uniswap_V2DailyStatsSnapshot"
+    ],
+    "pruning_verification": false
+  },
+  "pruning": {
+    "run_interval_mins": 600,
+    "segment_size": 720,
+    "concurrency": 1,
+    "car_storage_path": "/tmp/",
+    "ipfs_rate_limit": {
+      "req_per_sec": 10,
+      "burst": 10
+    },
+    "ipfs_timeout_secs": 300,
+    "perform_archival": false,
+    "perform_ipfs_unpin": true,
+    "prune_redis_zsets": true,
+    "backup_redis_zsets_to_file": false,
+    "oldest_project_index": "7d",
+    "pruning_height_behind_oldest_index": 100,
+    "summary_projects_prune_height_behind_head": 1000,
+    "web3_storage": {
+      "timeout_secs": 600,
+      "rate_limit": {
+        "req_per_sec": 1,
+        "burst": 1
+      },
+      "upload_chunk_size_mb": 50
+    }
+  },
+  "use_consensus": true,
+  "consensus_config": {
+    "service_url": "http://offchain-consensus:9030",
+    "rate_limit": {
+      "req_per_sec": 5,
+      "burst": 5
+    },
+    "timeout_secs": 30,
+    "max_idle_conns": 5,
+    "idle_conn_timeout": 0,
+    "finalization_wait_time_secs": 300,
+    "polling_interval_secs": 10
+  },
+  "token_aggregator": {
+    "port": 8000,
+    "run_interval_secs": 60,
+    "ap_host": "localhost"
+  },
+  "signer": {
+    "domain": {
+      "name": "PowerloomProtocolContract",
+      "version": "1",
+      "chainId": "11155111",
+      "verifyingContract": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
+    },
+    "contractAddress": "0xD0229849673849F889332839b71f369A7f231846",
+    "accountAddress": "0xAe1f65Ad0a5B4d51032aEfBd3bfbeCfCf4C293C8",
+    "deadlineBuffer": 10,
+    "rpcUrl": "https://sepolia.infura.io/v3/139a23304bdc466d82dc7a1f633a92cf"
+  }
 }

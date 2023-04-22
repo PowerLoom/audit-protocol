@@ -12,6 +12,7 @@ import (
 // for disk caching use DiskCache interface
 type DbCache interface {
 	GetStoredProjects(ctx context.Context) ([]string, error)
+	StoreProjects(background context.Context, projects []string) error
 	GetLastProjectIndexedState(ctx context.Context) (map[string]*datamodel.ProjectIndexedState, error)
 	GetPayloadCidAtDAGHeight(ctx context.Context, projectID string, dagHeight int) (string, error)
 	GetLastReportedDagHeight(ctx context.Context, projectID string) (int, error)
@@ -54,6 +55,7 @@ type DbCache interface {
 	CheckIfProjectExists(ctx context.Context, projectID string) (bool, error)
 	GetTentativeBlockHeight(ctx context.Context, projectID string) (int, error)
 	GetProjectEpochSize(ctx context.Context, id string) (int, error)
+	RemovePayloadCIDAtHeight(ctx context.Context, projectID string, dagHeight int) error
 }
 
 // DiskCache is responsible for data caching in local disk

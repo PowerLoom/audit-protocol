@@ -29,6 +29,7 @@ import (
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/smartcontract"
 	taskmgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	w3storage "audit-protocol/goutils/w3s"
 	"audit-protocol/payload-commit/service"
@@ -80,9 +81,11 @@ func main() {
 	)
 
 	caching.NewRedisCache()
-	service.InitPayloadCommitService()
+	smartcontract.InitContractAPI()
 	taskmgr.NewRabbitmqTaskMgr()
 	w3storage.InitW3S()
+
+	service.InitPayloadCommitService()
 
 	mqWorker := worker.NewWorker()
 

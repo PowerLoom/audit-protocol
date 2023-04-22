@@ -1,4 +1,4 @@
-package main
+package signer
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/cenkalti/backoff/v4"
@@ -20,7 +19,7 @@ import (
 	"audit-protocol/goutils/settings"
 )
 
-func signMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte, error) {
+func SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte, error) {
 	message, err := json.Marshal(signerData)
 	if err != nil {
 		log.WithError(err).Error("failed to marshal signer data")
@@ -90,20 +89,11 @@ func VerifySignature(signature []byte, signerData *types.TypedData) bool {
 	return true
 }
 
-func GetSignerData() (*types.TypedData, error) {
-	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
-	if err != nil {
-		log.Fatal("failed to invoke settings object")
-	}
-
-	client, err := ethclient.Dial(settingsObj.Signer.RPCUrl)
-	if err != nil {
-		log.WithError(err).Error("failed to connect to ethereum node")
-
-		return nil, err
-	}
-
+func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 	var block uint64
+	var err error
+
+	settingsObj, _ := gi.Invoke[*settings.SettingsObj]()
 
 	err = backoff.Retry(func() error {
 		block, err = client.BlockNumber(context.Background())
@@ -135,25 +125,18 @@ func GetSignerData() (*types.TypedData, error) {
 		Domain: types.TypedDataDomain{
 			Name:              settingsObj.Signer.Domain.Name,
 			Version:           settingsObj.Signer.Domain.Version,
-			ChainId:           (*math.HexOrDecimal256)(math.MustParseBig256(settingsObj.Signer.Domain.ChainID)),
+			ChainId:           (*math.HexOrDecimal256)(math.MustParseBig256(settingsObj.Signer.Domain.ChainId)),
 			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
-			"deadline": strconv.Itoa(int(block + settingsObj.Signer.DeadlineBuffer)),
+			"deadline": strconv.Itoa(int(block) + settingsObj.Signer.DeadlineBuffer),
 		},
 	}
 
 	return signerData, nil
 }
 
-func GetPrivateKey() (*ecdsa.PrivateKey, error) {
-	privateKey := os.Getenv("PRIVATE_KEY")
-	if privateKey == "" {
-		log.Error("PRIVATE_KEY env variable is not set")
-
-		return nil, fmt.Errorf("PRIVATE_KEY env variable is not set")
-	}
-
+func GetPrivateKey(privateKey string) (*ecdsa.PrivateKey, error) {
 	pkBytes, err := hex.DecodeString(privateKey)
 	if err != nil {
 		log.WithError(err).Error("failed to decode private key")

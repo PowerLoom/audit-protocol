@@ -143,6 +143,7 @@ type SettingsObj struct {
 	TokenAggregatorSettings TokenAggregatorSettings `json:"token_aggregator"`
 	PoolerNamespace         string                  `json:"pooler_namespace"`
 	Signer                  *Signer                 `json:"signer"`
+	EpochSize               int                     `json:"epoch_size"`
 }
 
 type Signer struct {
@@ -153,6 +154,7 @@ type Signer struct {
 		VerifyingContract string `json:"verifyingContract"`
 	} `json:"domain"`
 	AccountAddress string `json:"accountAddress"`
+	PrivateKey     string
 	DeadlineBuffer int    `json:"deadlineBuffer"`
 	RpcUrl         string `json:"rpcUrl"`
 }
@@ -248,6 +250,13 @@ func SetDefaults(settingsObj *SettingsObj) {
 		settingsObj.IpfsConfig.ReaderURL = "/dns/localhost/tcp/5001"
 		settingsObj.IpfsConfig.URL = "/dns/localhost/tcp/5001"
 	}
+
+	privKey := os.Getenv("PRIVATE_KEY")
+	if privKey == "" {
+		log.Fatal("PRIVATE_KEY env variable not set")
+	}
+
+	settingsObj.Signer.PrivateKey = privKey
 }
 
 func (s *SettingsObj) GetDefaultPruneConfig() *PruningServiceSettings {

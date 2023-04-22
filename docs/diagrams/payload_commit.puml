@@ -76,4 +76,4 @@ group Polling for Snapshot Consensus Status
         end
     end
 
-end
+@enduml
