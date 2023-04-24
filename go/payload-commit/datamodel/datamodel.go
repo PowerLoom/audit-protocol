@@ -25,39 +25,39 @@ const (
 )
 
 type PayloadCommitMessage struct {
-	MessageType          PayloadCommitMessageType `json:"messageType"`
-	Message              map[string]interface{}   `json:"message"`
-	Web3Storage          bool                     `json:"web3Storage"`
-	SourceChainID        int                      `json:"sourceChainId"`
-	ProjectID            string                   `json:"projectId"`
-	EpochEndHeight       int                      `json:"epochEndHeight"`
-	TentativeBlockHeight int                      `json:"tentativeBlockHeight"`
-	SnapshotCID          string                   `json:"snapshotCID"`
+	MessageType   PayloadCommitMessageType `json:"messageType"`
+	Message       map[string]interface{}   `json:"message"`
+	Web3Storage   bool                     `json:"web3Storage"`
+	SourceChainID int                      `json:"sourceChainId"`
+	ProjectID     string                   `json:"projectId"`
+	EpochID       int                      `json:"epochId"`
+	EpochEnd      int                      `json:"epochEnd"`
+	SnapshotCID   string                   `json:"snapshotCID"`
 }
 
 type PowerloomSnapshotFinalizedMessage struct {
-	DAGBlockHeight int    `json:"DAGBlockHeight"`
-	ProjectID      string `json:"projectId"`
-	SnapshotCID    string `json:"snapshotCid"`
-	BroadcastID    string `json:"broadcastId"`
-	Timestamp      int    `json:"timestamp"`
+	EpochID     int    `json:"epochId"`
+	EpochEnd    int    `json:"epochEnd"`
+	ProjectID   string `json:"projectId"`
+	SnapshotCID string `json:"snapshotCid"`
+	Timestamp   int    `json:"timestamp"`
 }
 
 type PowerloomIndexFinalizedMessage struct {
-	DAGBlockHeight                  int    `json:"DAGBlockHeight"`
+	EpochID                         int    `json:"epochId"`
 	ProjectID                       string `json:"projectId"`
+	EpochEnd                        int    `json:"epochEnd"`
 	IndexTailDAGBlockHeight         int    `json:"indexTailDAGBlockHeight"`
 	TailBlockEpochSourceChainHeight int    `json:"tailBlockEpochSourceChainHeight"`
 	IndexIdentifierHash             string `json:"indexIdentifierHash"`
-	BroadcastID                     string `json:"broadcastId"`
 	Timestamp                       int    `json:"timestamp"`
 }
 
 type PowerloomAggregateFinalizedMessage struct {
 	EpochEnd     int    `json:"epochEnd"`
+	EpochID      int    `json:"epochId"`
 	ProjectID    string `json:"projectId"`
 	AggregateCID string `json:"aggregateCid"`
-	BroadcastID  string `json:"broadcastId"`
 	Timestamp    int    `json:"timestamp"`
 }
 
@@ -71,14 +71,14 @@ type PayloadCommitFinalizedMessage struct {
 type SnapshotRelayerPayload struct {
 	ProjectID   string                    `json:"projectId"`
 	SnapshotCID string                    `json:"snapshotCid"`
-	EpochEnd    int                       `json:"epochEnd"`
+	EpochID     int                       `json:"epochId"`
 	Request     apitypes.TypedDataMessage `json:"request"`
 	Signature   string                    `json:"signature"`
 }
 
 type IndexRelayerPayload struct {
 	ProjectID                       string                    `json:"projectId"`
-	DagBlockHeight                  int                       `json:"DAGBlockHeight"`
+	EpochId                         int                       `json:"epochId"`
 	IndexTailDagBlockHeight         int                       `json:"indexTailDAGBlockHeight"`
 	TailBlockEpochSourceChainHeight int                       `json:"tailBlockEpochSourceChainHeight"`
 	IndexIdentifierHash             string                    `json:"indexIdentifierHash"`

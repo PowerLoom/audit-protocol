@@ -31,7 +31,7 @@ type IpfsClient struct {
 func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, timeoutSecs int) *IpfsClient {
 	// no need to use underscore for _url, it is just a local variable
 	// _url := url
-	url = ParseMultiAddrUrl(url)
+	url = ParseMultiAddrURL(url)
 
 	ipfsHTTPClient := httpclient.GetIPFSHTTPClient()
 
@@ -62,15 +62,14 @@ func InitClient(url string, poolSize int, rateLimiter *settings.RateLimiter, tim
 	client.ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
 
 	// exit if injection fails
-	err := gi.Inject(client)
-	if err != nil {
+	if err := gi.Inject(client); err != nil {
 		log.Fatalln("Failed to inject dependencies", err)
 	}
 
 	return client
 }
 
-func ParseMultiAddrUrl(url string) string {
+func ParseMultiAddrURL(url string) string {
 	if _, err := ma.NewMultiaddr(url); err == nil {
 		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
 	}
@@ -92,7 +91,6 @@ func (client *IpfsClient) GetDagBlock(dagCid string) (*datamodel.DagBlock, error
 	err = backoff.Retry(func() error {
 		err = client.ipfsClient.DagGet(dagCid, dagBlock)
 		if err != nil {
-
 			return err
 		}
 
@@ -119,6 +117,7 @@ func (client *IpfsClient) GetPayloadChainHeightRang(payloadCid string) (*datamod
 	}
 
 	var data io.ReadCloser
+
 	err = backoff.Retry(func() error {
 		data, err = client.ipfsClient.Cat(payloadCid)
 		if err != nil {
@@ -134,9 +133,11 @@ func (client *IpfsClient) GetPayloadChainHeightRang(payloadCid string) (*datamod
 	}
 
 	buf := new(bytes.Buffer)
+
 	_, err = buf.ReadFrom(data)
 	if err != nil {
 		log.Error("Failed to read Payload from IPFS, CID:", payloadCid, ", error:", err)
+
 		return nil, err
 	}
 
@@ -175,7 +176,7 @@ func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel2.Payload
 	}
 
 	log.WithField("snapshotCID", snapshotCid).
-		WithField("tentativeBlockHeight", payloadCommit.TentativeBlockHeight).
+		WithField("epochId", payloadCommit.EpochID).
 		Debug("ipfs add Successful")
 
 	payloadCommit.SnapshotCID = snapshotCid
@@ -193,6 +194,7 @@ func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string) (*datamodel.DagP
 
 	var data io.ReadCloser
 	var err error
+
 	err = backoff.Retry(func() error {
 		data, err = client.ipfsClient.Cat(payloadCid)
 		if err != nil {
@@ -206,6 +208,7 @@ func (client *IpfsClient) GetPayloadFromIPFS(payloadCid string) (*datamodel.DagP
 
 		return nil, err
 	}
+
 	buf := new(bytes.Buffer)
 
 	_, err = buf.ReadFrom(data)
@@ -258,7 +261,6 @@ func (client *IpfsClient) UnPinCidsFromIPFS(projectID string, cids map[int]strin
 
 			return nil
 		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
-
 	}
 
 	return nil

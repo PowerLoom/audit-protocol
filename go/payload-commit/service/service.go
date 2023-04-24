@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -156,15 +158,6 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		return nil
 	}
 
-	tentativeHeight, err := s.contractApi.GetTentativeHeight(&bind.CallOpts{})
-	if err != nil {
-		log.WithError(err).Error("failed to get tentative height from contract")
-
-		return err
-	}
-
-	msg.TentativeBlockHeight = tentativeHeight
-
 	// upload payload commit msg to ipfs and web3 storage
 	if msg.MessageType == datamodel.MessageTypeAggregate || msg.MessageType == datamodel.MessageTypeSnapshot {
 		err = s.uploadToIPFSandW3s(msg)
@@ -173,9 +166,28 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		}
 
 		go func() {
-			_ = s.storePayloadToCache(msg)
-			_ = s.redisCache.AddPayloadCID(context.Background(), msg.ProjectID, msg.SnapshotCID, float64(msg.TentativeBlockHeight))
+			_ = s.storePayloadToDiskCache(msg)
+			_ = s.redisCache.AddPayloadCID(context.Background(), msg.ProjectID, msg.SnapshotCID, float64(msg.EpochID))
 		}()
+	} else if msg.MessageType == datamodel.MessageTypeIndex {
+		byteData, err := json.Marshal(msg.Message)
+		if err != nil {
+			log.WithError(err).Error("failed to marshal message")
+			return err
+		}
+
+		// hash message with sha256
+		hasher := sha1.New()
+		hasher.Write(byteData)
+		messageHash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+
+		// store message in redis with hash as key
+		err = s.redisCache.AddFinalizedPayload(context.Background(), msg.ProjectID, messageHash, byteData)
+		if err != nil {
+			log.WithError(err).Error("failed to store finalized payload in redis")
+
+			return err
+		}
 	}
 
 	signerData, signature, err := s.signPayload()
@@ -183,28 +195,40 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		return err
 	}
 
+	var relayerPayload interface{}
 	if msg.MessageType == datamodel.MessageTypeAggregate || msg.MessageType == datamodel.MessageTypeSnapshot {
-		payload := &datamodel.SnapshotRelayerPayload{
+		relayerPayload = &datamodel.SnapshotRelayerPayload{
 			ProjectID:   msg.ProjectID,
 			SnapshotCID: msg.SnapshotCID,
-			EpochEnd:    msg.EpochEndHeight,
+			EpochID:     msg.EpochID,
 			Request:     signerData.Message,
 			Signature:   string(signature),
 		}
-
-		s.sendSignatureToRelayer(payload)
-	} else {
-		payload := &datamodel.IndexRelayerPayload{
+	} else if msg.MessageType == datamodel.MessageTypeIndex {
+		relayerPayload = &datamodel.IndexRelayerPayload{
 			ProjectID:                       msg.ProjectID,
-			DagBlockHeight:                  msg.TentativeBlockHeight,
-			IndexTailDagBlockHeight:         0,
-			TailBlockEpochSourceChainHeight: 0,
-			IndexIdentifierHash:             "",
+			EpochId:                         msg.EpochEnd,
+			IndexTailDagBlockHeight:         msg.Message["indexTailDagBlockHeight"].(int),
+			TailBlockEpochSourceChainHeight: msg.Message["tailBlockEpochSourceChainHeight"].(int),
+			IndexIdentifierHash:             msg.Message["indexIdentifierHash"].(string),
 			Request:                         signerData.Message,
 			Signature:                       string(signature),
 		}
+	}
 
-		s.sendSignatureToRelayer(payload)
+	// send payload commit message with signature to relayer
+	err = backoff.Retry(func() error {
+		err = s.sendSignatureToRelayer(relayerPayload)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, backoff.NewExponentialBackOff())
+	if err != nil {
+		log.WithError(err).Error("failed to send signature to relayer")
+
+		return err
 	}
 
 	// adding tx to pending txs is taken care by state builder skipping that part
@@ -212,6 +236,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	return nil
 }
 
+// HandleFinalizedPayloadCommitTask handles finalized payload commit task
 func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.PayloadCommitFinalizedMessage) error {
 	indexFinalizedPayload := new(datamodel.PowerloomIndexFinalizedMessage)
 	aggregateFinalizedPayload := new(datamodel.PowerloomAggregateFinalizedMessage)
@@ -226,6 +251,27 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		}
 
 		indexFinalizedPayload = m.(*datamodel.PowerloomIndexFinalizedMessage)
+
+		// hash message with sha256
+		hasher := sha1.New()
+		hasher.Write(msg.Message)
+		messageHash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+
+		// check if payload is already in cache
+		payload, _ := s.redisCache.GetFinalizedIndexPayload(context.Background(), indexFinalizedPayload.ProjectID, messageHash)
+		if payload != nil {
+			return nil
+		}
+
+		log.Warn("payload not found in cache, adding finalized payload to cache")
+
+		// if not, store it in cache
+		err = s.redisCache.AddFinalizedPayload(context.Background(), indexFinalizedPayload.ProjectID, messageHash, msg.Message)
+		if err != nil {
+			log.WithError(err).Error("failed to store finalized payload in redis")
+
+			return err
+		}
 	} else if msg.MessageType == datamodel.SnapshotFinalized {
 		m, err := msg.UnmarshalMessage()
 		if err != nil {
@@ -237,20 +283,20 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		snapshotFinalizedPayload = m.(*datamodel.PowerloomSnapshotFinalizedMessage)
 
 		// check if payload is already in cache
-		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.DAGBlockHeight)
+		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.EpochID)
 		if err == nil {
 			return err
 		}
 
 		if payloadCid != snapshotFinalizedPayload.SnapshotCID {
-			err = s.redisCache.RemovePayloadCIDAtHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.DAGBlockHeight)
+			err = s.redisCache.RemovePayloadCIDAtHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.EpochID)
 			if err != nil {
 				log.WithError(err).Error("failed to remove payload cid from cache")
 
 				return err
 			}
 
-			err = s.redisCache.AddPayloadCID(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.SnapshotCID, float64(snapshotFinalizedPayload.DAGBlockHeight))
+			err = s.redisCache.AddPayloadCID(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.SnapshotCID, float64(snapshotFinalizedPayload.EpochID))
 			if err != nil {
 				log.WithError(err).Error("failed to add payload cid to cache")
 
@@ -269,20 +315,20 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		aggregateFinalizedPayload = m.(*datamodel.PowerloomAggregateFinalizedMessage)
 
 		// check if payload is already in cache
-		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), aggregateFinalizedPayload.ProjectID, aggregateFinalizedPayload.)
+		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), aggregateFinalizedPayload.ProjectID, aggregateFinalizedPayload.EpochID)
 		if err == nil {
 			return err
 		}
 
 		if payloadCid != snapshotFinalizedPayload.SnapshotCID {
-			err = s.redisCache.RemovePayloadCIDAtHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.DAGBlockHeight)
+			err = s.redisCache.RemovePayloadCIDAtHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.EpochEnd)
 			if err != nil {
 				log.WithError(err).Error("failed to remove payload cid from cache")
 
 				return err
 			}
 
-			err = s.redisCache.AddPayloadCID(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.SnapshotCID, float64(snapshotFinalizedPayload.DAGBlockHeight))
+			err = s.redisCache.AddPayloadCID(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.SnapshotCID, float64(snapshotFinalizedPayload.EpochEnd))
 			if err != nil {
 				log.WithError(err).Error("failed to add payload cid to cache")
 
@@ -291,6 +337,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		}
 	}
 
+	return nil
 }
 
 func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMessage) error {
@@ -433,7 +480,8 @@ func (s *PayloadCommitService) uploadToW3s(msg *datamodel.PayloadCommitMessage) 
 	}
 }
 
-func (s *PayloadCommitService) storePayloadToCache(msg *datamodel.PayloadCommitMessage) error {
+// storePayloadToDiskCache stores the payload commit message to disk cache
+func (s *PayloadCommitService) storePayloadToDiskCache(msg *datamodel.PayloadCommitMessage) error {
 	cachePath := s.settingsObj.PayloadCachePath
 
 	cachePath = fmt.Sprintf("%s%s/%s", cachePath, msg.ProjectID, msg.SnapshotCID)
@@ -455,6 +503,7 @@ func (s *PayloadCommitService) storePayloadToCache(msg *datamodel.PayloadCommitM
 	return nil
 }
 
+// signPayload signs the payload commit message for relayer
 func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error) {
 	privKey, err := signer.GetPrivateKey(s.settingsObj.Signer.PrivateKey)
 	if err != nil {
@@ -487,8 +536,47 @@ func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error
 	return signerData, signature, nil
 }
 
-func (s *PayloadCommitService) sendSignatureToRelayer(payload interface{}) {
-	panic("implement me")
+// sendSignatureToRelayer sends the signature to the relayer
+func (s *PayloadCommitService) sendSignatureToRelayer(payload interface{}) error {
+	httpClient := httpclient.GetDefaultHTTPClient()
+
+	// url = "host+port" ; endpoint = "/endpoint"
+	url := s.settingsObj.Relayer.URL + s.settingsObj.Relayer.Endpoint
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.WithError(err).Error("failed to marshal payload")
+
+		return err
+	}
+
+	req, err := retryablehttp.NewRequest(http.MethodPost, url, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		log.WithError(err).Error("failed to create request to relayer")
+
+		return err
+	}
+
+	req.Header.Add("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		log.WithError(err).Error("failed to send request to relayer")
+
+		return err
+	}
+
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		log.WithField("status", res.StatusCode).Error("failed to send request to relayer")
+
+		return errors.New("failed to send request to relayer, status not ok")
+	}
+
+	log.Info("successfully sent signature to relayer")
+
+	return nil
 }
 
 // initLocalCachedData fills data in redis cache from smart contract if not present locally

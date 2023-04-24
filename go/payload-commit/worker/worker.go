@@ -123,5 +123,8 @@ func NewWorker() *Worker {
 }
 
 func (w *Worker) ShutdownWorker() {
-	_ = w.taskmgr.Shutdown(context.Background())
+	err := w.taskmgr.Shutdown(context.Background())
+	if err != nil {
+		log.WithError(err).Error("failed to shutdown the worker")
+	}
 }

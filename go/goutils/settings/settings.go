@@ -134,6 +134,10 @@ type SettingsObj struct {
 		RateLimiter     *RateLimiter `json:"rate_limit,omitempty"`
 		UploadURLSuffix string       `json:"upload_url_suffix"`
 	} `json:"web3_storage"`
+	Relayer struct {
+		URL      string `json:"url"`
+		Endpoint string `json:"endpoint"`
+	} `json:"relayer"`
 	DagVerifierSettings     DagVerifierSettings     `json:"dag_verifier"`
 	PruningServiceSettings  *PruningServiceSettings `json:"pruning"`
 	UseConsensus            bool                    `json:"use_consensus"`

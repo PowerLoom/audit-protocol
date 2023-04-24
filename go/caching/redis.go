@@ -843,3 +843,35 @@ func (r *RedisCache) RemovePayloadCIDAtHeight(ctx context.Context, projectID str
 
 	return err
 }
+
+func (r *RedisCache) AddFinalizedPayload(background context.Context, projectID string, hash string, message json.RawMessage) error {
+	_, err := r.redisClient.HSet(background, fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_INDEX_PAYLOAD, projectID), hash, string(message)).Result()
+
+	if err != nil {
+		log.WithError(err).Error("failed to add finalized payload to hash")
+
+		return err
+	}
+
+	return nil
+}
+
+func (r *RedisCache) GetFinalizedIndexPayload(background context.Context, id string, hash string) (interface{}, error) {
+	res, err := r.redisClient.HGet(background, fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_INDEX_PAYLOAD, id), hash).Result()
+	if err != nil {
+		log.WithError(err).Error("failed to get finalized payload")
+
+		return nil, err
+	}
+
+	var payload map[string]interface{}
+
+	err = json.Unmarshal([]byte(res), &payload)
+	if err != nil {
+		log.WithError(err).Error("failed to unmarshal finalized payload")
+
+		return nil, err
+	}
+
+	return payload, nil
+}

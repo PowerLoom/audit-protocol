@@ -399,7 +399,7 @@ func (p *PruningService) ExportDAGFromIPFS(projectID, cycleID string, fromHeight
 	log.WithField("TaskID", cycleID).Debugf("Exporting DAG for project %s from height %d to height %d with last DAG CID %s", projectID, fromHeight, toHeight, dagCID)
 
 	dagExportSuffix := "/api/v0/dag/export"
-	host := ipfsutils.ParseMultiAddrUrl(p.settingsObj.IpfsConfig.ReaderURL)
+	host := ipfsutils.ParseMultiAddrURL(p.settingsObj.IpfsConfig.ReaderURL)
 
 	reqURL := "http://" + host + dagExportSuffix + "?arg=" + dagCID + "&encoding=json&stream-channels=true&progress=false"
 	log.WithField("TaskID", cycleID).Debugf("Sending request to URL %s", reqURL)
