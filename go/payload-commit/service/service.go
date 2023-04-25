@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
@@ -27,6 +28,7 @@ import (
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/smartcontract/api"
+	"audit-protocol/goutils/smartcontract/transactions"
 	"audit-protocol/goutils/taskmgr"
 	w3storage "audit-protocol/goutils/w3s"
 	"audit-protocol/payload-commit/datamodel"
@@ -37,10 +39,12 @@ type PayloadCommitService struct {
 	settingsObj *settings.SettingsObj
 	redisCache  *caching.RedisCache
 	ethClient   *ethclient.Client
-	contractApi *contractApi.ContractApi
+	contractAPI *contractApi.ContractApi
 	ipfsClient  *ipfsutils.IpfsClient
 	web3sClient *w3storage.W3S
 	diskCache   *caching.LocalDiskCache
+	nonceMgr    *transactions.NonceManager
+	privKey     *ecdsa.PrivateKey
 }
 
 // InitPayloadCommitService initializes the payload commit service
@@ -80,14 +84,21 @@ func InitPayloadCommitService() *PayloadCommitService {
 		log.WithError(err).Fatal("failed to invoke disk cache")
 	}
 
+	privKey, err := signer.GetPrivateKey(settingsObj.Signer.PrivateKey)
+	if err != nil {
+		log.WithError(err).Fatal("failed to get private key")
+	}
+
 	pcService := &PayloadCommitService{
 		settingsObj: settingsObj,
 		redisCache:  redisCache,
 		ethClient:   ethClient,
-		contractApi: contractAPI,
+		contractAPI: contractAPI,
 		ipfsClient:  ipfsClient,
 		web3sClient: web3sClient,
 		diskCache:   diskCache,
+		nonceMgr:    transactions.NewNonceManager(),
+		privKey:     privKey,
 	}
 
 	_ = pcService.initLocalCachedData()
@@ -100,6 +111,8 @@ func InitPayloadCommitService() *PayloadCommitService {
 }
 
 func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
+	log.WithField("msg", string(msgBody)).Debug("running new task")
+
 	if strings.Contains(topic, taskmgr.FinalizedSuffix) {
 		finalizedEventMsg := new(datamodel.PayloadCommitFinalizedMessage)
 
@@ -136,8 +149,10 @@ func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 }
 
 func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCommitMessage) error {
+	log.WithField("project_id", msg.ProjectID).Info("handling payload commit task")
+
 	// check if project exists
-	projects, err := s.contractApi.GetProjects(&bind.CallOpts{})
+	projects, err := s.contractAPI.GetProjects(&bind.CallOpts{})
 
 	if err != nil {
 		log.WithError(err).Error("failed to get projects from contract")
@@ -195,9 +210,10 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		return err
 	}
 
-	var relayerPayload interface{}
+	var txPayload interface{}
+
 	if msg.MessageType == datamodel.MessageTypeAggregate || msg.MessageType == datamodel.MessageTypeSnapshot {
-		relayerPayload = &datamodel.SnapshotRelayerPayload{
+		txPayload = &datamodel.SnapshotAndAggrRelayerPayload{
 			ProjectID:   msg.ProjectID,
 			SnapshotCID: msg.SnapshotCID,
 			EpochID:     msg.EpochID,
@@ -205,9 +221,9 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			Signature:   string(signature),
 		}
 	} else if msg.MessageType == datamodel.MessageTypeIndex {
-		relayerPayload = &datamodel.IndexRelayerPayload{
+		txPayload = &datamodel.IndexRelayerPayload{
 			ProjectID:                       msg.ProjectID,
-			EpochId:                         msg.EpochEnd,
+			EpochID:                         msg.EpochEnd,
 			IndexTailDagBlockHeight:         msg.Message["indexTailDagBlockHeight"].(int),
 			TailBlockEpochSourceChainHeight: msg.Message["tailBlockEpochSourceChainHeight"].(int),
 			IndexIdentifierHash:             msg.Message["indexIdentifierHash"].(string),
@@ -216,28 +232,42 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		}
 	}
 
-	// send payload commit message with signature to relayer
-	err = backoff.Retry(func() error {
-		err = s.sendSignatureToRelayer(relayerPayload)
-		if err != nil {
-			return err
-		}
+	// TODO: uncomment this once relayer is ready
+	// // send payload commit message with signature to relayer
+	// err = backoff.Retry(func() error {
+	// 	err = s.sendSignatureToRelayer(relayerPayload)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	//
+	// 	return nil
+	// }, backoff.NewExponentialBackOff())
+	// if err != nil {
+	// 	log.WithError(err).Error("failed to send signature to relayer")
+	//
+	// 	return err
+	// }
 
-		return nil
-	}, backoff.NewExponentialBackOff())
+	s.nonceMgr.Mu.Lock()
+	defer func() {
+		s.nonceMgr.Nonce++
+		s.nonceMgr.Mu.Unlock()
+	}()
+
+	err = transactions.CreateAndSendRawTransaction(s.ethClient, s.privKey, s.settingsObj, uint64(s.nonceMgr.Nonce), txPayload)
 	if err != nil {
 		log.WithError(err).Error("failed to send signature to relayer")
 
 		return err
 	}
 
-	// adding tx to pending txs is taken care by state builder skipping that part
-
 	return nil
 }
 
 // HandleFinalizedPayloadCommitTask handles finalized payload commit task
 func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.PayloadCommitFinalizedMessage) error {
+	log.Debug("handling finalized payload commit task")
+
 	indexFinalizedPayload := new(datamodel.PowerloomIndexFinalizedMessage)
 	aggregateFinalizedPayload := new(datamodel.PowerloomAggregateFinalizedMessage)
 	snapshotFinalizedPayload := new(datamodel.PowerloomSnapshotFinalizedMessage)
@@ -303,7 +333,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 				return err
 			}
 		}
-
 	} else if msg.MessageType == datamodel.AggregateFinalized {
 		m, err := msg.UnmarshalMessage()
 		if err != nil {
@@ -407,6 +436,8 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 }
 
 func (s *PayloadCommitService) uploadToW3s(msg *datamodel.PayloadCommitMessage) (string, error) {
+	log.Debug("uploading payload commit message to web3 storage")
+
 	reqURL := s.settingsObj.Web3Storage.URL + s.settingsObj.Web3Storage.UploadURLSuffix
 
 	defaultHTTPClient := httpclient.GetDefaultHTTPClient()
@@ -466,18 +497,18 @@ func (s *PayloadCommitService) uploadToW3s(msg *datamodel.PayloadCommitMessage) 
 		log.WithField("cid", web3resp.CID).Info("successfully uploaded payload commit to web3.storage")
 
 		return web3resp.CID, nil
-	} else {
-		resp := new(datamodel2.Web3StorageErrResponse)
-
-		err = json.Unmarshal(respBody, resp)
-		if err != nil {
-			log.WithError(err).Error("failed to unmarshal error response from web3.storage")
-		} else {
-			log.WithField("payloadCommit", string(payloadCommit)).WithField("error", resp.Message).Error("web3.storage upload error")
-		}
-
-		return "", errors.New(resp.Message)
 	}
+
+	resp := new(datamodel2.Web3StorageErrResponse)
+
+	err = json.Unmarshal(respBody, resp)
+	if err != nil {
+		log.WithError(err).Error("failed to unmarshal error response from web3.storage")
+	} else {
+		log.WithField("payloadCommit", string(payloadCommit)).WithField("error", resp.Message).Error("web3.storage upload error")
+	}
+
+	return "", errors.New(resp.Message)
 }
 
 // storePayloadToDiskCache stores the payload commit message to disk cache
@@ -505,6 +536,8 @@ func (s *PayloadCommitService) storePayloadToDiskCache(msg *datamodel.PayloadCom
 
 // signPayload signs the payload commit message for relayer
 func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error) {
+	log.Debug("signing payload commit message")
+
 	privKey, err := signer.GetPrivateKey(s.settingsObj.Signer.PrivateKey)
 	if err != nil {
 		log.WithError(err).Error("failed to get ecdsa private key")
@@ -581,6 +614,8 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload interface{}) error
 
 // initLocalCachedData fills data in redis cache from smart contract if not present locally
 func (s *PayloadCommitService) initLocalCachedData() error {
+	log.Debug("initializing local cached data")
+
 	projects, err := s.redisCache.GetStoredProjects(context.Background())
 	if err != nil {
 		log.WithError(err).Error("failed to get stored projects from redis cache")
@@ -593,7 +628,7 @@ func (s *PayloadCommitService) initLocalCachedData() error {
 	}
 
 	// get projects from smart contract
-	projects, err = s.contractApi.GetProjects(&bind.CallOpts{})
+	projects, err = s.contractAPI.GetProjects(&bind.CallOpts{})
 	if err != nil {
 		log.WithError(err).Error("failed to get projects from smart contract")
 

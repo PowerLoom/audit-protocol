@@ -68,7 +68,7 @@ type PayloadCommitFinalizedMessage struct {
 	SourceChainID int                               `json:"sourceChainId"`
 }
 
-type SnapshotRelayerPayload struct {
+type SnapshotAndAggrRelayerPayload struct {
 	ProjectID   string                    `json:"projectId"`
 	SnapshotCID string                    `json:"snapshotCid"`
 	EpochID     int                       `json:"epochId"`
@@ -78,7 +78,7 @@ type SnapshotRelayerPayload struct {
 
 type IndexRelayerPayload struct {
 	ProjectID                       string                    `json:"projectId"`
-	EpochId                         int                       `json:"epochId"`
+	EpochID                         int                       `json:"epochId"`
 	IndexTailDagBlockHeight         int                       `json:"indexTailDAGBlockHeight"`
 	TailBlockEpochSourceChainHeight int                       `json:"tailBlockEpochSourceChainHeight"`
 	IndexIdentifierHash             string                    `json:"indexIdentifierHash"`

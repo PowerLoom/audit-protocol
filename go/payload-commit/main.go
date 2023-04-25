@@ -39,6 +39,7 @@ func main() {
 	smartcontract.InitContractAPI()
 	taskmgr.NewRabbitmqTaskMgr()
 	w3storage.InitW3S()
+	caching.InitDiskCache()
 
 	service.InitPayloadCommitService()
 
