@@ -37,7 +37,7 @@ func SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte
 	v, r, s := sig[64]+27, sig[:32], sig[32:64]
 	finalSig := append(append(r, s...), v)
 
-	log.Info("final signature:", finalSig)
+	log.Info("final signature:", string(finalSig))
 	log.Info("final signature (hex):", hex.EncodeToString(finalSig))
 
 	return finalSig, nil
