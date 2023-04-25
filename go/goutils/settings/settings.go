@@ -82,8 +82,9 @@ type SettingsObj struct {
 		Port     int    `json:"port"`
 		Setup    struct {
 			Core struct {
-				Exchange string `json:"exchange"`
-				DLX      string `json:"dlx"`
+				Exchange              string `json:"exchange"`
+				CommitPayloadExchange string `json:"commit-payload-exchange"`
+				DLX                   string `json:"dlx"`
 			} `json:"core"`
 			Queues struct {
 				CommitPayloads struct {

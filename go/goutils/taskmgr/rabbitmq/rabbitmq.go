@@ -214,7 +214,7 @@ func (r *RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
 	case worker.TypePruningServiceWorker:
 		return r.settings.Rabbitmq.Setup.Core.Exchange
 	case worker.TypePayloadCommitWorker:
-		return r.settings.Rabbitmq.Setup.Core.Exchange
+		return fmt.Sprintf("%s%s", r.settings.Rabbitmq.Setup.Core.CommitPayloadExchange, r.settings.PoolerNamespace)
 	default:
 		return ""
 	}
