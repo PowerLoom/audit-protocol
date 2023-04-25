@@ -94,7 +94,7 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 		return nil, taskmgr.ErrConsumerInitFailed
 	}
 
-	queue, err := channel.QueueDeclare(r.getQueue(workerType, taskmgr.FinalizedSuffix), true, false, false, false, map[string]interface{}{
+	queue, err := channel.QueueDeclare(r.getQueue(workerType, taskmgr.FinalizedSuffix), false, false, false, false, map[string]interface{}{
 		"x-dead-letter-exchange":    dlxExchange,
 		"x-dead-letter-routing-key": dlxRoutingKey,
 	})
