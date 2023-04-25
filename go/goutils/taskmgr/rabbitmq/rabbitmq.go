@@ -94,10 +94,8 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 		return nil, taskmgr.ErrConsumerInitFailed
 	}
 
-	queue, err := channel.QueueDeclare(r.getQueue(workerType, taskmgr.FinalizedSuffix), false, false, false, false, map[string]interface{}{
-		"x-dead-letter-exchange":    dlxExchange,
-		"x-dead-letter-routing-key": dlxRoutingKey,
-	})
+	queue, err := channel.QueueDeclare(r.getQueue(workerType, ""), false, false, false, false, nil)
+
 	if err != nil {
 		log.Errorf("failed to declare a queue on rabbitmq: %v", err)
 
@@ -106,12 +104,12 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 
 	// bind the queue to the exchange
 	for _, routingKey := range routingKeys {
-		ex := exchange
+		// TODO: for now skipping dead letter config
 		if strings.Contains(routingKey, ":dlx") {
-			ex = dlxExchange
+			continue
 		}
 
-		err = channel.QueueBind(queue.Name, routingKey, ex, false, nil)
+		err = channel.QueueBind(queue.Name, routingKey, exchange, false, nil)
 		if err != nil {
 			log.WithField("routingKey", routingKey).Errorf("failed to bind a queue on rabbitmq: %v", err)
 
