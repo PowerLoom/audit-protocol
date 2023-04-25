@@ -284,7 +284,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 
 		// check if payload is already in cache
 		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.EpochID)
-		if err == nil {
+		if err != nil {
 			return err
 		}
 
@@ -316,7 +316,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 
 		// check if payload is already in cache
 		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), aggregateFinalizedPayload.ProjectID, aggregateFinalizedPayload.EpochID)
-		if err == nil {
+		if err != nil {
 			return err
 		}
 
