@@ -41,6 +41,8 @@ func getNonce() uint64 {
 }
 
 func CreateAndSendRawTransaction(client *ethclient.Client, privKey *ecdsa.PrivateKey, settingsObj *settings.SettingsObj, nonce uint64, data interface{}) error {
+	log.Debug("sending transaction")
+
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
 		log.WithError(err).Error("failed to marshal data payload to be sent to transaction")
@@ -77,6 +79,8 @@ func CreateAndSendRawTransaction(client *ethclient.Client, privKey *ecdsa.Privat
 		return err
 	}
 
+	log.WithField("txHex", signedTx.Hash().Hex()).Debug("transaction signed successfully")
+
 	// send transaction
 	err = client.SendTransaction(context.Background(), signedTx)
 	if err != nil {
@@ -84,6 +88,8 @@ func CreateAndSendRawTransaction(client *ethclient.Client, privKey *ecdsa.Privat
 
 		return err
 	}
+
+	log.Debug("transaction sent successfully")
 
 	return nil
 }

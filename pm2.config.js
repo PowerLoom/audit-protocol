@@ -47,7 +47,8 @@ module.exports = {
       kill_timeout : 3000,
       env: {
         NODE_ENV: NODE_ENV,
-        CONFIG_PATH:`${__dirname}`
+        CONFIG_PATH:`${__dirname}`,
+        PRIVATE_KEY: process.env.PRIVATE_KEY
       },
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     },
