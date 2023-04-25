@@ -62,7 +62,7 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 
 	exchange := r.getExchange(workerType)
 
-	err = channel.ExchangeDeclare(exchange, "direct", true, false, false, false, nil)
+	err = channel.ExchangeDeclare(exchange, "topic", true, false, false, false, nil)
 	if err != nil {
 		log.Errorf("failed to declare an exchange on rabbitmq: %v", err)
 
