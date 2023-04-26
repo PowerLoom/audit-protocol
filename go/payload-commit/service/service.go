@@ -43,7 +43,7 @@ type PayloadCommitService struct {
 	ipfsClient  *ipfsutils.IpfsClient
 	web3sClient *w3storage.W3S
 	diskCache   *caching.LocalDiskCache
-	nonceMgr    *transactions.NonceManager
+	txManager   *transactions.TxManager
 	privKey     *ecdsa.PrivateKey
 }
 
@@ -97,7 +97,7 @@ func InitPayloadCommitService() *PayloadCommitService {
 		ipfsClient:  ipfsClient,
 		web3sClient: web3sClient,
 		diskCache:   diskCache,
-		nonceMgr:    transactions.NewNonceManager(),
+		txManager:   transactions.NewNonceManager(),
 		privKey:     privKey,
 	}
 
@@ -210,18 +210,40 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		return err
 	}
 
-	var txPayload interface{}
+	s.txManager.Mu.Lock()
+	defer func() {
+		s.txManager.Nonce++
+		s.txManager.Mu.Unlock()
+	}()
 
-	if msg.MessageType == datamodel.MessageTypeAggregate || msg.MessageType == datamodel.MessageTypeSnapshot {
-		txPayload = &datamodel.SnapshotAndAggrRelayerPayload{
+	if msg.MessageType == datamodel.MessageTypeAggregate {
+		txPayload := &datamodel.SnapshotAndAggrRelayerPayload{
+			ProjectID:   msg.ProjectID,
+			EpochID:     msg.EpochID,
+			SnapshotCID: msg.SnapshotCID,
+			Request:     signerData.Message,
+			Signature:   string(signature),
+		}
+
+		err = s.txManager.SubmitAggregate(s.contractAPI, s.privKey, signerData, txPayload, signature)
+		if err != nil {
+			return err
+		}
+	} else if msg.MessageType == datamodel.MessageTypeSnapshot {
+		txPayload := &datamodel.SnapshotAndAggrRelayerPayload{
 			ProjectID:   msg.ProjectID,
 			SnapshotCID: msg.SnapshotCID,
 			EpochID:     msg.EpochID,
 			Request:     signerData.Message,
 			Signature:   string(signature),
 		}
+
+		err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
+		if err != nil {
+			return err
+		}
 	} else if msg.MessageType == datamodel.MessageTypeIndex {
-		txPayload = &datamodel.IndexRelayerPayload{
+		txPayload := &datamodel.IndexRelayerPayload{
 			ProjectID:                       msg.ProjectID,
 			EpochID:                         msg.EpochEnd,
 			IndexTailDagBlockHeight:         msg.Message["indexTailDagBlockHeight"].(int),
@@ -229,6 +251,11 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			IndexIdentifierHash:             msg.Message["indexIdentifierHash"].(string),
 			Request:                         signerData.Message,
 			Signature:                       string(signature),
+		}
+
+		err = s.txManager.SubmitIndex(s.contractAPI, s.privKey, signerData, txPayload, signature)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -247,19 +274,6 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	//
 	// 	return err
 	// }
-
-	s.nonceMgr.Mu.Lock()
-	defer func() {
-		s.nonceMgr.Nonce++
-		s.nonceMgr.Mu.Unlock()
-	}()
-
-	err = transactions.CreateAndSendRawTransaction(s.ethClient, s.privKey, s.settingsObj, uint64(s.nonceMgr.Nonce), txPayload)
-	if err != nil {
-		log.WithError(err).Error("failed to send signature to relayer")
-
-		return err
-	}
 
 	return nil
 }

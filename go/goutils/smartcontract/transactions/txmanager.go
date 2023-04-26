@@ -3,36 +3,58 @@ package transactions
 import (
 	"context"
 	"crypto/ecdsa"
-	"encoding/json"
 	"math/big"
+	"strconv"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	types2 "github.com/ethereum/go-ethereum/signer/core/apitypes"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/settings"
+	contractApi "audit-protocol/goutils/smartcontract/api"
+	"audit-protocol/payload-commit/datamodel"
 )
 
-type NonceManager struct {
-	Mu    sync.Mutex
-	Nonce int
+type TxManager struct {
+	Mu          sync.Mutex
+	Nonce       uint64
+	ChainID     *big.Int
+	settingsObj *settings.SettingsObj
+	ethClient   *ethclient.Client
 }
 
-func NewNonceManager() *NonceManager {
-	return &NonceManager{
-		Mu:    sync.Mutex{},
-		Nonce: int(getNonce()),
+func NewNonceManager() *TxManager {
+	ethClient, err := gi.Invoke[*ethclient.Client]()
+	if err != nil {
+		log.Fatal("failed to invoke eth client")
 	}
+
+	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
+	if err != nil {
+		log.Fatal("failed to invoke settings object")
+	}
+
+	chainId, err := ethClient.ChainID(context.Background())
+
+	txMgr := &TxManager{
+		Mu:          sync.Mutex{},
+		ChainID:     chainId,
+		settingsObj: settingsObj,
+		ethClient:   ethClient,
+	}
+
+	txMgr.Nonce = txMgr.getNonce(ethClient)
+
+	return txMgr
 }
 
-func getNonce() uint64 {
-	ethClient, _ := gi.Invoke[*ethclient.Client]()
-	settingsObj, _ := gi.Invoke[*settings.SettingsObj]()
-
-	nonce, err := ethClient.PendingNonceAt(context.Background(), common.HexToAddress(settingsObj.Signer.AccountAddress))
+func (t *TxManager) getNonce(ethClient *ethclient.Client) uint64 {
+	nonce, err := ethClient.PendingNonceAt(context.Background(), common.HexToAddress(t.settingsObj.Signer.AccountAddress))
 	if err != nil {
 		log.WithError(err).Fatal("failed to get pending transaction count")
 	}
@@ -40,56 +62,148 @@ func getNonce() uint64 {
 	return nonce
 }
 
-func CreateAndSendRawTransaction(client *ethclient.Client, privKey *ecdsa.PrivateKey, settingsObj *settings.SettingsObj, nonce uint64, data interface{}) error {
-	log.Debug("sending transaction")
-
-	dataBytes, err := json.Marshal(data)
+// SubmitAggregate submits an aggregate transaction to the blockchain
+func (t *TxManager) SubmitAggregate(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *types2.TypedData, msg *datamodel.SnapshotAndAggrRelayerPayload, signature []byte) error {
+	deadline, err := strconv.Atoi(signerData.Message["deadline"].(string))
 	if err != nil {
-		log.WithError(err).Error("failed to marshal data payload to be sent to transaction")
+		log.WithError(err).Error("failed to convert deadline to int")
 
 		return err
 	}
 
-	chainID, err := client.ChainID(context.Background())
+	gasPrice, err := t.ethClient.SuggestGasPrice(context.Background())
 	if err != nil {
-		log.WithError(err).Error("failed to get chainID")
-	}
-
-	gasPrice, err := client.SuggestGasPrice(context.Background())
-	if err != nil {
-		return err
-	}
-
-	toAddress := common.HexToAddress(settingsObj.Signer.Domain.VerifyingContract)
-
-	tx := types.NewTx(&types.LegacyTx{
-		Nonce:    nonce,
-		GasPrice: gasPrice,
-		Gas:      uint64(2000000),
-		To:       &toAddress,
-		Value:    big.NewInt(0),
-		Data:     dataBytes,
-	})
-
-	// sign transaction
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privKey)
-	if err != nil {
-		log.WithError(err).Error("failed to sign transaction")
+		log.WithError(err).Error("failed to get gas price")
 
 		return err
 	}
 
-	log.WithField("txHex", signedTx.Hash().Hex()).Debug("transaction signed successfully")
+	signedTx, err := api.SubmitAggregate(
+		&bind.TransactOpts{
+			Nonce:    big.NewInt(int64(t.Nonce)),
+			Value:    big.NewInt(0),
+			GasPrice: gasPrice,
+			GasLimit: 2000000,
+			From:     common.HexToAddress(t.settingsObj.Signer.AccountAddress),
+			Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
+				signedTx, err := types.SignTx(transaction, types.NewEIP155Signer(t.ChainID), privKey)
+				if err != nil {
+					log.WithError(err).Error("failed to sign transaction for aggregate")
 
-	// send transaction
-	err = client.SendTransaction(context.Background(), signedTx)
+					return nil, err
+				}
+
+				return signedTx, nil
+			},
+		}, msg.SnapshotCID, big.NewInt(int64(msg.EpochID)), msg.ProjectID, contractApi.AuditRecordStoreDynamicSnapshottersWithIndexingRequest{Deadline: big.NewInt(int64(deadline))}, signature)
+
 	if err != nil {
-		log.WithError(err).Error("failed to send transaction")
+		log.WithError(err).Error("failed to submit aggregate")
 
 		return err
 	}
 
-	log.Debug("transaction sent successfully")
+	log.WithField("txHash", signedTx.Hash().Hex()).Info("aggregate submitted successfully")
+
+	return nil
+}
+
+func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *types2.TypedData, msg *datamodel.SnapshotAndAggrRelayerPayload, signature []byte) error {
+	deadline, err := strconv.Atoi(signerData.Message["deadline"].(string))
+	if err != nil {
+		log.WithError(err).Error("failed to convert deadline to int")
+
+		return err
+	}
+
+	gasPrice, err := t.ethClient.SuggestGasPrice(context.Background())
+	if err != nil {
+		log.WithError(err).Error("failed to get gas price")
+
+		return err
+	}
+
+	signedTx, err := api.SubmitSnapshot(
+		&bind.TransactOpts{
+			Nonce:    big.NewInt(int64(t.Nonce)),
+			Value:    big.NewInt(0),
+			GasPrice: gasPrice,
+			GasLimit: 2000000,
+			From:     common.HexToAddress(t.settingsObj.Signer.AccountAddress),
+			Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
+				signedTx, err := types.SignTx(transaction, types.NewEIP155Signer(t.ChainID), privKey)
+				if err != nil {
+					log.WithError(err).Error("failed to sign transaction for snapshot")
+
+					return nil, err
+				}
+
+				return signedTx, nil
+			},
+		}, msg.SnapshotCID, big.NewInt(int64(msg.EpochID)), msg.ProjectID, contractApi.AuditRecordStoreDynamicSnapshottersWithIndexingRequest{Deadline: big.NewInt(int64(deadline))}, signature)
+
+	if err != nil {
+		log.WithError(err).Error("failed to submit snapshot")
+
+		return err
+	}
+
+	log.WithField("txHash", signedTx.Hash().Hex()).Info("snapshot submitted successfully")
+
+	return nil
+}
+
+func (t *TxManager) SubmitIndex(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *types2.TypedData, msg *datamodel.IndexRelayerPayload, signature []byte) error {
+	deadline, err := strconv.Atoi(signerData.Message["deadline"].(string))
+	if err != nil {
+		log.WithError(err).Error("failed to convert deadline to int")
+
+		return err
+	}
+
+	gasPrice, err := t.ethClient.SuggestGasPrice(context.Background())
+	if err != nil {
+		log.WithError(err).Error("failed to get gas price")
+
+		return err
+	}
+
+	identifierHash := [32]byte{}
+	copy(identifierHash[:], msg.IndexIdentifierHash)
+
+	signedTx, err := api.SubmitIndex(
+		&bind.TransactOpts{
+			Nonce:    big.NewInt(int64(t.Nonce)),
+			Value:    big.NewInt(0),
+			GasPrice: gasPrice,
+			GasLimit: 2000000,
+			From:     common.HexToAddress(t.settingsObj.Signer.AccountAddress),
+			Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
+				signedTx, err := types.SignTx(transaction, types.NewEIP155Signer(t.ChainID), privKey)
+				if err != nil {
+					log.WithError(err).Error("failed to sign transaction")
+
+					return nil, err
+				}
+
+				return signedTx, nil
+			},
+		},
+		msg.ProjectID,
+		big.NewInt(int64(msg.EpochID)),
+		big.NewInt(int64(msg.IndexTailDagBlockHeight)),
+		big.NewInt(int64(msg.TailBlockEpochSourceChainHeight)),
+		identifierHash,
+		contractApi.AuditRecordStoreDynamicSnapshottersWithIndexingRequest{Deadline: big.NewInt(int64(deadline))},
+		signature)
+
+	if err != nil {
+		log.WithError(err).Error("failed to submit aggregate")
+
+		return err
+	}
+
+	log.WithField("txHash", signedTx.Hash().Hex()).Info("aggregate submitted successfully")
 
 	return nil
 }
