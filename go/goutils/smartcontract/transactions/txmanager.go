@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -148,6 +149,21 @@ func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.
 		return err
 	}
 
+	for {
+		r, err := t.ethClient.TransactionReceipt(context.Background(), signedTx.Hash())
+		if err != nil {
+			log.WithError(err).Error("failed to get transaction receipt")
+		}
+
+		if r.Status == 0 {
+			time.Sleep(5 * time.Second)
+		}
+
+		if r.Status == 1 {
+			break
+		}
+	}
+
 	log.WithField("txHash", signedTx.Hash().Hex()).Info("snapshot submitted successfully")
 
 	return nil
@@ -181,7 +197,7 @@ func (t *TxManager) SubmitIndex(api *contractApi.ContractApi, privKey *ecdsa.Pri
 			Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
 				signedTx, err := types.SignTx(transaction, types.NewEIP155Signer(t.ChainID), privKey)
 				if err != nil {
-					log.WithError(err).Error("failed to sign transaction")
+					log.WithError(err).Error("failed to sign transaction for index")
 
 					return nil, err
 				}
@@ -195,15 +211,16 @@ func (t *TxManager) SubmitIndex(api *contractApi.ContractApi, privKey *ecdsa.Pri
 		big.NewInt(int64(msg.TailBlockEpochSourceChainHeight)),
 		identifierHash,
 		contractApi.AuditRecordStoreDynamicSnapshottersWithIndexingRequest{Deadline: big.NewInt(int64(deadline))},
-		signature)
+		signature,
+	)
 
 	if err != nil {
-		log.WithError(err).Error("failed to submit aggregate")
+		log.WithError(err).Error("failed to submit index")
 
 		return err
 	}
 
-	log.WithField("txHash", signedTx.Hash().Hex()).Info("aggregate submitted successfully")
+	log.WithField("txHash", signedTx.Hash().Hex()).Info("index submitted successfully")
 
 	return nil
 }

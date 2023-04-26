@@ -85,6 +85,8 @@ func VerifySignature(signature []byte, signerData *types.TypedData) bool {
 		return false
 	}
 
+	signature[64] += 27 // Transform yellow paper V from 0/1 to 27/28
+
 	return true
 }
 
