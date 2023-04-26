@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	types "github.com/ethereum/go-ethereum/signer/core/apitypes"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
@@ -20,24 +20,23 @@ import (
 )
 
 func SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte, error) {
-	message, err := json.Marshal(signerData)
+	data, _, err := types.TypedDataAndHash(*signerData)
 	if err != nil {
-		log.WithError(err).Error("failed to marshal signer data")
+		log.WithError(err).Error("failed to encode for signing")
 
 		return nil, err
 	}
 
-	hashedMessage := crypto.Keccak256Hash(message)
-
-	sig, err := crypto.Sign(hashedMessage.Bytes(), privKey)
+	sig, err := crypto.Sign(data, privKey)
 	if err != nil {
-		log.Fatal(err)
+		log.WithError(err).Error("failed to sign message")
+
+		return nil, err
 	}
 
-	v, r, s := sig[64]+27, sig[:32], sig[32:64]
-	finalSig := append(append(r, s...), v)
+	sig[64] += 27 // Transform V from 0/1 to 27/28 according to the yellow paper
+	finalSig := sig
 
-	log.Info("final signature:", string(finalSig))
 	log.Info("final signature (hex):", hex.EncodeToString(finalSig))
 
 	return finalSig, nil
@@ -129,7 +128,7 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
-			"deadline": strconv.Itoa(int(block) + settingsObj.Signer.DeadlineBuffer),
+			"deadline": strconv.Itoa(int(block + 10000)),
 		},
 	}
 
