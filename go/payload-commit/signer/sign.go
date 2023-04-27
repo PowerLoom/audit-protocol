@@ -130,7 +130,7 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
-			"deadline": strconv.Itoa(int(block + 10000)),
+			"deadline": strconv.Itoa(int(block) + settingsObj.Signer.DeadlineBuffer),
 		},
 	}
 
