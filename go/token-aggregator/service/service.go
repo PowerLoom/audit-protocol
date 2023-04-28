@@ -464,14 +464,14 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	lastSnapshotBlockHeight = curBlockHeight
 
 	// prune TokenPrice ZSet as price already fetched for all tokens
-	s.tokenListLock.Lock()
-	for _, tokenData := range s.tokenList {
-		err = s.redisCache.PruneTokenPriceZSet(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
-		if err != nil {
-			log.WithError(err).Error("failed to prune price zset")
-		}
-	}
-	s.tokenListLock.Unlock()
+	// s.tokenListLock.Lock()
+	// for _, tokenData := range s.tokenList {
+	// 	err = s.redisCache.PruneTokenPriceZSet(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
+	// 	if err != nil {
+	// 		log.WithError(err).Error("failed to prune price zset")
+	// 	}
+	// }
+	// s.tokenListLock.Unlock()
 
 	return nil
 }
