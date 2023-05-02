@@ -132,7 +132,10 @@ func (s *TokenAggregator) Run(pairContractAddress string) {
 
 	// run in infinite loop
 	for {
-		_ = s.PrepareAndSubmitTokenSummarySnapshot()
+		err := s.PrepareAndSubmitTokenSummarySnapshot()
+		if err != nil {
+			log.WithError(err).Error("failed run PrepareAndSubmitTokenSummarySnapshot")
+		}
 
 		log.Infof("Sleeping for %d secs", s.settingsObj.TokenAggregatorSettings.RunIntervalSecs)
 		time.Sleep(time.Duration(s.settingsObj.TokenAggregatorSettings.RunIntervalSecs) * time.Second)
@@ -201,6 +204,7 @@ func (s *TokenAggregator) FetchTokensMetaData() {
 
 		go func(pairContractAddr string) {
 			defer wg.Done()
+			log.Debug("fetching token metadata for pair contract address: ", pairContractAddr)
 
 			err := s.FetchAndFillTokenMetaData(pairContractAddr)
 			if err != nil {
@@ -280,6 +284,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 		}
 	}()
 
+	log.Debug("fetching pair summary latest block height")
 	curBlockHeight := s.redisCache.FetchPairsSummaryLatestBlockHeight(context.Background(), s.settingsObj.PoolerNamespace)
 	dagChainProjectID := fmt.Sprintf(tokenSummaryProjectID, s.settingsObj.PoolerNamespace)
 
@@ -293,6 +298,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 
 	var sourceBlockHeight int64
 
+	log.Debug("fetching pair summary snapshot")
 	tokensPairData, err := s.redisCache.FetchPairSummarySnapshot(context.Background(), curBlockHeight, s.settingsObj.PoolerNamespace)
 	if err != nil {
 		log.WithError(err).Error("failed to fetch pairSummary snapshot")
@@ -369,9 +375,10 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 
 	s.tokenListLock.Lock()
 	for key, tokenData := range s.tokenList {
+		log.Debug("fetching token price at block height: ", tokenData.BlockHeight)
 		tokenData.Price, err = s.redisCache.FetchTokenPriceAtBlockHeight(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
 		if err != nil {
-			delete(s.tokenList, key)
+			log.WithError(err).Errorf("failed to fetch token price at block height %d", tokenData.BlockHeight)
 
 			continue
 		}
@@ -380,6 +387,8 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 			// update token price in history zset
 			err = s.redisCache.UpdateTokenPriceHistoryInRedis(context.Background(), toTime, fromTime, tokenData, s.settingsObj.PoolerNamespace)
 			if err != nil {
+				log.WithError(err).Error("failed to update token price history in redis")
+
 				continue
 			}
 
@@ -387,7 +396,9 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 
 			priceHistory, err := s.redisCache.FetchTokenPriceHistoryInRedis(context.Background(), fromTime, curTimeEpoch, tokenData.ContractAddress, s.settingsObj.PoolerNamespace)
 			if err != nil {
+				log.WithError(err).Error("failed to fetch token price history for contract: ", tokenData.ContractAddress)
 				s.tokenListLock.Unlock()
+
 				return err
 			}
 
@@ -401,8 +412,7 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 			}
 		} else {
 			// TODO: Should we create a snapshot if we don't have any tokenPrice at specified height?
-			log.Errorf("Price couldn't be retrieved for token %s with name %s at blockHeight %d hence removing token from the list.",
-				key, tokenData.Name, tokenData.BlockHeight)
+			log.Errorf("Price couldn't be retrieved for token %s with name %s at blockHeight %d", key, tokenData.Name, tokenData.BlockHeight)
 		}
 	}
 	s.tokenListLock.Unlock()
