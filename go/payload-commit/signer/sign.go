@@ -5,14 +5,13 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
-	"strconv"
+	"math/big"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	types "github.com/ethereum/go-ethereum/signer/core/apitypes"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
@@ -111,9 +110,10 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 	}
 
 	signerData := &types.TypedData{
+		PrimaryType: "Request",
 		Types: types.Types{
 			"Request": []types.Type{
-				{Name: "deadline", Type: "string"},
+				{Name: "deadline", Type: "uint256"},
 			},
 			"EIP712Domain": []types.Type{
 				{Name: "name", Type: "string"},
@@ -122,7 +122,6 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 				{Name: "verifyingContract", Type: "address"},
 			},
 		},
-		PrimaryType: "Request",
 		Domain: types.TypedDataDomain{
 			Name:              settingsObj.Signer.Domain.Name,
 			Version:           settingsObj.Signer.Domain.Version,
@@ -130,7 +129,7 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
-			"deadline": strconv.Itoa(int(block) + settingsObj.Signer.DeadlineBuffer),
+			"deadline": (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(settingsObj.Signer.DeadlineBuffer))),
 		},
 	}
 
