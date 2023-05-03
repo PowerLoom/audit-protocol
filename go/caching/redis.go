@@ -68,7 +68,7 @@ func (r *RedisCache) GetLastProjectIndexedState(ctx context.Context) (map[string
 	return indexedStateMap, nil
 }
 
-func (r *RedisCache) GetPayloadCidAtDAGHeight(ctx context.Context, projectID string, dagHeight int) (string, error) {
+func (r *RedisCache) GetPayloadCidAtEpochID(ctx context.Context, projectID string, dagHeight int) (string, error) {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID)
 	payloadCid := ""
 	height := strconv.Itoa(int(dagHeight))
@@ -830,7 +830,7 @@ func (r *RedisCache) AddPayloadCID(ctx context.Context, projectID, payloadCID st
 	return err
 }
 
-func (r *RedisCache) RemovePayloadCIDAtHeight(ctx context.Context, projectID string, dagHeight int) error {
+func (r *RedisCache) RemovePayloadCIDAtEpochID(ctx context.Context, projectID string, dagHeight int) error {
 	err := r.redisClient.ZRemRangeByScore(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), strconv.Itoa(dagHeight), strconv.Itoa(dagHeight)).Err()
 
 	if err != nil {

@@ -15,7 +15,7 @@ type DbCache interface {
 	GetStoredProjects(ctx context.Context) ([]string, error)
 	StoreProjects(background context.Context, projects []string) error
 	GetLastProjectIndexedState(ctx context.Context) (map[string]*datamodel.ProjectIndexedState, error)
-	GetPayloadCidAtDAGHeight(ctx context.Context, projectID string, dagHeight int) (string, error)
+	GetPayloadCidAtEpochID(ctx context.Context, projectID string, dagHeight int) (string, error)
 	GetLastReportedDagHeight(ctx context.Context, projectID string) (int, error)
 	UpdateLastReportedDagHeight(ctx context.Context, projectID string, dagHeight int) error
 	UpdateDagVerificationStatus(ctx context.Context, projectID string, status map[string][]*datamodel.DagVerifierStatus) error
@@ -56,7 +56,7 @@ type DbCache interface {
 	CheckIfProjectExists(ctx context.Context, projectID string) (bool, error)
 	GetTentativeBlockHeight(ctx context.Context, projectID string) (int, error)
 	GetProjectEpochSize(ctx context.Context, id string) (int, error)
-	RemovePayloadCIDAtHeight(ctx context.Context, projectID string, dagHeight int) error
+	RemovePayloadCIDAtEpochID(ctx context.Context, projectID string, dagHeight int) error
 
 	AddFinalizedPayload(background context.Context, projectID string, hash string, message json.RawMessage) error
 	GetFinalizedIndexPayload(background context.Context, id string, hash string) (interface{}, error)

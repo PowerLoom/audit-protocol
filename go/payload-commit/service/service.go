@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/sha1"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -231,101 +229,26 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.PayloadCommitFinalizedMessage) error {
 	log.Debug("handling finalized payload commit task")
 
-	indexFinalizedPayload := new(datamodel.PowerloomIndexFinalizedMessage)
-	aggregateFinalizedPayload := new(datamodel.PowerloomAggregateFinalizedMessage)
-	snapshotFinalizedPayload := new(datamodel.PowerloomSnapshotFinalizedMessage)
+	// check if payload is already in cache
+	payloadCid, err := s.redisCache.GetPayloadCidAtEpochID(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
+	if err != nil {
+		return err
+	}
 
-	if msg.MessageType == datamodel.IndexFinalized {
-		m, err := msg.UnmarshalMessage()
+	if payloadCid != msg.Message.SnapshotCID {
+		log.WithField("payload_cid", payloadCid).WithField("msg_cid", msg.Message.SnapshotCID).Error("payload cid does not match")
+		err = s.redisCache.RemovePayloadCIDAtEpochID(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
 		if err != nil {
-			log.WithError(err).Error("failed to unmarshal index finalized payload message")
+			log.WithError(err).Error("failed to remove payload cid from cache")
 
 			return err
 		}
 
-		indexFinalizedPayload = m.(*datamodel.PowerloomIndexFinalizedMessage)
-
-		// hash message with sha256
-		hasher := sha1.New()
-		hasher.Write(msg.Message)
-		messageHash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
-
-		// check if payload is already in cache
-		payload, _ := s.redisCache.GetFinalizedIndexPayload(context.Background(), indexFinalizedPayload.ProjectID, messageHash)
-		if payload != nil {
-			return nil
-		}
-
-		log.Warn("payload not found in cache, adding finalized payload to cache")
-
-		// if not, store it in cache
-		err = s.redisCache.AddFinalizedPayload(context.Background(), indexFinalizedPayload.ProjectID, messageHash, msg.Message)
+		err = s.redisCache.AddPayloadCID(context.Background(), msg.Message.ProjectID, msg.Message.SnapshotCID, float64(msg.Message.EpochID))
 		if err != nil {
-			log.WithError(err).Error("failed to store finalized payload in redis")
+			log.WithError(err).Error("failed to add payload cid to cache")
 
 			return err
-		}
-	} else if msg.MessageType == datamodel.SnapshotFinalized {
-		m, err := msg.UnmarshalMessage()
-		if err != nil {
-			log.WithError(err).Error("failed to unmarshal snapshot finalized payload message")
-
-			return err
-		}
-
-		snapshotFinalizedPayload = m.(*datamodel.PowerloomSnapshotFinalizedMessage)
-
-		// check if payload is already in cache
-		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.EpochID)
-		if err != nil {
-			return err
-		}
-
-		if payloadCid != snapshotFinalizedPayload.SnapshotCID {
-			err = s.redisCache.RemovePayloadCIDAtHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.EpochID)
-			if err != nil {
-				log.WithError(err).Error("failed to remove payload cid from cache")
-
-				return err
-			}
-
-			err = s.redisCache.AddPayloadCID(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.SnapshotCID, float64(snapshotFinalizedPayload.EpochID))
-			if err != nil {
-				log.WithError(err).Error("failed to add payload cid to cache")
-
-				return err
-			}
-		}
-	} else if msg.MessageType == datamodel.AggregateFinalized {
-		m, err := msg.UnmarshalMessage()
-		if err != nil {
-			log.WithError(err).Error("failed to unmarshal aggregate finalized payload message")
-
-			return err
-		}
-
-		aggregateFinalizedPayload = m.(*datamodel.PowerloomAggregateFinalizedMessage)
-
-		// check if payload is already in cache
-		payloadCid, err := s.redisCache.GetPayloadCidAtDAGHeight(context.Background(), aggregateFinalizedPayload.ProjectID, aggregateFinalizedPayload.EpochID)
-		if err != nil {
-			return err
-		}
-
-		if payloadCid != snapshotFinalizedPayload.SnapshotCID {
-			err = s.redisCache.RemovePayloadCIDAtHeight(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.EpochEnd)
-			if err != nil {
-				log.WithError(err).Error("failed to remove payload cid from cache")
-
-				return err
-			}
-
-			err = s.redisCache.AddPayloadCID(context.Background(), snapshotFinalizedPayload.ProjectID, snapshotFinalizedPayload.SnapshotCID, float64(snapshotFinalizedPayload.EpochEnd))
-			if err != nil {
-				log.WithError(err).Error("failed to add payload cid to cache")
-
-				return err
-			}
 		}
 	}
 
