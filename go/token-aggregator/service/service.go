@@ -410,6 +410,11 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 				beginBlockHeight24h = priceHistory.BlockHeight
 				beginTimeStamp24h = priceHistory.Timestamp
 			}
+
+			err = s.redisCache.PruneTokenPriceZSet(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight)-20, s.settingsObj.PoolerNamespace)
+			if err != nil {
+				log.WithError(err).Error("failed to prune price zset")
+			}
 		} else {
 			// TODO: Should we create a snapshot if we don't have any tokenPrice at specified height?
 			log.Errorf("Price couldn't be retrieved for token %s with name %s at blockHeight %d", key, tokenData.Name, tokenData.BlockHeight)
@@ -472,16 +477,6 @@ func (s *TokenAggregator) PrepareAndSubmitTokenSummarySnapshot() error {
 	s.ResetTokenData()
 
 	lastSnapshotBlockHeight = curBlockHeight
-
-	// prune TokenPrice ZSet as price already fetched for all tokens
-	// s.tokenListLock.Lock()
-	// for _, tokenData := range s.tokenList {
-	// 	err = s.redisCache.PruneTokenPriceZSet(context.Background(), tokenData.ContractAddress, int64(tokenData.BlockHeight), s.settingsObj.PoolerNamespace)
-	// 	if err != nil {
-	// 		log.WithError(err).Error("failed to prune price zset")
-	// 	}
-	// }
-	// s.tokenListLock.Unlock()
 
 	return nil
 }
