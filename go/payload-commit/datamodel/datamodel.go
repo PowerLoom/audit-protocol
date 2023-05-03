@@ -25,14 +25,13 @@ const (
 )
 
 type PayloadCommitMessage struct {
-	MessageType   PayloadCommitMessageType `json:"messageType"`
-	Message       map[string]interface{}   `json:"message"`
-	Web3Storage   bool                     `json:"web3Storage"`
-	SourceChainID int                      `json:"sourceChainId"`
-	ProjectID     string                   `json:"projectId"`
-	EpochID       int                      `json:"epochId"`
-	EpochEnd      int                      `json:"epochEnd"`
-	SnapshotCID   string                   `json:"snapshotCID"`
+	Message       map[string]interface{} `json:"message"`
+	Web3Storage   bool                   `json:"web3Storage"`
+	SourceChainID int                    `json:"sourceChainId"`
+	ProjectID     string                 `json:"projectId"`
+	EpochID       int                    `json:"epochId"`
+	EpochEnd      int                    `json:"epochEnd"`
+	SnapshotCID   string                 `json:"snapshotCID"`
 }
 
 type PowerloomSnapshotFinalizedMessage struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 
@@ -90,6 +91,7 @@ func VerifySignature(signature []byte, signerData *types.TypedData) bool {
 }
 
 func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
+	log.Debug("getting signer data")
 	var block uint64
 	var err error
 
@@ -98,13 +100,15 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 	err = backoff.Retry(func() error {
 		block, err = client.BlockNumber(context.Background())
 		if err != nil {
-			log.Fatal(err)
+			log.WithError(err).Error("failed to get block number")
 		}
+
+		log.Info("block number fetched: ", block)
 
 		return nil
 	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
 	if err != nil {
-		log.WithError(err).Error("failed to get block number")
+		log.WithError(err).Error("failed to get block number after max retries")
 
 		return nil, err
 	}
@@ -117,8 +121,8 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 			},
 			"EIP712Domain": []types.Type{
 				{Name: "name", Type: "string"},
-				{Name: "chainId", Type: "uint256"},
 				{Name: "version", Type: "string"},
+				{Name: "chainId", Type: "uint256"},
 				{Name: "verifyingContract", Type: "address"},
 			},
 		},
@@ -132,6 +136,11 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 			"deadline": (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(settingsObj.Signer.DeadlineBuffer))),
 		},
 	}
+
+	go func() {
+		data, _ := json.Marshal(signerData)
+		log.Info("signer data: ", string(data))
+	}()
 
 	return signerData, nil
 }
