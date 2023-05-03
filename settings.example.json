@@ -20,7 +20,7 @@
   "rabbitmq": {
     "user": "guest",
     "password": "guest",
-    "host": "localhost",
+    "host": "rabbitmq",
     "port": 5672,
     "setup": {
       "core": {
@@ -167,14 +167,14 @@
   "signer": {
     "domain": {
       "name": "PowerloomProtocolContract",
-      "version": "1",
-      "chainId": "11155111",
+      "version": "0.1",
+      "chainId": "100",
       "verifyingContract": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
     },
-    "contractAddress": "0xD0229849673849F889332839b71f369A7f231846",
-    "accountAddress": "0xAe1f65Ad0a5B4d51032aEfBd3bfbeCfCf4C293C8",
+    "accountAddress": "0x05BE3003b0C5047DfEA4B7563Ce07B8fb268d721",
+    "privateKey": "",
     "deadlineBuffer": 10,
-    "rpcUrl": "https://sepolia.infura.io/v3/139a23304bdc466d82dc7a1f633a92cf"
+    "rpcUrl": "https://rpc-prost1a.powerloom.io"
   },
   "relayer": {
     "host": "0.0.0.0",
