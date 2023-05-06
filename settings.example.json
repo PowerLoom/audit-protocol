@@ -177,7 +177,7 @@
     "rpcUrl": "https://rpc-prost1a.powerloom.io"
   },
   "relayer": {
-    "host": "0.0.0.0",
-    "endpoint": ""
+    "host": "0.0.0.0:8080",
+    "endpoint": "/endpoint"
   }
 }

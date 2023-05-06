@@ -201,26 +201,29 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		Signature:   string(signature),
 	}
 
-	err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
-	if err != nil {
-		return err
+	if s.settingsObj.Relayer.URL == "" {
+		err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
 
-	// TODO: uncomment this once relayer is ready
-	// // send payload commit message with signature to relayer
-	// err = backoff.Retry(func() error {
-	// 	err = s.sendSignatureToRelayer(relayerPayload)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	//
-	// 	return nil
-	// }, backoff.NewExponentialBackOff())
-	// if err != nil {
-	// 	log.WithError(err).Error("failed to send signature to relayer")
-	//
-	// 	return err
-	// }
+	// send payload commit message with signature to relayer
+	err = backoff.Retry(func() error {
+		err = s.sendSignatureToRelayer(txPayload)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, backoff.NewExponentialBackOff())
+	if err != nil {
+		log.WithError(err).Error("failed to send signature to relayer")
+
+		return err
+	}
 
 	return nil
 }
@@ -449,7 +452,7 @@ func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error
 }
 
 // sendSignatureToRelayer sends the signature to the relayer
-func (s *PayloadCommitService) sendSignatureToRelayer(payload interface{}) error {
+func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.SnapshotAndAggrRelayerPayload) error {
 	httpClient := httpclient.GetDefaultHTTPClient()
 
 	// url = "host+port" ; endpoint = "/endpoint"
