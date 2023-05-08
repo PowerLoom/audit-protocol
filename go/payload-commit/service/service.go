@@ -201,7 +201,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		Signature:   string(signature),
 	}
 
-	if s.settingsObj.Relayer.URL == "" {
+	if *s.settingsObj.Relayer.Host == "" {
 		err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
 		if err != nil {
 			return err
@@ -456,7 +456,7 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 	httpClient := httpclient.GetDefaultHTTPClient()
 
 	// url = "host+port" ; endpoint = "/endpoint"
-	url := s.settingsObj.Relayer.URL + s.settingsObj.Relayer.Endpoint
+	url := *s.settingsObj.Relayer.Host + *s.settingsObj.Relayer.Endpoint
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
