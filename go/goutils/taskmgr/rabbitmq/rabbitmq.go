@@ -31,8 +31,13 @@ func NewRabbitmqTaskMgr() *RabbitmqTaskMgr {
 		log.WithError(err).Fatalf("failed to invoke settingsObj object")
 	}
 
+	conn, err := Dial(settingsObj)
+	if err != nil {
+		log.WithError(err).Fatalf("failed to connect to rabbitmq")
+	}
+
 	taskMgr := &RabbitmqTaskMgr{
-		conn:     Dial(settingsObj),
+		conn:     conn,
 		settings: settingsObj,
 	}
 
@@ -53,6 +58,16 @@ func (r *RabbitmqTaskMgr) Publish(ctx context.Context) error {
 // getChannel returns a channel from the connection
 // this method is also used to create a new channel if channel is closed
 func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, error) {
+	if r.conn == nil || r.conn.IsClosed() {
+		log.Debug("rabbitmq connection is closed, reconnecting")
+		var err error
+
+		r.conn, err = Dial(r.settings)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	channel, err := r.conn.Channel()
 	if err != nil {
 		log.Errorf("failed to open a channel on rabbitmq: %v", err)
@@ -128,7 +143,13 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 }
 
 // Consume consumes messages from the queue
-func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, msgChan chan taskmgr.TaskHandler, errChan chan error) error {
+func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, msgChan chan taskmgr.TaskHandler) error {
+	defer func() {
+		// recover from panic
+		if p := recover(); p != nil {
+			log.Errorf("recovered from panic: %v", p)
+		}
+	}()
 	channel, err := r.getChannel(workerType)
 	if err != nil {
 		return err
@@ -167,9 +188,11 @@ func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, m
 
 	log.Infof("RabbitmqTaskMgr: consuming messages from queue %s", queueName)
 
-	forever := make(chan *amqp.Error)
+	connCloseChan := make(chan *amqp.Error, 1)
+	channelCloseChan := make(chan *amqp.Error, 1)
 
-	forever = channel.NotifyClose(forever)
+	connCloseChan = r.conn.NotifyClose(connCloseChan)
+	channelCloseChan = channel.NotifyClose(channelCloseChan)
 
 	go func() {
 		for msg := range msgs {
@@ -183,28 +206,31 @@ func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, m
 		}
 	}()
 
-	err = <-forever
-	if err != nil {
-		log.WithError(err).WithField("queueName", queueName).Error("connection closed while consuming messages")
+	select {
+	case err = <-connCloseChan:
+		log.WithError(err).Error("connection closed")
+
+		return err
+	case err = <-channelCloseChan:
+		log.WithError(err).Error("channel closed")
+
+		return err
 	}
-
-	// send back error due to rabbitmq channel closed
-	errChan <- err
-
-	return nil
 }
 
-func Dial(config *settings.SettingsObj) *amqp.Connection {
+func Dial(config *settings.SettingsObj) (*amqp.Connection, error) {
 	rabbitmqConfig := config.Rabbitmq
 
 	url := fmt.Sprintf("amqp://%s:%s@%s/", rabbitmqConfig.User, rabbitmqConfig.Password, net.JoinHostPort(rabbitmqConfig.Host, strconv.Itoa(rabbitmqConfig.Port)))
 
 	conn, err := amqp.Dial(url)
 	if err != nil {
-		log.Panicf("failed to connect to RabbitMQ: %v", err)
+		log.WithError(err).Error("failed to connect to RabbitMQ")
+
+		return nil, err
 	}
 
-	return conn
+	return conn, nil
 }
 
 func (r *RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
@@ -249,6 +275,10 @@ func (r *RabbitmqTaskMgr) getRoutingKeys(workerType worker.Type) []string {
 }
 
 func (r *RabbitmqTaskMgr) Shutdown(ctx context.Context) error {
+	if r.conn == nil || r.conn.IsClosed() {
+		return nil
+	}
+
 	if err := r.conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
 		log.Errorf("failed to close connection on rabbitmq: %v", err)
 
