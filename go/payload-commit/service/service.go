@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/hashicorp/go-retryablehttp"
@@ -198,7 +201,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		EpochID:     msg.EpochID,
 		SnapshotCID: msg.SnapshotCID,
 		Request:     signerData.Message,
-		Signature:   string(signature),
+		Signature:   hex.EncodeToString(signature),
 	}
 
 	if *s.settingsObj.Relayer.Host == "" {
@@ -453,12 +456,34 @@ func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error
 
 // sendSignatureToRelayer sends the signature to the relayer
 func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.SnapshotAndAggrRelayerPayload) error {
+	type reqBody struct {
+		ProjectID   string `json:"projectId"`
+		SnapshotCID string `json:"snapshotCid"`
+		EpochID     int    `json:"epochId"`
+		Request     struct {
+			Deadline uint64 `json:"deadline"`
+		} `json:"request"`
+		Signature string `json:"signature"`
+	}
+
+	rb := &reqBody{
+		ProjectID:   payload.ProjectID,
+		SnapshotCID: payload.SnapshotCID,
+		EpochID:     payload.EpochID,
+		Request: struct {
+			Deadline uint64 `json:"deadline"`
+		}{
+			Deadline: (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
+		},
+		Signature: payload.Signature,
+	}
+
 	httpClient := httpclient.GetDefaultHTTPClient()
 
 	// url = "host+port" ; endpoint = "/endpoint"
 	url := *s.settingsObj.Relayer.Host + *s.settingsObj.Relayer.Endpoint
 
-	payloadBytes, err := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(rb)
 	if err != nil {
 		log.WithError(err).Error("failed to marshal payload")
 
