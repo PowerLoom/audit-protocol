@@ -190,12 +190,6 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		return err
 	}
 
-	s.txManager.Mu.Lock()
-	defer func() {
-		s.txManager.Nonce++
-		s.txManager.Mu.Unlock()
-	}()
-
 	txPayload := &datamodel.SnapshotAndAggrRelayerPayload{
 		ProjectID:   msg.ProjectID,
 		EpochID:     msg.EpochID,
@@ -205,6 +199,12 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	}
 
 	if *s.settingsObj.Relayer.Host == "" {
+		s.txManager.Mu.Lock()
+		defer func() {
+			s.txManager.Nonce++
+			s.txManager.Mu.Unlock()
+		}()
+
 		err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
 		if err != nil {
 			return err
@@ -475,7 +475,7 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 		}{
 			Deadline: (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
 		},
-		Signature: payload.Signature,
+		Signature: "0x" + payload.Signature,
 	}
 
 	httpClient := httpclient.GetDefaultHTTPClient()
