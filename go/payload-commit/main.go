@@ -4,6 +4,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/caching"
+	"audit-protocol/goutils/health"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/redisutils"
@@ -21,7 +22,6 @@ func main() {
 
 	ipfsutils.InitClient(
 		settingsObj.IpfsConfig.URL,
-		settingsObj.PayloadCommit.Concurrency,
 		settingsObj.IpfsConfig.IPFSRateLimiter,
 		settingsObj.IpfsConfig.Timeout,
 	)
@@ -30,7 +30,7 @@ func main() {
 		settingsObj.Redis.Host,
 		settingsObj.Redis.Port,
 		settingsObj.Redis.Db,
-		settingsObj.DagVerifierSettings.RedisPoolSize,
+		settingsObj.Redis.PoolSize,
 		settingsObj.Redis.Password,
 		-1,
 	)
@@ -44,6 +44,9 @@ func main() {
 	service.InitPayloadCommitService()
 
 	mqWorker := worker.NewWorker()
+
+	// health check is non-blocking health check http listener
+	health.HealthCheck()
 
 	defer func() {
 		mqWorker.ShutdownWorker()

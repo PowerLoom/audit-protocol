@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -24,7 +24,7 @@ import (
 	"github.com/swagftw/gi"
 
 	"audit-protocol/caching"
-	datamodel2 "audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/settings"
@@ -32,7 +32,6 @@ import (
 	"audit-protocol/goutils/smartcontract/transactions"
 	"audit-protocol/goutils/taskmgr"
 	w3storage "audit-protocol/goutils/w3s"
-	"audit-protocol/payload-commit/datamodel"
 	"audit-protocol/payload-commit/signer"
 )
 
@@ -180,17 +179,30 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		log.WithError(err).Error("failed to upload payload commit message to ipfs")
 	}
 
-	go func() {
-		_ = s.storePayloadToDiskCache(msg)
-		_ = s.redisCache.AddPayloadCID(context.Background(), msg.ProjectID, msg.SnapshotCID, float64(msg.EpochID))
-	}()
+	_ = s.storePayloadToDiskCache(msg)
+	err = s.redisCache.RemovePayloadCIDAtEpochID(context.Background(), msg.ProjectID, msg.EpochID)
+	if err != nil {
+		log.WithError(err).Error("failed to remove payload cid at given epoch id")
+	}
+
+	err = s.redisCache.AddPayloadCID(context.Background(), msg.ProjectID, msg.SnapshotCID, float64(msg.EpochID))
+	if err != nil {
+		log.WithField("epochId", msg.EpochID).
+			WithField("messageId", msg.ProjectID).
+			WithField("snapshotCid", msg.SnapshotCID).
+			WithError(err).Error("failed to store payload cid in redis")
+	}
+
+	if err != nil {
+		log.WithError(err).Error("failed to store payload cid in redis")
+	}
 
 	signerData, signature, err := s.signPayload()
 	if err != nil {
 		return err
 	}
 
-	txPayload := &datamodel.SnapshotAndAggrRelayerPayload{
+	txPayload := &datamodel.SnapshotRelayerPayload{
 		ProjectID:   msg.ProjectID,
 		EpochID:     msg.EpochID,
 		SnapshotCID: msg.SnapshotCID,
@@ -243,16 +255,27 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 
 	if payloadCid != msg.Message.SnapshotCID {
 		log.WithField("payload_cid", payloadCid).WithField("msg_cid", msg.Message.SnapshotCID).Error("payload cid does not match")
-		err = s.redisCache.RemovePayloadCIDAtEpochID(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
-		if err != nil {
-			log.WithError(err).Error("failed to remove payload cid from cache")
 
-			return err
-		}
+		err = s.redisCache.Transaction(context.Background(), func(ctx context.Context) error {
+			err = s.redisCache.RemovePayloadCIDAtEpochID(ctx, msg.Message.ProjectID, msg.Message.EpochID)
+			if err != nil {
+				log.WithError(err).Error("failed to remove payload cid from cache")
 
-		err = s.redisCache.AddPayloadCID(context.Background(), msg.Message.ProjectID, msg.Message.SnapshotCID, float64(msg.Message.EpochID))
+				return err
+			}
+
+			err = s.redisCache.AddPayloadCID(ctx, msg.Message.ProjectID, msg.Message.SnapshotCID, float64(msg.Message.EpochID))
+			if err != nil {
+				log.WithError(err).Error("failed to add payload cid to cache")
+
+				return err
+			}
+
+			return nil
+		})
+
 		if err != nil {
-			log.WithError(err).Error("failed to add payload cid to cache")
+			log.WithError(err).Error("failed to update payload cid in cache, inside the transaction")
 
 			return err
 		}
@@ -265,7 +288,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 	log.WithField("msg", msg).Debug("uploading payload commit msg to ipfs and web3 storage")
 	wg := sync.WaitGroup{}
 
-	wg.Add(2)
+	wg.Add(1)
 
 	// upload to ipfs
 	var ipfsUploadErr error
@@ -291,10 +314,11 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 	var w3sUploadErr error
 	var snapshotCid string
 	if msg.Web3Storage {
+		wg.Add(1)
 		go func() {
 			wg.Done()
 			w3sUploadErr = backoff.Retry(func() error {
-				snapshotCid, w3sUploadErr = s.uploadToW3s(msg)
+				snapshotCid, w3sUploadErr = s.web3sClient.UploadToW3s(msg.Message)
 				if w3sUploadErr != nil {
 					return w3sUploadErr
 				}
@@ -327,87 +351,11 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 	return nil
 }
 
-func (s *PayloadCommitService) uploadToW3s(msg *datamodel.PayloadCommitMessage) (string, error) {
-	log.Debug("uploading payload commit message to web3 storage")
-
-	reqURL := s.settingsObj.Web3Storage.URL + s.settingsObj.Web3Storage.UploadURLSuffix
-
-	defaultHTTPClient := httpclient.GetDefaultHTTPClient()
-
-	payloadCommit, err := json.Marshal(msg.Message)
-	if err != nil {
-		log.WithError(err).Error("failed to marshal payload commit message")
-
-		return "", err
-	}
-
-	req, err := retryablehttp.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(payloadCommit))
-	if err != nil {
-		log.WithError(err).Error("failed to create request to web3.storage")
-
-		return "", err
-	}
-
-	req.Header.Add("Authorization", "Bearer "+s.settingsObj.Web3Storage.APIToken)
-	req.Header.Add("accept", "application/json")
-
-	err = s.web3sClient.Limiter.Wait(context.Background())
-	if err != nil {
-		log.Errorf("web3 storage rate limiter wait errored")
-
-		return "", err
-	}
-
-	log.WithField("msg", string(payloadCommit)).Debug("sending request to web3.storage")
-
-	res, err := defaultHTTPClient.Do(req)
-	if err != nil {
-		log.WithError(err).Error("failed to send request to web3.storage")
-
-		return "", err
-	}
-
-	defer res.Body.Close()
-
-	web3resp := new(datamodel2.Web3StoragePutResponse)
-
-	respBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		log.WithError(err).Error("failed to read response body from web3.storage")
-
-		return "", err
-	}
-
-	if res.StatusCode == http.StatusOK {
-		err = json.Unmarshal(respBody, web3resp)
-		if err != nil {
-			log.WithError(err).Error("failed to unmarshal response from web3.storage")
-
-			return "", err
-		}
-
-		log.WithField("cid", web3resp.CID).Info("successfully uploaded payload commit to web3.storage")
-
-		return web3resp.CID, nil
-	}
-
-	resp := new(datamodel2.Web3StorageErrResponse)
-
-	err = json.Unmarshal(respBody, resp)
-	if err != nil {
-		log.WithError(err).Error("failed to unmarshal error response from web3.storage")
-	} else {
-		log.WithField("payloadCommit", string(payloadCommit)).WithField("error", resp.Message).Error("web3.storage upload error")
-	}
-
-	return "", errors.New(resp.Message)
-}
-
 // storePayloadToDiskCache stores the payload commit message to disk cache
 func (s *PayloadCommitService) storePayloadToDiskCache(msg *datamodel.PayloadCommitMessage) error {
-	cachePath := s.settingsObj.PayloadCachePath
-
-	cachePath = fmt.Sprintf("%s%s/%s", cachePath, msg.ProjectID, msg.SnapshotCID)
+	cachePath := s.settingsObj.LocalCachePath
+	cachePath = strings.TrimSuffix(cachePath, "/")
+	cachePath = filepath.Join(cachePath, msg.ProjectID, msg.SnapshotCID)
 
 	byteData, err := json.Marshal(msg)
 	if err != nil {
@@ -455,7 +403,7 @@ func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error
 }
 
 // sendSignatureToRelayer sends the signature to the relayer
-func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.SnapshotAndAggrRelayerPayload) error {
+func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.SnapshotRelayerPayload) error {
 	type reqBody struct {
 		ProjectID   string `json:"projectId"`
 		SnapshotCID string `json:"snapshotCid"`

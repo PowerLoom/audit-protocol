@@ -69,14 +69,14 @@ func (w *Worker) ConsumeTask() error {
 
 				err = backoff.Retry(func() error {
 					return taskHandler.Nack(false)
-				}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(*w.settings.RetryCount)))
+				}, backoff.NewExponentialBackOff())
 				if err != nil {
 					log.WithError(err).Errorf("failed to nack the message")
 				}
 			} else {
 				err = backoff.Retry(func() error {
 					return taskHandler.Ack()
-				}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(*w.settings.RetryCount)))
+				}, backoff.NewExponentialBackOff())
 				if err != nil {
 					log.WithError(err).Error("failed to ack the message")
 				}

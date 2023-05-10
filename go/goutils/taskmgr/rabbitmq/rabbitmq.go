@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 
 	"github.com/swagftw/gi"
 
@@ -25,6 +24,7 @@ type RabbitmqTaskMgr struct {
 
 var _ taskmgr.TaskMgr = &RabbitmqTaskMgr{}
 
+// NewRabbitmqTaskMgr returns a new rabbitmq task manager
 func NewRabbitmqTaskMgr() *RabbitmqTaskMgr {
 	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
 	if err != nil {
@@ -84,30 +84,8 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 		return nil, taskmgr.ErrConsumerInitFailed
 	}
 
-	// dead letter exchange
-	dlxExchange := r.settings.Rabbitmq.Setup.Core.DLX
-
-	err = channel.ExchangeDeclare(dlxExchange, "direct", true, false, false, false, nil)
-	if err != nil {
-		log.Errorf("failed to declare an exchange on rabbitmq: %v", err)
-
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
-
 	// declare the queue
 	routingKeys := r.getRoutingKeys(workerType) // dag-pruning:task
-	dlxRoutingKey := ""
-	for _, routingKey := range routingKeys {
-		if strings.Contains(routingKey, ":dlx") {
-			dlxRoutingKey = routingKey
-		}
-	}
-
-	if dlxRoutingKey == "" {
-		log.Errorf("failed to get dlx routing key")
-
-		return nil, taskmgr.ErrConsumerInitFailed
-	}
 
 	queue, err := channel.QueueDeclare(r.getQueue(workerType, ""), false, false, false, false, nil)
 
@@ -117,13 +95,8 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 		return nil, taskmgr.ErrConsumerInitFailed
 	}
 
-	// bind the queue to the exchange
+	// bind the queue to the exchange on the routing keys
 	for _, routingKey := range routingKeys {
-		// TODO: for now skipping dead letter config
-		if strings.Contains(routingKey, ":dlx") {
-			continue
-		}
-
 		err = channel.QueueBind(queue.Name, routingKey, exchange, false, nil)
 		if err != nil {
 			log.WithField("routingKey", routingKey).Errorf("failed to bind a queue on rabbitmq: %v", err)
@@ -131,13 +104,6 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 			return nil, taskmgr.ErrConsumerInitFailed
 		}
 	}
-
-	// err = channel.QueueBind(queue.Name, dlxRoutingKey, dlxExchange, false, nil)
-	// if err != nil {
-	// 	log.Errorf("failed to bind a queue on rabbitmq: %v", err)
-	//
-	// 	return nil, taskmgr.ErrConsumerInitFailed
-	// }
 
 	return channel, nil
 }
@@ -235,8 +201,6 @@ func Dial(config *settings.SettingsObj) (*amqp.Connection, error) {
 
 func (r *RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
 	switch workerType {
-	case worker.TypePruningServiceWorker:
-		return r.settings.Rabbitmq.Setup.Core.Exchange
 	case worker.TypePayloadCommitWorker:
 		return fmt.Sprintf("%s%s", r.settings.Rabbitmq.Setup.Core.CommitPayloadExchange, r.settings.PoolerNamespace)
 	default:
@@ -246,10 +210,8 @@ func (r *RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
 
 func (r *RabbitmqTaskMgr) getQueue(workerType worker.Type, suffix string) string {
 	switch workerType {
-	case worker.TypePruningServiceWorker:
-		return r.settings.Rabbitmq.Setup.Queues.DagPruning.QueueNamePrefix + suffix
 	case worker.TypePayloadCommitWorker:
-		return fmt.Sprintf("%s%s:%s", r.settings.Rabbitmq.Setup.Queues.CommitPayloads.QueueNamePrefix, r.settings.PoolerNamespace, r.settings.InstanceId)
+		return fmt.Sprintf("%s%s:%s", r.settings.Rabbitmq.Setup.PayloadCommit.QueueNamePrefix, r.settings.PoolerNamespace, r.settings.InstanceId)
 	default:
 		return ""
 	}
@@ -258,16 +220,10 @@ func (r *RabbitmqTaskMgr) getQueue(workerType worker.Type, suffix string) string
 // getRoutingKeys returns the routing key(s) for the given worker type
 func (r *RabbitmqTaskMgr) getRoutingKeys(workerType worker.Type) []string {
 	switch workerType {
-	case worker.TypePruningServiceWorker:
-		return []string{
-			r.settings.Rabbitmq.Setup.Queues.DagPruning.RoutingKeyPrefix + taskmgr.TaskSuffix,
-			r.settings.Rabbitmq.Setup.Queues.DagPruning.RoutingKeyPrefix + taskmgr.DLXSuffix,
-		}
 	case worker.TypePayloadCommitWorker:
 		return []string{
-			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.FinalizedSuffix),
-			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.DataSuffix),
-			r.settings.Rabbitmq.Setup.Queues.CommitPayloads.RoutingKeyPrefix + taskmgr.DLXSuffix,
+			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.PayloadCommit.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.FinalizedSuffix),
+			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.PayloadCommit.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.DataSuffix),
 		}
 	default:
 		return nil
