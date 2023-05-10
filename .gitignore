@@ -3,6 +3,7 @@ fast_settings.py
 docker_settings.json
 settings.json
 .idea/
+.vscode
 .python-version
 __pycache__/
 *.db
