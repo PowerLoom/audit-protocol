@@ -7,35 +7,5 @@ settings.json
 __pycache__/
 *.db
 *.swp
-files/
 .env
-out/
-state.json
-state.json.bz2
-state_parse_error.json
-static/cached_pair_addresses.json
-
-# Ignore dynaconf secret files
-.secrets.*
-bloom_filter_objects/
-containers/
-startup.sh
-test_eco.config.js
-backup_height.json
-Pipfile
-Pipfile.lock
-temp_files/
-
-docker/account_info.json
-docker/settings.json
-
-test.py
-
-#ignore go binaries
 go/payload-commit/payload-commit
-go/go-tester/go-tester
-go/pruning-archival/pruning-archival
-go/token-aggregator/token-aggregator
-go/dag-status-reporter/dag-status-reporter
-
-go/goutils/smartcontract/abi

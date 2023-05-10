@@ -1,9 +1,5 @@
 #!/bin/bash
 
-export PYTHONPATH=$(pwd)
-
-python init_rabbitmq.py
-
 echo 'starting pm2...';
 
 pm2 start pm2.config.js
