@@ -35,13 +35,11 @@ type PayloadCommitMessage struct {
 	SourceChainID int                    `json:"sourceChainId"`
 	ProjectID     string                 `json:"projectId"`
 	EpochID       int                    `json:"epochId"`
-	EpochEnd      int                    `json:"epochEnd"`
 	SnapshotCID   string                 `json:"snapshotCID"`
 }
 
 type PowerloomSnapshotFinalizedMessage struct {
 	EpochID     int    `json:"epochId"`
-	EpochEnd    int    `json:"epochEnd"`
 	ProjectID   string `json:"projectId"`
 	SnapshotCID string `json:"snapshotCid"`
 	Timestamp   int    `json:"timestamp"`
@@ -59,4 +57,15 @@ type SnapshotRelayerPayload struct {
 	EpochID     int                       `json:"epochId"`
 	Request     apitypes.TypedDataMessage `json:"request"`
 	Signature   string                    `json:"signature"`
+}
+
+type SnapshotterStatusReport struct {
+	SubmittedSnapshotCid string `json:"submittedSnapshotCid"`
+	FinalizedSnapshotCid string `json:"finalizedSnapshotCid"`
+	Missed               bool   `json:"missed"`
+}
+
+type UnfinalizedSnapshot struct {
+	SnapshotCID string `json:"snapshotCid"`
+	Expiration  int64  `json:"expiration"`
 }

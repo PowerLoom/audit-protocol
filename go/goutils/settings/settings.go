@@ -146,6 +146,8 @@ func ParseSettings() *SettingsObj {
 // SetDefaults sets the default values for the settings object
 // add default values in this function if required
 func SetDefaults(settingsObj *SettingsObj) {
+	settingsObj.LocalCachePath = strings.TrimSuffix(settingsObj.LocalCachePath, "/")
+
 	// for local testing
 	if val, err := strconv.ParseBool(os.Getenv("LOCAL_TESTING")); err == nil && val {
 		settingsObj.Redis.Host = "localhost"

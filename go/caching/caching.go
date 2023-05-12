@@ -3,17 +3,19 @@ package caching
 import (
 	"context"
 	"errors"
+
+	"audit-protocol/goutils/datamodel"
 )
 
 // DbCache is responsible for data caching in db stores like redis, memcache etc.
 // for disk caching use DiskCache interface
 type DbCache interface {
-	GetPayloadCidAtEpochID(ctx context.Context, projectID string, dagHeight int) (string, error)
+	GetSnapshotCidAtEpochID(ctx context.Context, projectID string, epochId int) (string, error)
 	GetStoredProjects(ctx context.Context) ([]string, error)
 	CheckIfProjectExists(ctx context.Context, projectID string) (bool, error)
 	StoreProjects(background context.Context, projects []string) error
-	AddPayloadCID(ctx context.Context, projectID, payloadCID string, height float64) error
-	RemovePayloadCIDAtEpochID(ctx context.Context, projectID string, dagHeight int) error
+	AddUnfinalizedSnapshotCID(ctx context.Context, projectID, snapshotCID string, height float64) error
+	AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error
 }
 
 // DiskCache is responsible for data caching in local disk

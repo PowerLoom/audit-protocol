@@ -2,13 +2,16 @@ package caching
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
+	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/redisutils"
 )
 
@@ -34,37 +37,53 @@ func NewRedisCache() *RedisCache {
 	return cache
 }
 
-func (r *RedisCache) GetPayloadCidAtEpochID(ctx context.Context, projectID string, epochId int) (string, error) {
-	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID)
-	payloadCid := ""
+func (r *RedisCache) GetSnapshotCidAtEpochID(ctx context.Context, projectID string, epochId int) (string, error) {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_UNFINALIZED_SNAPSHOT_CIDS, projectID)
+	snapshotCid := ""
 	height := strconv.Itoa(epochId)
 
 	log.WithField("projectID", projectID).
 		WithField("epochId", epochId).
 		WithField("key", key).
-		Debug("getting PayloadCid from redis at given epochId from the given projectId")
+		Debug("getting snapshotCid from redis at given epochId from the given projectId")
 
 	res, err := r.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 		Min: height,
 		Max: height,
 	}).Result()
 	if err != nil {
-		log.Error("could not Get payload cid from redis error: ", err)
+		log.Error("could not Get snapshot cid from redis error: ", err)
 
 		return "", err
 	}
 
 	if len(res) == 1 {
-		payloadCid = fmt.Sprintf("%v", res[0].Member)
-		log.WithField("result", res).WithField("epochId", epochId).Debug("got payload cid at given epochId")
+		p := new(datamodel.UnfinalizedSnapshot)
+
+		val, ok := res[0].Member.(string)
+		if !ok {
+			log.Error("CRITICAL: could not convert snapshot cid data stored in redis to string")
+		}
+
+		err = json.Unmarshal([]byte(val), p)
+		if err != nil {
+			log.WithError(err).Error("CRITICAL: could not unmarshal snapshot cid data stored in redis")
+
+			return "", err
+		}
+
+		snapshotCid = p.SnapshotCID
+
+		log.WithField("snapshotCid", snapshotCid).WithField("epochId", epochId).Debug("got snapshot cid at given epochId")
 	}
 
-	return payloadCid, nil
+	return snapshotCid, nil
 }
 
-// GetStoredProjects returns the list of projects that are stored in redis
+// GetStoredProjects returns the list of projects that are stored in redis.
 func (r *RedisCache) GetStoredProjects(ctx context.Context) ([]string, error) {
 	key := redisutils.REDIS_KEY_STORED_PROJECTS
+
 	val, err := r.redisClient.SMembers(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -94,7 +113,7 @@ func (r *RedisCache) CheckIfProjectExists(ctx context.Context, projectID string)
 	return true, nil
 }
 
-// StoreProjects stores the given projects in the redis cache
+// StoreProjects stores the given projects in the redis cache.
 func (r *RedisCache) StoreProjects(background context.Context, projects []string) error {
 	_, err := r.redisClient.SAdd(background, redisutils.REDIS_KEY_STORED_PROJECTS, projects).Result()
 
@@ -107,75 +126,101 @@ func (r *RedisCache) StoreProjects(background context.Context, projects []string
 	return nil
 }
 
-func (r *RedisCache) AddPayloadCID(ctx context.Context, projectID, payloadCID string, height float64) error {
-	pipe := r.getPipelinerFromCtx(ctx)
-	var err error
+// AddUnfinalizedSnapshotCID adds the given snapshot cid to the given project's zset.
+func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, projectID, snapshotCid string, height float64) error {
+	p := new(datamodel.UnfinalizedSnapshot)
 
-	if pipe != nil {
-		err = pipe.ZAdd(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), &redis.Z{
-			Score:  height,
-			Member: payloadCID,
-		}).Err()
-	} else {
-		err = r.redisClient.ZAdd(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), &redis.Z{
-			Score:  height,
-			Member: payloadCID,
-		}).Err()
+	p.Expiration = time.Now().Unix() + 3600*24 // 1 day
+	p.SnapshotCID = snapshotCid
+
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_UNFINALIZED_SNAPSHOT_CIDS, projectID)
+
+	data, _ := json.Marshal(p)
+
+	err := r.redisClient.ZAdd(ctx, key, &redis.Z{
+		Score:  height,
+		Member: string(data),
+	}).Err()
+	if err != nil {
+		log.WithError(err).Error("failed to add snapshot cid to zset")
+
+		return err
 	}
 
+	// get all the members
+	res, err := r.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+		Min: "-inf",
+		Max: "+inf",
+	}).Result()
 	if err != nil {
-		log.WithError(err).Error("failed to add payload CID to zset")
+		log.WithError(err).Error("failed to get all members from zset")
+
+		// ignore error
+		return nil
+	}
+
+	// remove all the members that have expired
+	for _, member := range res {
+		m := new(datamodel.UnfinalizedSnapshot)
+
+		val, ok := member.Member.(string)
+		if !ok {
+			log.Error("CRITICAL: could not convert snapshot cid data stored in redis to string")
+		}
+
+		err = json.Unmarshal([]byte(val), m)
+		if err != nil {
+			log.WithError(err).Error("CRITICAL: could not unmarshal snapshot cid data stored in redis")
+
+			continue
+		}
+
+		if float64(m.Expiration) < float64(time.Now().Unix()) {
+			err = r.redisClient.ZRem(ctx, key, member.Member).Err()
+			if err != nil {
+				log.WithError(err).Error("failed to remove expired snapshot cid from zset")
+			}
+		}
 	}
 
 	log.WithField("projectID", projectID).
-		WithField("payloadCID", payloadCID).
+		WithField("snapshotCid", snapshotCid).
 		WithField("epochId", height).
-		Debug("added payload CID to zset")
+		Debug("added snapshot CID to zset")
 
-	return err
+	return nil
 }
 
-func (r *RedisCache) RemovePayloadCIDAtEpochID(ctx context.Context, projectID string, dagHeight int) error {
-	pipe := r.getPipelinerFromCtx(ctx)
-	var err error
+// AddSnapshotterStatusReport adds the snapshotter's status report to the given project and epoch ID.
+func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_SNAPSHOTTER_STATUS_REPORT, projectId)
 
-	if pipe != nil {
-		err = pipe.ZRemRangeByScore(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), strconv.Itoa(dagHeight), strconv.Itoa(dagHeight)).Err()
-	} else {
-		err = r.redisClient.ZRemRangeByScore(ctx, fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_PAYLOAD_CIDS, projectID), strconv.Itoa(dagHeight), strconv.Itoa(dagHeight)).Err()
-	}
-
+	reportJson, err := json.Marshal(report)
 	if err != nil {
-		if err == redis.Nil {
-			return nil
-		}
+		log.WithError(err).Error("failed to marshal snapshotter status report")
 
-		log.WithError(err).Error("failed to remove payload CID from zset")
+		return err
 	}
 
-	return err
-}
-
-func (r *RedisCache) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	pipe := r.redisClient.TxPipeline()
-
-	ctx = context.WithValue(ctx, "pipeliner", pipe)
-
-	err := fn(ctx)
+	err = r.redisClient.HSet(ctx, key, strconv.Itoa(epochId), string(reportJson)).Err()
 	if err != nil {
-		err = pipe.Discard()
+		log.WithError(err).Error("failed to add snapshotter status report in redis")
+
+		return err
+	}
+
+	if report.Missed {
+		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_MISSED_SNAPSHOT_COUNT, projectId)
 	} else {
-		_, err = pipe.Exec(ctx)
-		log.WithError(err).Error("failed to execute transaction")
+		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_SUCCESSFUL_SNAPSHOT_COUNT, projectId)
 	}
 
-	return err
-}
-
-func (r *RedisCache) getPipelinerFromCtx(ctx context.Context) redis.Pipeliner {
-	if pipeliner, ok := ctx.Value("pipeliner").(redis.Pipeliner); ok {
-		return pipeliner
+	err = r.redisClient.Incr(ctx, key).Err()
+	if err != nil {
+		log.WithError(err).Error("failed to increment total missed snapshot count")
 	}
+
+	log.Debug("added snapshotter status report in redis")
 
 	return nil
 }

@@ -40,6 +40,9 @@ func NewNonceManager() *TxManager {
 	}
 
 	chainId, err := ethClient.ChainID(context.Background())
+	if err != nil {
+		log.WithError(err).Fatal("failed to get chain id")
+	}
 
 	txMgr := &TxManager{
 		Mu:          sync.Mutex{},

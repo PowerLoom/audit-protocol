@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,7 +29,7 @@ import (
 	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/settings"
-	"audit-protocol/goutils/smartcontract/api"
+	contractApi "audit-protocol/goutils/smartcontract/api"
 	"audit-protocol/goutils/smartcontract/transactions"
 	"audit-protocol/goutils/taskmgr"
 	w3storage "audit-protocol/goutils/w3s"
@@ -47,7 +48,7 @@ type PayloadCommitService struct {
 	privKey     *ecdsa.PrivateKey
 }
 
-// InitPayloadCommitService initializes the payload commit service
+// InitPayloadCommitService initializes the payload commit service.
 func InitPayloadCommitService() *PayloadCommitService {
 	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
 	if err != nil {
@@ -148,60 +149,46 @@ func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 	return nil
 }
 
+// HandlePayloadCommitTask handles the payload commit task.
 func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCommitMessage) error {
 	log.WithField("project_id", msg.ProjectID).Info("handling payload commit task")
 
-	// check if project exists
-	// projects, err := s.contractAPI.GetProjects(&bind.CallOpts{})
-	//
-	// if err != nil {
-	// 	log.WithError(err).Error("failed to get projects from contract")
-	// 	return err
-	// }
-	//
-	// projectExists := false
-	// for _, project := r ange projects {
-	// 	if project == msg.ProjectID {
-	// 		projectExists = true
-	// 		break
-	// 	}
-	// }
-	//
-	// if !projectExists {
-	// 	log.WithField("project_id", msg.ProjectID).Error("project does not exist, skipping payload commit")
-	//
-	// 	return nil
-	// }
+	// check if payload cid is already present at the epochId, for the given project in redis
+	// if yes, then skip the task
+	payloadCid, err := s.redisCache.GetSnapshotCidAtEpochID(context.Background(), msg.ProjectID, msg.EpochID)
+	if payloadCid != "" {
+		log.WithField("epochId", msg.EpochID).
+			WithField("messageId", msg.ProjectID).
+			WithField("payloadCid", payloadCid).
+			WithError(err).Debug("payload commit message already processed for the given epochId and project, skipping task")
+
+		return nil
+	}
 
 	// upload payload commit msg to ipfs and web3 storage
-	err := s.uploadToIPFSandW3s(msg)
+	err = s.uploadToIPFSandW3s(msg)
 	if err != nil {
 		log.WithError(err).Error("failed to upload payload commit message to ipfs")
 	}
 
-	_ = s.storePayloadToDiskCache(msg)
-	err = s.redisCache.RemovePayloadCIDAtEpochID(context.Background(), msg.ProjectID, msg.EpochID)
-	if err != nil {
-		log.WithError(err).Error("failed to remove payload cid at given epoch id")
-	}
-
-	err = s.redisCache.AddPayloadCID(context.Background(), msg.ProjectID, msg.SnapshotCID, float64(msg.EpochID))
+	// store unfinalized payload cid in redis
+	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg.ProjectID, msg.SnapshotCID, float64(msg.EpochID))
 	if err != nil {
 		log.WithField("epochId", msg.EpochID).
 			WithField("messageId", msg.ProjectID).
 			WithField("snapshotCid", msg.SnapshotCID).
 			WithError(err).Error("failed to store payload cid in redis")
+
+		return err
 	}
 
-	if err != nil {
-		log.WithError(err).Error("failed to store payload cid in redis")
-	}
-
+	// sign payload commit message (eip712 signature)
 	signerData, signature, err := s.signPayload()
 	if err != nil {
 		return err
 	}
 
+	// create transaction payload
 	txPayload := &datamodel.SnapshotRelayerPayload{
 		ProjectID:   msg.ProjectID,
 		EpochID:     msg.EpochID,
@@ -210,6 +197,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		Signature:   hex.EncodeToString(signature),
 	}
 
+	// if relayer host is not set, submit snapshot directly to contract
 	if *s.settingsObj.Relayer.Host == "" {
 		s.txManager.Mu.Lock()
 		defer func() {
@@ -221,64 +209,92 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		if err != nil {
 			return err
 		}
+	} else {
+		// send payload commit message with signature to relayer
+		err = backoff.Retry(func() error {
+			err = s.sendSignatureToRelayer(txPayload)
+			if err != nil {
+				return err
+			}
 
-		return nil
-	}
-
-	// send payload commit message with signature to relayer
-	err = backoff.Retry(func() error {
-		err = s.sendSignatureToRelayer(txPayload)
+			return nil
+		}, backoff.NewExponentialBackOff())
 		if err != nil {
+			log.WithError(err).Error("failed to send signature to relayer")
+
 			return err
 		}
-
-		return nil
-	}, backoff.NewExponentialBackOff())
-	if err != nil {
-		log.WithError(err).Error("failed to send signature to relayer")
-
-		return err
 	}
 
 	return nil
 }
 
-// HandleFinalizedPayloadCommitTask handles finalized payload commit task
+// HandleFinalizedPayloadCommitTask handles finalized payload commit task.
 func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.PayloadCommitFinalizedMessage) error {
 	log.Debug("handling finalized payload commit task")
 
 	// check if payload is already in cache
-	payloadCid, err := s.redisCache.GetPayloadCidAtEpochID(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
+	payloadCid, err := s.redisCache.GetSnapshotCidAtEpochID(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
 	if err != nil {
+		log.WithError(err).Error("failed to get payload cid from redis")
+
 		return err
 	}
 
+	var report *datamodel.SnapshotterStatusReport
+
+	// if stored snapshot cid does not match with finalized snapshot cid, fetch commit message from ipfs and store in local disk.
 	if payloadCid != msg.Message.SnapshotCID {
-		log.WithField("payload_cid", payloadCid).WithField("msg_cid", msg.Message.SnapshotCID).Error("payload cid does not match")
+		log.Debug("payload cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
-		err = s.redisCache.Transaction(context.Background(), func(ctx context.Context) error {
-			err = s.redisCache.RemovePayloadCIDAtEpochID(ctx, msg.Message.ProjectID, msg.Message.EpochID)
-			if err != nil {
-				log.WithError(err).Error("failed to remove payload cid from cache")
+		dirPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID)
+		filePath := filepath.Join(dirPath, msg.Message.SnapshotCID+".json")
 
-				return err
-			}
-
-			err = s.redisCache.AddPayloadCID(ctx, msg.Message.ProjectID, msg.Message.SnapshotCID, float64(msg.Message.EpochID))
-			if err != nil {
-				log.WithError(err).Error("failed to add payload cid to cache")
-
-				return err
-			}
-
-			return nil
-		})
-
+		// create file, if it does not exist
+		err := os.MkdirAll(dirPath, os.ModePerm)
 		if err != nil {
-			log.WithError(err).Error("failed to update payload cid in cache, inside the transaction")
+			log.WithError(err).Error("failed to create file")
+		}
+
+		// get payload commit message from ipfs and store it in output path
+		err = s.ipfsClient.GetPayloadCommitMessageFromIPFS(msg.Message.SnapshotCID, filePath)
+		if err != nil {
+			log.WithError(err).Error("failed to get payload commit message from ipfs")
 
 			return err
 		}
+
+		report = &datamodel.SnapshotterStatusReport{
+			SubmittedSnapshotCid: payloadCid,
+			FinalizedSnapshotCid: msg.Message.SnapshotCID,
+			Missed:               true,
+		}
+	} else {
+		report = &datamodel.SnapshotterStatusReport{
+			SubmittedSnapshotCid: payloadCid,
+			FinalizedSnapshotCid: msg.Message.SnapshotCID,
+			Missed:               false,
+		}
+
+		outputPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, msg.Message.SnapshotCID+".json")
+
+		data, err := json.Marshal(msg.Message)
+		if err != nil {
+			log.WithError(err).Error("failed to marshal payload commit message")
+		}
+
+		err = s.diskCache.Write(outputPath, data)
+		if err != nil {
+			log.WithError(err).Error("failed to write payload commit message to disk cache")
+		}
+	}
+
+	// generate report and store in redis
+	err = s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.Message.EpochID, msg.Message.ProjectID, report)
+	if err != nil {
+		log.WithError(err).Error("failed to add snapshotter status report to redis")
+
+		return err
 	}
 
 	return nil
@@ -286,14 +302,17 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 
 func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMessage) error {
 	log.WithField("msg", msg).Debug("uploading payload commit msg to ipfs and web3 storage")
+
 	wg := sync.WaitGroup{}
 
 	wg.Add(1)
 
 	// upload to ipfs
 	var ipfsUploadErr error
+
 	go func() {
 		defer wg.Done()
+
 		ipfsUploadErr = backoff.Retry(func() error {
 			ipfsUploadErr = s.ipfsClient.UploadSnapshotToIPFS(msg)
 			if ipfsUploadErr != nil {
@@ -311,12 +330,17 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 	}()
 
 	// upload to web3 storage
-	var w3sUploadErr error
-	var snapshotCid string
+	var (
+		w3sUploadErr error
+		snapshotCid  string
+	)
+
 	if msg.Web3Storage {
 		wg.Add(1)
+
 		go func() {
 			wg.Done()
+
 			w3sUploadErr = backoff.Retry(func() error {
 				snapshotCid, w3sUploadErr = s.web3sClient.UploadToW3s(msg.Message)
 				if w3sUploadErr != nil {
@@ -351,7 +375,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 	return nil
 }
 
-// storePayloadToDiskCache stores the payload commit message to disk cache
+// storePayloadToDiskCache stores the payload commit message to disk cache.
 func (s *PayloadCommitService) storePayloadToDiskCache(msg *datamodel.PayloadCommitMessage) error {
 	cachePath := s.settingsObj.LocalCachePath
 	cachePath = strings.TrimSuffix(cachePath, "/")
@@ -374,7 +398,7 @@ func (s *PayloadCommitService) storePayloadToDiskCache(msg *datamodel.PayloadCom
 	return nil
 }
 
-// signPayload signs the payload commit message for relayer
+// signPayload signs the payload commit message for relayer.
 func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error) {
 	log.Debug("signing payload commit message")
 
@@ -402,7 +426,7 @@ func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error
 	return signerData, signature, nil
 }
 
-// sendSignatureToRelayer sends the signature to the relayer
+// sendSignatureToRelayer sends the signature to the relayer.
 func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.SnapshotRelayerPayload) error {
 	type reqBody struct {
 		ProjectID   string `json:"projectId"`
@@ -467,7 +491,7 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 	return nil
 }
 
-// initLocalCachedData fills data in redis cache from smart contract if not present locally
+// initLocalCachedData fills data in redis cache from smart contract if not present locally.
 func (s *PayloadCommitService) initLocalCachedData() error {
 	log.Debug("initializing local cached data")
 

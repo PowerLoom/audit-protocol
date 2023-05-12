@@ -101,3 +101,24 @@ func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel2.Payload
 
 	return nil
 }
+
+// GetPayloadCommitMessageFromIPFS returns the payload commit message from IPFS.
+func (client *IpfsClient) GetPayloadCommitMessageFromIPFS(snapshotCID string, outputPath string) error {
+	err := client.ipfsClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		log.WithError(err).Error("ipfs rate limiter errored")
+
+		return err
+	}
+
+	err = client.ipfsClient.Get(snapshotCID, outputPath)
+	if err != nil {
+		log.WithError(err).Error("failed to get snapshot message from ipfs")
+
+		return err
+	}
+
+	log.Debug("successfully fetched snapshot message from ipfs and wrote in local disk")
+
+	return nil
+}
