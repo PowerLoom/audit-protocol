@@ -84,6 +84,11 @@ type (
 		Host     *string `json:"host" validate:"required"`
 		Endpoint *string `json:"endpoint" validate:"required"`
 	}
+
+	Pruning struct {
+		MaxAge        int    `json:"max_age_in_days"`
+		CronFrequency string `json:"cron_frequency"`
+	}
 )
 
 type SettingsObj struct {
@@ -98,6 +103,7 @@ type SettingsObj struct {
 	Web3Storage       *Web3Storage `json:"web3_storage" validate:"required,dive"`
 	Signer            *Signer      `json:"signer" validate:"required,dive"`
 	Relayer           *Relayer     `json:"relayer" validate:"required,dive"`
+	Pruning           *Pruning     `json:"pruning" validate:"required,dive"`
 }
 
 // ParseSettings parses the settings.json file and returns a SettingsObj

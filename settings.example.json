@@ -70,5 +70,9 @@
   "relayer": {
     "host": "0.0.0.0:8080",
     "endpoint": "/endpoint"
+  },
+  "pruning": {
+    "max_age_in_days": 7,
+    "cron_frequency": "0 0 */7 * *"
   }
 }

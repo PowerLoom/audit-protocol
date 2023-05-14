@@ -283,9 +283,24 @@
 						"internalType": "uint256",
 						"name": "deadline",
 						"type": "uint256"
+					},
+					{
+						"internalType": "string",
+						"name": "snapshotCid",
+						"type": "string"
+					},
+					{
+						"internalType": "uint256",
+						"name": "epochId",
+						"type": "uint256"
+					},
+					{
+						"internalType": "string",
+						"name": "projectId",
+						"type": "string"
 					}
 				],
-				"internalType": "struct AuditRecordStoreDynamicSnapshottersWithIndexing.Request",
+				"internalType": "struct PowerloomProtocolState.Request",
 				"name": "request",
 				"type": "tuple"
 			},
@@ -745,14 +760,44 @@
 	{
 		"inputs": [
 			{
+				"internalType": "string",
+				"name": "snapshotCid",
+				"type": "string"
+			},
+			{
+				"internalType": "uint256",
+				"name": "epochId",
+				"type": "uint256"
+			},
+			{
+				"internalType": "string",
+				"name": "projectId",
+				"type": "string"
+			},
+			{
 				"components": [
 					{
 						"internalType": "uint256",
 						"name": "deadline",
 						"type": "uint256"
+					},
+					{
+						"internalType": "string",
+						"name": "snapshotCid",
+						"type": "string"
+					},
+					{
+						"internalType": "uint256",
+						"name": "epochId",
+						"type": "uint256"
+					},
+					{
+						"internalType": "string",
+						"name": "projectId",
+						"type": "string"
 					}
 				],
-				"internalType": "struct AuditRecordStoreDynamicSnapshottersWithIndexing.Request",
+				"internalType": "struct PowerloomProtocolState.Request",
 				"name": "request",
 				"type": "tuple"
 			},

@@ -94,7 +94,17 @@ func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.
 
 				return signedTx, nil
 			},
-		}, msg.SnapshotCID, big.NewInt(int64(msg.EpochID)), msg.ProjectID, contractApi.AuditRecordStoreDynamicSnapshottersWithIndexingRequest{Deadline: (*big.Int)(deadline)}, signature)
+		},
+		msg.SnapshotCID,
+		big.NewInt(int64(msg.EpochID)),
+		msg.ProjectID,
+		contractApi.PowerloomProtocolStateRequest{
+			Deadline:    (*big.Int)(deadline),
+			SnapshotCid: msg.SnapshotCID,
+			EpochId:     big.NewInt(int64(msg.EpochID)),
+			ProjectId:   msg.ProjectID,
+		},
+		signature)
 
 	if err != nil {
 		log.WithError(err).Error("failed to submit snapshot")

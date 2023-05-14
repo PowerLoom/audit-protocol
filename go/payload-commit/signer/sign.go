@@ -90,7 +90,7 @@ func VerifySignature(signature []byte, signerData *types.TypedData) bool {
 	return true
 }
 
-func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
+func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epochId int64) (*types.TypedData, error) {
 	log.Debug("getting signer data")
 	var block uint64
 	var err error
@@ -118,6 +118,9 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 		Types: types.Types{
 			"Request": []types.Type{
 				{Name: "deadline", Type: "uint256"},
+				{Name: "snapshotCid", Type: "string"},
+				{Name: "epochId", Type: "uint256"},
+				{Name: "projectId", Type: "string"},
 			},
 			"EIP712Domain": []types.Type{
 				{Name: "name", Type: "string"},
@@ -133,7 +136,10 @@ func GetSignerData(client *ethclient.Client) (*types.TypedData, error) {
 			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
-			"deadline": (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(settingsObj.Signer.DeadlineBuffer))),
+			"deadline":    (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(settingsObj.Signer.DeadlineBuffer))),
+			"snapshotCid": snapshotCid,
+			"epochId":     (*math.HexOrDecimal256)(big.NewInt(epochId)),
+			"projectId":   projectId,
 		},
 	}
 

@@ -183,7 +183,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	}
 
 	// sign payload commit message (eip712 signature)
-	signerData, signature, err := s.signPayload()
+	signerData, signature, err := s.signPayload(msg.SnapshotCID, msg.ProjectID, int64(msg.EpochID))
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		filePath := filepath.Join(dirPath, msg.Message.SnapshotCID+".json")
 
 		// create file, if it does not exist
-		err := os.MkdirAll(dirPath, os.ModePerm)
+		err = os.MkdirAll(dirPath, os.ModePerm)
 		if err != nil {
 			log.WithError(err).Error("failed to create file")
 		}
@@ -268,6 +268,12 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			SubmittedSnapshotCid: payloadCid,
 			FinalizedSnapshotCid: msg.Message.SnapshotCID,
 			Missed:               true,
+		}
+
+		// unpin unfinalized snapshot cid from ipfs
+		err = s.ipfsClient.Unpin(payloadCid)
+		if err != nil {
+			log.WithError(err).WithField("cid", payloadCid).Error("failed to unpin snapshot cid from ipfs")
 		}
 	} else {
 		report = &datamodel.SnapshotterStatusReport{
@@ -399,10 +405,10 @@ func (s *PayloadCommitService) storePayloadToDiskCache(msg *datamodel.PayloadCom
 }
 
 // signPayload signs the payload commit message for relayer.
-func (s *PayloadCommitService) signPayload() (*apitypes.TypedData, []byte, error) {
+func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochId int64) (*apitypes.TypedData, []byte, error) {
 	log.Debug("signing payload commit message")
 
-	signerData, err := signer.GetSignerData(s.ethClient)
+	signerData, err := signer.GetSignerData(s.ethClient, snapshotCid, projectId, epochId)
 	if err != nil {
 		log.WithError(err).Error("failed to get signer data")
 

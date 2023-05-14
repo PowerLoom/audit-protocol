@@ -10,3 +10,4 @@ __pycache__/
 *.swp
 .env
 go/payload-commit/payload-commit
+go/pruning/pruning

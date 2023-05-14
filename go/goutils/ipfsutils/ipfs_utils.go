@@ -122,3 +122,21 @@ func (client *IpfsClient) GetPayloadCommitMessageFromIPFS(snapshotCID string, ou
 
 	return nil
 }
+
+func (client *IpfsClient) Unpin(cid string) error {
+	err := client.ipfsClientRateLimiter.Wait(context.Background())
+	if err != nil {
+		log.WithError(err).Error("ipfs rate limiter errored")
+
+		return err
+	}
+
+	err = client.ipfsClient.Unpin(cid)
+	if err != nil {
+		return err
+	}
+
+	log.WithField("cid", cid).Debug("successfully unpinned cid")
+
+	return nil
+}

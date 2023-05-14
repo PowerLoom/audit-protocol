@@ -18,6 +18,19 @@ module.exports = {
         PRIVATE_KEY: process.env.PRIVATE_KEY
       },
       args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
+    },
+    {
+      name   : "ap-pruning",
+      script : "./pruning",
+      cwd : `${__dirname}/go/pruning`,
+      max_restarts: MAX_RESTART,
+      min_uptime: MIN_UPTIME,
+      kill_timeout : 3000,
+      env: {
+        NODE_ENV: NODE_ENV,
+        CONFIG_PATH:`${__dirname}`,
+      },
+      args: "5" //Log level set to debug, for production change to 4 (INFO) or 2(ERROR)
     }
   ]
 }
