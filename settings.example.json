@@ -4,6 +4,7 @@
   "anchor_chain_rpc_url": "https://rpc-url",
   "local_cache_path": "/home/ubuntu/local_cache/",
   "concurrency": 20,
+  "slack_webhook_url": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
   "rabbitmq": {
     "user": "guest",
     "password": "guest",
@@ -72,7 +73,8 @@
     "endpoint": "/endpoint"
   },
   "pruning": {
-    "max_age_in_days": 7,
+    "ipfs_pinning_max_age_in_days": 7,
+    "local_disk_max_age_in_days": 7,
     "cron_frequency": "0 0 */7 * *"
   }
 }

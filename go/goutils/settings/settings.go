@@ -86,8 +86,9 @@ type (
 	}
 
 	Pruning struct {
-		MaxAge        int    `json:"max_age_in_days"`
-		CronFrequency string `json:"cron_frequency"`
+		IPFSPinningMaxAge int    `json:"ipfs_pinning_max_age_in_days"`
+		LocalDiskMaxAge   int    `json:"local_disk_max_age_in_days"`
+		CronFrequency     string `json:"cron_frequency"`
 	}
 )
 
@@ -96,6 +97,7 @@ type SettingsObj struct {
 	PoolerNamespace   string       `json:"pooler_namespace" validate:"required"`
 	AnchorChainRPCURL string       `json:"anchor_chain_rpc_url" validate:"required"`
 	LocalCachePath    string       `json:"local_cache_path" validate:"required"`
+	SlackWebhookURL   string       `json:"slack_webhook_url"`
 	Rabbitmq          *Rabbitmq    `json:"rabbitmq" validate:"required,dive"`
 	IpfsConfig        *IpfsConfig  `json:"ipfs" validate:"required,dive"`
 	Redis             *Redis       `json:"redis" validate:"required,dive"`
@@ -152,6 +154,10 @@ func ParseSettings() *SettingsObj {
 // SetDefaults sets the default values for the settings object
 // add default values in this function if required
 func SetDefaults(settingsObj *SettingsObj) {
+	if settingsObj.SlackWebhookURL == "" {
+		log.Warning("slack webhook url is not set, errors will not be reported to slack")
+	}
+
 	settingsObj.LocalCachePath = strings.TrimSuffix(settingsObj.LocalCachePath, "/")
 
 	// for local testing

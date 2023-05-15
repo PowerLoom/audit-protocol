@@ -9,6 +9,7 @@ import (
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/redisutils"
 	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/slackutils"
 	"audit-protocol/goutils/smartcontract"
 	taskmgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	w3storage "audit-protocol/goutils/w3s"
@@ -18,6 +19,7 @@ import (
 
 func main() {
 	logger.InitLogger()
+
 	settingsObj := settings.ParseSettings()
 
 	ipfsutils.InitClient(
@@ -35,6 +37,8 @@ func main() {
 		-1,
 	)
 
+	slackutils.InitSlackWorkFlowClient()
+
 	caching.NewRedisCache()
 	smartcontract.InitContractAPI()
 	taskmgr.NewRabbitmqTaskMgr()
@@ -50,6 +54,7 @@ func main() {
 
 	defer func() {
 		mqWorker.ShutdownWorker()
+
 		err := redisClient.Close()
 		if err != nil {
 			log.WithError(err).Error("error while closing redis client")

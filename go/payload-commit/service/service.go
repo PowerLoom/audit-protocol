@@ -29,6 +29,7 @@ import (
 	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/slackutils"
 	contractApi "audit-protocol/goutils/smartcontract/api"
 	"audit-protocol/goutils/smartcontract/transactions"
 	"audit-protocol/goutils/taskmgr"
@@ -36,16 +37,19 @@ import (
 	"audit-protocol/payload-commit/signer"
 )
 
+const ServiceName = "payload-commit"
+
 type PayloadCommitService struct {
-	settingsObj *settings.SettingsObj
-	redisCache  *caching.RedisCache
-	ethClient   *ethclient.Client
-	contractAPI *contractApi.ContractApi
-	ipfsClient  *ipfsutils.IpfsClient
-	web3sClient *w3storage.W3S
-	diskCache   *caching.LocalDiskCache
-	txManager   *transactions.TxManager
-	privKey     *ecdsa.PrivateKey
+	settingsObj   *settings.SettingsObj
+	redisCache    *caching.RedisCache
+	ethClient     *ethclient.Client
+	contractAPI   *contractApi.ContractApi
+	ipfsClient    *ipfsutils.IpfsClient
+	web3sClient   *w3storage.W3S
+	diskCache     *caching.LocalDiskCache
+	txManager     *transactions.TxManager
+	privKey       *ecdsa.PrivateKey
+	slackNotifier *slackutils.SlackClient
 }
 
 // InitPayloadCommitService initializes the payload commit service.
@@ -90,16 +94,22 @@ func InitPayloadCommitService() *PayloadCommitService {
 		log.WithError(err).Fatal("failed to get private key")
 	}
 
+	slackNotifier, err := gi.Invoke[*slackutils.SlackClient]()
+	if err != nil {
+		log.WithError(err).Fatal("failed to invoke slack client")
+	}
+
 	pcService := &PayloadCommitService{
-		settingsObj: settingsObj,
-		redisCache:  redisCache,
-		ethClient:   ethClient,
-		contractAPI: contractAPI,
-		ipfsClient:  ipfsClient,
-		web3sClient: web3sClient,
-		diskCache:   diskCache,
-		txManager:   transactions.NewNonceManager(),
-		privKey:     privKey,
+		settingsObj:   settingsObj,
+		redisCache:    redisCache,
+		ethClient:     ethClient,
+		contractAPI:   contractAPI,
+		ipfsClient:    ipfsClient,
+		web3sClient:   web3sClient,
+		diskCache:     diskCache,
+		txManager:     transactions.NewNonceManager(),
+		privKey:       privKey,
+		slackNotifier: slackNotifier,
 	}
 
 	_ = pcService.initLocalCachedData()
@@ -121,6 +131,12 @@ func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 		if err != nil {
 			log.WithError(err).Error("failed to unmarshal finalized payload commit message")
 
+			go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+				"msg":     "failed to unmarshal finalized payload commit message",
+				"error":   err.Error(),
+				"payload": string(msgBody),
+			}, slackutils.SeverityCritical, ServiceName)
+
 			return err
 		}
 
@@ -136,6 +152,12 @@ func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 		err := json.Unmarshal(msgBody, payloadCommitMsg)
 		if err != nil {
 			log.WithError(err).Error("failed to unmarshal payload commit message")
+
+			go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+				"msg":     "failed to unmarshal payload commit message",
+				"error":   err.Error(),
+				"payload": string(msgBody),
+			}, slackutils.SeverityCritical, ServiceName)
 
 			return err
 		}
@@ -169,6 +191,14 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	err = s.uploadToIPFSandW3s(msg)
 	if err != nil {
 		log.WithError(err).Error("failed to upload payload commit message to ipfs")
+
+		go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+			"msg":             "failed to upload payload commit message to ipfs",
+			"error":           err.Error(),
+			"snapshotMessage": msg.Message,
+		}, slackutils.SeverityCritical, ServiceName)
+
+		return err
 	}
 
 	// store unfinalized payload cid in redis
@@ -198,32 +228,42 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	}
 
 	// if relayer host is not set, submit snapshot directly to contract
-	if *s.settingsObj.Relayer.Host == "" {
+	if *s.settingsObj.Relayer.Host == "asd" {
 		s.txManager.Mu.Lock()
 		defer func() {
 			s.txManager.Nonce++
 			s.txManager.Mu.Unlock()
 		}()
 
-		err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
+		err = backoff.Retry(func() error {
+			err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
+
+			return err
+		}, backoff.NewExponentialBackOff())
 		if err != nil {
+			go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+				"msg":   "failed to submit snapshot to contract",
+				"error": err.Error(),
+			}, slackutils.SeverityCritical, ServiceName)
+
 			return err
 		}
 	} else {
 		// send payload commit message with signature to relayer
-		err = backoff.Retry(func() error {
-			err = s.sendSignatureToRelayer(txPayload)
-			if err != nil {
-				return err
-			}
-
-			return nil
-		}, backoff.NewExponentialBackOff())
+		err = s.sendSignatureToRelayer(txPayload)
 		if err != nil {
 			log.WithError(err).Error("failed to send signature to relayer")
 
+			go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+				"msg":       "failed to send signature to relayer",
+				"error":     err.Error(),
+				"txPayload": txPayload,
+			}, slackutils.SeverityCritical, ServiceName)
+
 			return err
 		}
+
+		return nil
 	}
 
 	return nil
@@ -247,7 +287,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	if payloadCid != msg.Message.SnapshotCID {
 		log.Debug("payload cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
-		dirPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID)
+		dirPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, "snapshots")
 		filePath := filepath.Join(dirPath, msg.Message.SnapshotCID+".json")
 
 		// create file, if it does not exist
@@ -260,6 +300,11 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		err = s.ipfsClient.GetPayloadCommitMessageFromIPFS(msg.Message.SnapshotCID, filePath)
 		if err != nil {
 			log.WithError(err).Error("failed to get payload commit message from ipfs")
+
+			go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+				"msg":   "failed to get snapshot from ipfs",
+				"error": err.Error(),
+			}, slackutils.SeverityError, ServiceName)
 
 			return err
 		}
@@ -282,7 +327,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			Missed:               false,
 		}
 
-		outputPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, msg.Message.SnapshotCID+".json")
+		outputPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, "snapshots", msg.Message.SnapshotCID+".json")
 
 		data, err := json.Marshal(msg.Message)
 		if err != nil {
@@ -381,29 +426,6 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 	return nil
 }
 
-// storePayloadToDiskCache stores the payload commit message to disk cache.
-func (s *PayloadCommitService) storePayloadToDiskCache(msg *datamodel.PayloadCommitMessage) error {
-	cachePath := s.settingsObj.LocalCachePath
-	cachePath = strings.TrimSuffix(cachePath, "/")
-	cachePath = filepath.Join(cachePath, msg.ProjectID, msg.SnapshotCID)
-
-	byteData, err := json.Marshal(msg)
-	if err != nil {
-		log.WithError(err).Error("failed to marshal payload commit message")
-
-		return err
-	}
-
-	err = s.diskCache.Write(cachePath, byteData)
-	if err != nil {
-		log.WithError(err).Error("failed to write payload commit message to cache")
-
-		return err
-	}
-
-	return nil
-}
-
 // signPayload signs the payload commit message for relayer.
 func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochId int64) (*apitypes.TypedData, []byte, error) {
 	log.Debug("signing payload commit message")
@@ -412,6 +434,14 @@ func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochI
 	if err != nil {
 		log.WithError(err).Error("failed to get signer data")
 
+		go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+			"msg":         "failed to get signer data",
+			"error":       err.Error(),
+			"snapshotCid": snapshotCid,
+			"projectId":   projectId,
+			"epochId":     epochId,
+		}, slackutils.SeverityCritical, ServiceName)
+
 		return nil, nil, err
 	}
 
@@ -419,12 +449,24 @@ func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochI
 	if err != nil {
 		log.WithError(err).Error("failed to sign message")
 
+		go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+			"msg":        "failed to sign message",
+			"error":      err.Error(),
+			"signerData": signerData,
+		}, slackutils.SeverityCritical, ServiceName)
+
 		return nil, nil, err
 	}
 
 	verified := signer.VerifySignature(signature, signerData)
 	if !verified {
 		log.Error("failed to verify signature")
+
+		go s.slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+			"msg":        "failed to verify signature",
+			"error":      err.Error(),
+			"signerData": signerData,
+		}, slackutils.SeverityError, ServiceName)
 
 		return nil, nil, errors.New("failed to verify signature")
 	}

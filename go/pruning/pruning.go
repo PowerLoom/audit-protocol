@@ -15,7 +15,10 @@ import (
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/settings"
+	"audit-protocol/goutils/slackutils"
 )
+
+const ServiceName = "pruning"
 
 func main() {
 	logger.InitLogger()
@@ -28,13 +31,15 @@ func main() {
 		settingsObj.IpfsConfig.Timeout,
 	)
 
+	slackNotifier := slackutils.InitSlackWorkFlowClient()
+
 	cronRunner := cron.New(cron.WithChain(
 		cron.Recover(cron.DefaultLogger),
 	))
 
 	// Run every 7days
 	cronId, err := cronRunner.AddFunc(settingsObj.Pruning.CronFrequency, func() {
-		prune(settingsObj, ipfsClient)
+		prune(settingsObj, ipfsClient, slackNotifier)
 	})
 	if err != nil {
 		log.WithError(err).Fatal("failed to add pruning cron job")
@@ -48,8 +53,8 @@ func main() {
 	select {}
 }
 
-func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
-	log.Debug("ipfs unpinning started")
+func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient, slackNotifier *slackutils.SlackClient) {
+	log.Debug("pruning started")
 
 	// get all files from local disk cache.
 	dirEntries, err := os.ReadDir(settingsObj.LocalCachePath)
@@ -58,6 +63,7 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 	}
 
 	cidsToUnpin := make([]string, 0)
+	filesToRemove := make([]string, 0)
 
 	// read all the files from the directory.
 	for _, dirEntry := range dirEntries {
@@ -70,49 +76,82 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 		if err != nil {
 			log.WithError(err).Error("failed to read project dir")
 
+			go slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+				"msg":   "failed to read project dir",
+				"dir":   dirEntry.Name(),
+				"error": err.Error(),
+			}, slackutils.SeverityError, ServiceName)
+
 			continue
 		}
 
-		// read all the files from the directory
+		// check for snapshots directory.
 		for _, projectDirEntry := range projectDir {
+			// check if directory name is "snapshots"
+			if !strings.EqualFold(projectDirEntry.Name(), "snapshots") {
+				continue
+			}
+
 			// dirEntry should be a file <cid.json>
-			if projectDirEntry.IsDir() {
+			if !projectDirEntry.IsDir() {
 				continue
 			}
 
-			ext := path.Ext(projectDirEntry.Name())
-			if !strings.EqualFold(ext, ".json") {
-				continue
-			}
-
-			// check if file is older than 7 days, skip if not
-			info, err := projectDirEntry.Info()
+			snapshotsDir, err := os.ReadDir(filepath.Join(settingsObj.LocalCachePath, dirEntry.Name(), projectDirEntry.Name()))
 			if err != nil {
+				log.WithError(err).Error("failed to read snapshots dir")
+
+				go slackNotifier.NotifySlackWorkflow(map[string]interface{}{
+					"msg":   "failed to read snapshots dir",
+					"dir":   dirEntry.Name(),
+					"error": err.Error(),
+				}, slackutils.SeverityError, ServiceName)
+
 				continue
 			}
 
-			modTime := info.ModTime()
-			if modTime.AddDate(0, 0, settingsObj.Pruning.MaxAge).After(time.Now()) {
-				continue
+			for _, snapshotsDirEntry := range snapshotsDir {
+				ext := path.Ext(snapshotsDirEntry.Name())
+				if !strings.EqualFold(ext, ".json") {
+					continue
+				}
+
+				// check if file is older than 7 days, skip if not
+				info, err := snapshotsDirEntry.Info()
+				if err != nil {
+					continue
+				}
+
+				modTime := info.ModTime()
+				if modTime.AddDate(0, 0, settingsObj.Pruning.IPFSPinningMaxAge).Before(time.Now()) {
+					// get the file name without extension
+					fileName := strings.TrimSuffix(snapshotsDirEntry.Name(), ext)
+
+					// check if fileName is valid cid format
+					cid, err := cid.Parse(fileName)
+					if err != nil {
+						continue
+					}
+
+					cidsToUnpin = append(cidsToUnpin, cid.String())
+				}
+
+				// add file to filesToRemove
+				if modTime.AddDate(0, 0, settingsObj.Pruning.LocalDiskMaxAge).Before(time.Now()) {
+					absFilePath := filepath.Join(settingsObj.LocalCachePath, dirEntry.Name(), projectDirEntry.Name(), snapshotsDirEntry.Name())
+
+					filesToRemove = append(filesToRemove, absFilePath)
+				}
 			}
-
-			// get the file name without extension
-			fileName := strings.TrimSuffix(projectDirEntry.Name(), ext)
-
-			// check if fileName is valid cid format
-			cid, err := cid.Parse(fileName)
-			if err != nil {
-				continue
-			}
-
-			cidsToUnpin = append(cidsToUnpin, cid.String())
 		}
 	}
 
 	if len(cidsToUnpin) == 0 {
-		log.Debug("nothing to unpin")
+		log.Debug("no cids to unpin")
+	}
 
-		return
+	if len(filesToRemove) == 0 {
+		log.Debug("no files to remove")
 	}
 
 	// unpin all the cids.
@@ -133,7 +172,22 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 		}(c)
 	}
 
+	for _, file := range filesToRemove {
+		wg.Add(1)
+		log.Debug("removing file: ", file)
+
+		go func(fileToRemove string) {
+			err = os.Remove(fileToRemove)
+			if err != nil {
+				log.WithField("file", fileToRemove).WithError(err).Error("failed to remove file")
+
+				return
+			}
+		}(file)
+	}
+
 	wg.Wait()
 
 	log.Info("ipfs unpinning completed")
+	log.Info("local disk cleanup completed")
 }
