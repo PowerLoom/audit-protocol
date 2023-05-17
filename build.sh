@@ -3,9 +3,9 @@ cd go || exit
 go build ./...
 
 echo "Building Payload Commit Service"
-cd payload-commit || return
+cd payload-commit || exit
 go build .
 
 echo "Building Pruning Service"
-cd ../pruning || return
+cd ../pruning || exit
 go build .
