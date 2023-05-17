@@ -45,7 +45,7 @@ The payload commit service has following high level functionalities:
 4. Submits the signature to the relayer (if configured) otherwise submits snapshot to smart contract.
 5. Listens for snapshot finalization event on rabbitmq
    - if finalized snapshot for a given project against an epochId has same snapshotCID as stored on redis cache
-     - store snapshot in local_disk cache 
+     - store snapshot in local_disk cache
    - if finalized snapshotCID is different, fetch finalized snapshot from IPFS and store in local disk cache
 6. Generates snapshotter report
 
@@ -58,7 +58,7 @@ Code for this service is located at [payload-commit](../go/payload-commit/)
 
 The pruning service has the following high level functionalities:
 - Runs as a cron job for every configured interval (default 7 days)
-- Unpins IPFS cids of snapshots stored in local disk for more than configured value (default 7 days) 
+- Unpins IPFS cids of snapshots stored in local disk for more than configured value (default 7 days)
 
 ***Call Flow for pruning service***
 ![pruning-call-flow](images/pruning_service_callflow.png)

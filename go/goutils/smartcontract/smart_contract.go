@@ -7,7 +7,7 @@ import (
 	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/settings"
-	"audit-protocol/goutils/smartcontract/api"
+	contractApi "audit-protocol/goutils/smartcontract/api"
 )
 
 // Keeping this util straight forward and simple for now
