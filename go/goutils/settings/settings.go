@@ -90,6 +90,13 @@ type (
 		LocalDiskMaxAge   int    `json:"local_disk_max_age_in_days"`
 		CronFrequency     string `json:"cron_frequency"`
 	}
+
+	HTTPClient struct {
+		MaxIdleConns        int `json:"max_idle_conns"`
+		MaxConnsPerHost     int `json:"max_conns_per_host"`
+		MaxIdleConnsPerHost int `json:"max_idle_conns_per_host"`
+		IdleConnTimeout     int `json:"idle_conn_timeout"`
+	}
 )
 
 type SettingsObj struct {
@@ -97,7 +104,10 @@ type SettingsObj struct {
 	PoolerNamespace   string       `json:"pooler_namespace" validate:"required"`
 	AnchorChainRPCURL string       `json:"anchor_chain_rpc_url" validate:"required"`
 	LocalCachePath    string       `json:"local_cache_path" validate:"required"`
+	Concurrency       int          `json:"concurrency" validate:"required"`
+	WorkerConcurrency int          `json:"worker_concurrency" validate:"required"`
 	SlackWebhookURL   string       `json:"slack_webhook_url"`
+	HttpClient        *HTTPClient  `json:"http_client" validate:"required,dive"`
 	Rabbitmq          *Rabbitmq    `json:"rabbitmq" validate:"required,dive"`
 	IpfsConfig        *IpfsConfig  `json:"ipfs" validate:"required,dive"`
 	Redis             *Redis       `json:"redis" validate:"required,dive"`

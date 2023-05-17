@@ -2,6 +2,13 @@ package datamodel
 
 import "github.com/ethereum/go-ethereum/signer/core/apitypes"
 
+type SnapshotSubmissionState string
+
+const (
+	MissedSnapshotSubmission    SnapshotSubmissionState = "MISSED_SNAPSHOT"
+	IncorrectSnapshotSubmission SnapshotSubmissionState = "SUBMITTED_INCORRECT_SNAPSHOT"
+)
+
 type SummaryProjectVerificationStatus struct {
 	ProjectId     string `json:"projectId"`
 	ProjectHeight string `json:"chainHeight"`
@@ -60,12 +67,13 @@ type SnapshotRelayerPayload struct {
 }
 
 type SnapshotterStatusReport struct {
-	SubmittedSnapshotCid string `json:"submittedSnapshotCid"`
-	FinalizedSnapshotCid string `json:"finalizedSnapshotCid"`
-	Missed               bool   `json:"missed"`
+	SubmittedSnapshotCid string                  `json:"submittedSnapshotCid"`
+	FinalizedSnapshotCid string                  `json:"finalizedSnapshotCid"`
+	State                SnapshotSubmissionState `json:"state"`
 }
 
 type UnfinalizedSnapshot struct {
-	SnapshotCID string `json:"snapshotCid"`
-	Expiration  int64  `json:"expiration"`
+	SnapshotCID string                 `json:"snapshotCid"`
+	Snapshot    map[string]interface{} `json:"snapshot"`
+	Expiration  int64                  `json:"expiration"`
 }

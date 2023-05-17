@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"math/big"
 
 	"github.com/cenkalti/backoff/v4"
@@ -40,54 +39,6 @@ func SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte
 	log.Info("final signature (hex):", hex.EncodeToString(finalSig))
 
 	return finalSig, nil
-}
-
-func VerifySignature(signature []byte, signerData *types.TypedData) bool {
-	// check length of signature
-	if len(signature) != 65 {
-		log.Error("invalid signature length")
-
-		return false
-	}
-
-	// check if signature is valid
-	if signature[64] != 27 && signature[64] != 28 {
-		log.Errorf("invalid recovery id: %d", signature[64])
-
-		return false
-	}
-
-	typedDataHash, err := signerData.HashStruct(signerData.PrimaryType, signerData.Message)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	domainSeparator, err := signerData.HashStruct("EIP712Domain", signerData.Domain.Map())
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	data := fmt.Sprintf("\x19\x01%s%s", string(domainSeparator), string(typedDataHash))
-	messageHash := crypto.Keccak256Hash([]byte(data))
-
-	signature[64] -= 27 // Transform yellow paper V from 27/28 to 0/1
-
-	pubKeyRaw, err := crypto.Ecrecover(messageHash.Bytes(), signature)
-	if err != nil {
-		log.WithError(err).Error("failed to recover public key")
-
-		return false
-	}
-
-	if !crypto.VerifySignature(pubKeyRaw, messageHash[:], signature[:64]) {
-		log.Error("verification failed, addresses do not match")
-
-		return false
-	}
-
-	signature[64] += 27 // Transform yellow paper V from 0/1 to 27/28
-
-	return true
 }
 
 func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epochId int64) (*types.TypedData, error) {

@@ -11,7 +11,7 @@ import (
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/taskmgr"
 	rabbitmqMgr "audit-protocol/goutils/taskmgr/rabbitmq"
-	worker2 "audit-protocol/goutils/taskmgr/worker"
+	workerInterface "audit-protocol/goutils/taskmgr/worker"
 	"audit-protocol/payload-commit/service"
 )
 
@@ -26,14 +26,14 @@ func (w *Worker) ConsumeTask() error {
 	// buffered channel can is used to accept multiple messages and then process them in parallel.
 	// as messages are generated at lower pace than they are consumed, we can use unbuffered channel as well.
 	// TBD: we can use unbuffered channel as well.
-	taskChan := make(chan taskmgr.TaskHandler, 5)
+	taskChan := make(chan taskmgr.TaskHandler, w.settings.WorkerConcurrency)
 	defer close(taskChan)
 
 	// start consuming messages in separate go routine.
 	// messages will be sent back over taskChan.
 	go func() {
 		err := backoff.Retry(func() error {
-			err := w.taskmgr.Consume(context.Background(), worker2.TypePayloadCommitWorker, taskChan)
+			err := w.taskmgr.Consume(context.Background(), workerInterface.TypePayloadCommitWorker, taskChan)
 			if err != nil {
 				log.WithError(err).Error("failed to consume the message, retrying")
 
@@ -50,7 +50,7 @@ func (w *Worker) ConsumeTask() error {
 
 	// create a wait group to wait for previous the tasks to finish.
 	// limit number of concurrent tasks per Worker
-	swg := sizedwaitgroup.New(5)
+	swg := sizedwaitgroup.New(w.settings.WorkerConcurrency)
 
 	for {
 		swg.Add()
@@ -91,7 +91,7 @@ func (w *Worker) ConsumeTask() error {
 }
 
 // should be implemented by all the workers
-var _ worker2.Worker = (*Worker)(nil)
+var _ workerInterface.Worker = (*Worker)(nil)
 
 // NewWorker creates a new *Worker listening for pruning tasks published by service responsible for creating segments
 // a single Worker has capability to run multiple tasks concurrently using go routines.

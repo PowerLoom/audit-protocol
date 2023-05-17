@@ -11,7 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
-	types2 "github.com/ethereum/go-ethereum/signer/core/apitypes"
+	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
@@ -67,7 +67,7 @@ func (t *TxManager) getNonce(ethClient *ethclient.Client) uint64 {
 }
 
 // SubmitSnapshot submits a snapshot to the smart contract
-func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *types2.TypedData, msg *datamodel.SnapshotRelayerPayload, signature []byte) error {
+func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *apitypes.TypedData, msg *datamodel.SnapshotRelayerPayload, signature []byte) error {
 	deadline := signerData.Message["deadline"].(*math.HexOrDecimal256)
 
 	gasPrice, err := t.ethClient.SuggestGasPrice(context.Background())

@@ -13,7 +13,7 @@ import (
 	"github.com/swagftw/gi"
 	"golang.org/x/time/rate"
 
-	datamodel2 "audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/settings"
 )
@@ -71,7 +71,7 @@ func ParseMultiAddrURL(url string) string {
 	return url
 }
 
-func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel2.PayloadCommitMessage) error {
+func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadCommitMessage) error {
 	err := client.ipfsClientRateLimiter.Wait(context.Background())
 	if err != nil {
 		log.WithError(err).Error("ipfs rate limiter errored")
@@ -102,8 +102,8 @@ func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel2.Payload
 	return nil
 }
 
-// GetPayloadCommitMessageFromIPFS returns the payload commit message from IPFS.
-func (client *IpfsClient) GetPayloadCommitMessageFromIPFS(snapshotCID string, outputPath string) error {
+// GetSnapshotFromIPFS returns the snapshot from IPFS.
+func (client *IpfsClient) GetSnapshotFromIPFS(snapshotCID string, outputPath string) error {
 	err := client.ipfsClientRateLimiter.Wait(context.Background())
 	if err != nil {
 		log.WithError(err).Error("ipfs rate limiter errored")

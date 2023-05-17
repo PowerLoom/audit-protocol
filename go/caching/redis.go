@@ -3,6 +3,7 @@ package caching
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -37,7 +38,7 @@ func NewRedisCache() *RedisCache {
 	return cache
 }
 
-func (r *RedisCache) GetSnapshotCidAtEpochID(ctx context.Context, projectID string, epochId int) (string, error) {
+func (r *RedisCache) GetSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.UnfinalizedSnapshot, error) {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_UNFINALIZED_SNAPSHOT_CIDS, projectID)
 	snapshotCid := ""
 	height := strconv.Itoa(epochId)
@@ -52,9 +53,13 @@ func (r *RedisCache) GetSnapshotCidAtEpochID(ctx context.Context, projectID stri
 		Max: height,
 	}).Result()
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+
 		log.Error("could not Get snapshot cid from redis error: ", err)
 
-		return "", err
+		return nil, err
 	}
 
 	if len(res) == 1 {
@@ -69,15 +74,15 @@ func (r *RedisCache) GetSnapshotCidAtEpochID(ctx context.Context, projectID stri
 		if err != nil {
 			log.WithError(err).Error("CRITICAL: could not unmarshal snapshot cid data stored in redis")
 
-			return "", err
+			return nil, err
 		}
 
-		snapshotCid = p.SnapshotCID
+		log.WithField("snapshotCid", snapshotCid).WithField("epochId", epochId).Debug("got snapshot at given epochId")
 
-		log.WithField("snapshotCid", snapshotCid).WithField("epochId", epochId).Debug("got snapshot cid at given epochId")
+		return p, nil
 	}
 
-	return snapshotCid, nil
+	return nil, errors.New("could not get snapshot cid at given epochId")
 }
 
 // GetStoredProjects returns the list of projects that are stored in redis.
@@ -127,18 +132,20 @@ func (r *RedisCache) StoreProjects(background context.Context, projects []string
 }
 
 // AddUnfinalizedSnapshotCID adds the given snapshot cid to the given project's zset.
-func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, projectID, snapshotCid string, height float64) error {
+func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage) error {
 	p := new(datamodel.UnfinalizedSnapshot)
 
 	p.Expiration = time.Now().Unix() + 3600*24 // 1 day
-	p.SnapshotCID = snapshotCid
+	p.SnapshotCID = msg.SnapshotCID
 
-	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_UNFINALIZED_SNAPSHOT_CIDS, projectID)
+	p.Snapshot = msg.Message
+
+	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_UNFINALIZED_SNAPSHOT_CIDS, msg.ProjectID)
 
 	data, _ := json.Marshal(p)
 
 	err := r.redisClient.ZAdd(ctx, key, &redis.Z{
-		Score:  height,
+		Score:  float64(msg.EpochID),
 		Member: string(data),
 	}).Err()
 	if err != nil {
@@ -183,9 +190,9 @@ func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, projectID, s
 		}
 	}
 
-	log.WithField("projectID", projectID).
-		WithField("snapshotCid", snapshotCid).
-		WithField("epochId", height).
+	log.WithField("projectID", msg.ProjectID).
+		WithField("snapshotCid", msg.SnapshotCID).
+		WithField("epochId", msg.EpochID).
 		Debug("added snapshot CID to zset")
 
 	return nil
@@ -195,27 +202,32 @@ func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, projectID, s
 func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_SNAPSHOTTER_STATUS_REPORT, projectId)
 
-	reportJson, err := json.Marshal(report)
-	if err != nil {
-		log.WithError(err).Error("failed to marshal snapshotter status report")
+	if report != nil {
+		reportJson, err := json.Marshal(report)
+		if err != nil {
+			log.WithError(err).Error("failed to marshal snapshotter status report")
 
-		return err
+			return err
+		}
+
+		err = r.redisClient.HSet(ctx, key, strconv.Itoa(epochId), string(reportJson)).Err()
+		if err != nil {
+			log.WithError(err).Error("failed to add snapshotter status report in redis")
+
+			return err
+		}
 	}
 
-	err = r.redisClient.HSet(ctx, key, strconv.Itoa(epochId), string(reportJson)).Err()
-	if err != nil {
-		log.WithError(err).Error("failed to add snapshotter status report in redis")
-
-		return err
-	}
-
-	if report.Missed {
+	switch {
+	case report.State == datamodel.MissedSnapshotSubmission:
 		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_MISSED_SNAPSHOT_COUNT, projectId)
-	} else {
+	case report.State == datamodel.IncorrectSnapshotSubmission:
+		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_INCORRECT_SNAPSHOT_COUNT, projectId)
+	default:
 		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_SUCCESSFUL_SNAPSHOT_COUNT, projectId)
 	}
 
-	err = r.redisClient.Incr(ctx, key).Err()
+	err := r.redisClient.Incr(ctx, key).Err()
 	if err != nil {
 		log.WithError(err).Error("failed to increment total missed snapshot count")
 	}

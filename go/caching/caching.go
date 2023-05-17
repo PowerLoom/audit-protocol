@@ -10,11 +10,11 @@ import (
 // DbCache is responsible for data caching in db stores like redis, memcache etc.
 // for disk caching use DiskCache interface
 type DbCache interface {
-	GetSnapshotCidAtEpochID(ctx context.Context, projectID string, epochId int) (string, error)
+	GetSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.UnfinalizedSnapshot, error)
 	GetStoredProjects(ctx context.Context) ([]string, error)
 	CheckIfProjectExists(ctx context.Context, projectID string) (bool, error)
 	StoreProjects(background context.Context, projects []string) error
-	AddUnfinalizedSnapshotCID(ctx context.Context, projectID, snapshotCID string, height float64) error
+	AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage) error
 	AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error
 }
 
