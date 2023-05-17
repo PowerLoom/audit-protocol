@@ -216,14 +216,14 @@ func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int
 
 			return err
 		}
-	}
 
-	switch {
-	case report.State == datamodel.MissedSnapshotSubmission:
-		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_MISSED_SNAPSHOT_COUNT, projectId)
-	case report.State == datamodel.IncorrectSnapshotSubmission:
-		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_INCORRECT_SNAPSHOT_COUNT, projectId)
-	default:
+		switch {
+		case report.State == datamodel.MissedSnapshotSubmission:
+			key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_MISSED_SNAPSHOT_COUNT, projectId)
+		case report.State == datamodel.IncorrectSnapshotSubmission:
+			key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_INCORRECT_SNAPSHOT_COUNT, projectId)
+		}
+	} else {
 		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_SUCCESSFUL_SNAPSHOT_COUNT, projectId)
 	}
 
