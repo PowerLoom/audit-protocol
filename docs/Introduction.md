@@ -60,7 +60,8 @@ The pruning service has the following high-level functionalities:
 - Unpins IPFS CIDs of snapshots stored in the local disk for more than configured value (default 7 days)
 
 ***Call Flow for pruning service***
-![pruning-call-flow](images/pruning_service_callflow.png)
+
+![pruning-call-flow](images/pruning_service.png)
 
 Code for this service is located at [pruning](../go/pruning/)
 ## Code Structure
