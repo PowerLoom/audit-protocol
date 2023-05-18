@@ -68,6 +68,12 @@ func (t *TxManager) getNonce(ethClient *ethclient.Client) uint64 {
 
 // SubmitSnapshot submits a snapshot to the smart contract
 func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *apitypes.TypedData, msg *datamodel.SnapshotRelayerPayload, signature []byte) error {
+	t.Mu.Lock()
+	defer func() {
+		t.Nonce++
+		t.Mu.Unlock()
+	}()
+
 	deadline := signerData.Message["deadline"].(*math.HexOrDecimal256)
 
 	gasPrice, err := t.ethClient.SuggestGasPrice(context.Background())

@@ -77,3 +77,12 @@ type UnfinalizedSnapshot struct {
 	Snapshot    map[string]interface{} `json:"snapshot"`
 	Expiration  int64                  `json:"expiration"`
 }
+
+type SnapshotterIssue struct {
+	InstanceID      string `json:"instanceID"`
+	IssueType       string `json:"issueType"`
+	ProjectID       string `json:"projectID"`
+	EpochID         string `json:"epochId"`
+	TimeOfReporting string `json:"timeOfReporting"`
+	Extra           string `json:"extra"`
+}

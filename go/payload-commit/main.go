@@ -8,8 +8,8 @@ import (
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/redisutils"
+	"audit-protocol/goutils/reporting"
 	"audit-protocol/goutils/settings"
-	"audit-protocol/goutils/slackutils"
 	"audit-protocol/goutils/smartcontract"
 	taskmgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	w3storage "audit-protocol/goutils/w3s"
@@ -37,7 +37,7 @@ func main() {
 		-1,
 	)
 
-	slackutils.InitSlackWorkFlowClient()
+	reporter := reporting.InitIssueReporter(settingsObj)
 
 	caching.NewRedisCache()
 	smartcontract.InitContractAPI()
@@ -45,7 +45,7 @@ func main() {
 	w3storage.InitW3S()
 	caching.InitDiskCache()
 
-	service.InitPayloadCommitService()
+	service.InitPayloadCommitService(reporter)
 
 	mqWorker := worker.NewWorker()
 

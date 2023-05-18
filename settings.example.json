@@ -5,7 +5,6 @@
   "local_cache_path": "/home/ubuntu/local_cache/",
   "concurrency": 20,
   "worker_concurrency": 5,
-  "slack_webhook_url": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
   "http_client": {
     "max_idle_conns": 5,
     "max_conns_per_host": 5,
@@ -83,5 +82,9 @@
     "ipfs_pinning_max_age_in_days": 7,
     "local_disk_max_age_in_days": 7,
     "cron_frequency": "0 0 * * *"
+  },
+  "reporting": {
+    "slack_webhook_url": "https://hooks.slack.com/workflows/000000000/000000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+    "offchain_consensus_issue_endpoint": "http://offchain-consensus:8080/reportIssue"
   }
 }

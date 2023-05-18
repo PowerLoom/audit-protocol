@@ -15,7 +15,6 @@ import (
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/settings"
-	"audit-protocol/goutils/slackutils"
 )
 
 const ServiceName = "pruning"
@@ -31,15 +30,13 @@ func main() {
 		settingsObj.IpfsConfig.Timeout,
 	)
 
-	slackNotifier := slackutils.InitSlackWorkFlowClient()
-
 	cronRunner := cron.New(cron.WithChain(
 		cron.Recover(cron.DefaultLogger),
 	))
 
 	// Run every 7days
 	cronId, err := cronRunner.AddFunc(settingsObj.Pruning.CronFrequency, func() {
-		prune(settingsObj, ipfsClient, slackNotifier)
+		prune(settingsObj, ipfsClient)
 	})
 	if err != nil {
 		log.WithError(err).Fatal("failed to add pruning cron job")
@@ -53,7 +50,7 @@ func main() {
 	select {}
 }
 
-func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient, slackNotifier *slackutils.SlackClient) {
+func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 	log.Debug("pruning started")
 
 	// get all files from local disk cache.
@@ -76,12 +73,6 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient, slac
 		if err != nil {
 			log.WithError(err).Error("failed to read project dir")
 
-			go slackNotifier.NotifySlackWorkflow(map[string]interface{}{
-				"msg":   "failed to read project dir",
-				"dir":   dirEntry.Name(),
-				"error": err.Error(),
-			}, slackutils.SeverityError, ServiceName)
-
 			continue
 		}
 
@@ -100,12 +91,6 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient, slac
 			snapshotsDir, err := os.ReadDir(filepath.Join(settingsObj.LocalCachePath, dirEntry.Name(), projectDirEntry.Name()))
 			if err != nil {
 				log.WithError(err).Error("failed to read snapshots dir")
-
-				go slackNotifier.NotifySlackWorkflow(map[string]interface{}{
-					"msg":   "failed to read snapshots dir",
-					"dir":   dirEntry.Name(),
-					"error": err.Error(),
-				}, slackutils.SeverityError, ServiceName)
 
 				continue
 			}

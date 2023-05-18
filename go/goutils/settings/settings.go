@@ -97,6 +97,11 @@ type (
 		MaxIdleConnsPerHost int `json:"max_idle_conns_per_host"`
 		IdleConnTimeout     int `json:"idle_conn_timeout"`
 	}
+
+	Reporting struct {
+		SlackWebhookURL                string `json:"slack_webhook_url"`
+		OffchainConsensusIssueEndpoint string `json:"offchain_consensus_issue_endpoint"`
+	}
 )
 
 type SettingsObj struct {
@@ -106,7 +111,6 @@ type SettingsObj struct {
 	LocalCachePath    string       `json:"local_cache_path" validate:"required"`
 	Concurrency       int          `json:"concurrency" validate:"required"`
 	WorkerConcurrency int          `json:"worker_concurrency" validate:"required"`
-	SlackWebhookURL   string       `json:"slack_webhook_url"`
 	HttpClient        *HTTPClient  `json:"http_client" validate:"required,dive"`
 	Rabbitmq          *Rabbitmq    `json:"rabbitmq" validate:"required,dive"`
 	IpfsConfig        *IpfsConfig  `json:"ipfs" validate:"required,dive"`
@@ -116,6 +120,7 @@ type SettingsObj struct {
 	Signer            *Signer      `json:"signer" validate:"required,dive"`
 	Relayer           *Relayer     `json:"relayer" validate:"required,dive"`
 	Pruning           *Pruning     `json:"pruning" validate:"required,dive"`
+	Reporting         *Reporting   `json:"reporting" validate:"required,dive"`
 }
 
 // ParseSettings parses the settings.json file and returns a SettingsObj
@@ -164,7 +169,7 @@ func ParseSettings() *SettingsObj {
 // SetDefaults sets the default values for the settings object
 // add default values in this function if required
 func SetDefaults(settingsObj *SettingsObj) {
-	if settingsObj.SlackWebhookURL == "" {
+	if settingsObj.Reporting.SlackWebhookURL == "" {
 		log.Warning("slack webhook url is not set, errors will not be reported to slack")
 	}
 
