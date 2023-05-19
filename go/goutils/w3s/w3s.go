@@ -24,7 +24,7 @@ type W3S struct {
 	defaultHTTPClient *retryablehttp.Client
 }
 
-func InitW3S() {
+func InitW3S() *W3S {
 	log.Debug("initializing web3.storage client")
 
 	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
@@ -61,6 +61,8 @@ func InitW3S() {
 	if err != nil {
 		log.WithError(err).Fatal("error injecting w3s")
 	}
+
+	return w
 }
 
 func (w *W3S) UploadToW3s(msg interface{}) (string, error) {

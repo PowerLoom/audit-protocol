@@ -195,7 +195,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		log.WithField("epochId", msg.EpochID).
 			WithField("messageId", msg.ProjectID).
 			WithField("snapshotCid", msg.SnapshotCID).
-			WithError(err).Error("failed to store payload cid in redis")
+			WithError(err).Error("failed to store snapshot cid in redis")
 
 		return err
 	}
@@ -267,7 +267,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	// check if payload is already in cache
 	unfinalizedSnapshot, err := s.redisCache.GetSnapshotAtEpochID(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
 	if err != nil {
-		log.WithError(err).Error("failed to get payload cid from redis")
+		log.WithError(err).Error("failed to get snapshot cid from redis")
 
 		return err
 	}
@@ -311,7 +311,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		}
 	} else if unfinalizedSnapshot.SnapshotCID != msg.Message.SnapshotCID {
 		// if stored snapshot cid does not match with finalized snapshot cid, fetch snapshot from ipfs and store in local disk.
-		log.Debug("payload cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
+		log.Debug("cached snapshot cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
 		s.issueReporter.Report(
 			reporting.SubmittedIncorrectSnapshotIssue,

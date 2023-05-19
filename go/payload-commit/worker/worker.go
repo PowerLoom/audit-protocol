@@ -61,7 +61,7 @@ func (w *Worker) ConsumeTask() error {
 		go func(taskHandler taskmgr.TaskHandler) {
 			msgBody := taskHandler.GetBody()
 
-			log.WithField("msg", string(msgBody)).Debug("received message")
+			log.Debug("received new rabbitmq message")
 
 			err := w.service.Run(msgBody, taskHandler.GetTopic())
 			if err != nil {

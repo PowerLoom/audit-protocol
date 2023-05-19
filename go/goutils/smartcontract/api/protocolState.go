@@ -39,7 +39,7 @@ type PowerloomProtocolStateRequest struct {
 
 // ContractApiMetaData contains all meta data concerning the ContractApi contract.
 var ContractApiMetaData = &bind.MetaData{
-	ABI: "[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"validatorAddr\",\"type\":\"address\"}],\"name\":\"addValidator\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"snapshotterAddr\",\"type\":\"address\"}],\"name\":\"allowSnapshotter\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"snapshotterAddr\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"DelayedSnapshotSubmitted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"begin\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"end\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"EpochReleased\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"}],\"name\":\"forceCompleteConsensusSnapshot\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"previousOwner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"OwnershipTransferred\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"begin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"end\",\"type\":\"uint256\"}],\"name\":\"releaseEpoch\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"validatorAddr\",\"type\":\"address\"}],\"name\":\"removeValidator\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"renounceOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"epochEnd\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"SnapshotFinalized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"snapshotterAddr\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"SnapshotSubmitted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"snapshotterAddress\",\"type\":\"address\"}],\"name\":\"SnapshotterAllowed\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"}],\"internalType\":\"structPowerloomProtocolState.Request\",\"name\":\"request\",\"type\":\"tuple\"},{\"internalType\":\"bytes\",\"name\":\"signature\",\"type\":\"bytes\"}],\"name\":\"submitSnapshot\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"transferOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_minSubmissionsForConsensus\",\"type\":\"uint256\"}],\"name\":\"updateMinSnapshottersForConsensus\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"newsnapshotSubmissionWindow\",\"type\":\"uint256\"}],\"name\":\"updateSnapshotSubmissionWindow\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"}],\"name\":\"checkDynamicConsensusSnapshot\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"success\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"currentEpoch\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"begin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"end\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"EPOCH_SIZE\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"epochInfo\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"blocknumber\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"epochEnd\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getAllSnapshotters\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"\",\"type\":\"address[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getProjects\",\"outputs\":[{\"internalType\":\"string[]\",\"name\":\"\",\"type\":\"string[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getTotalSnapshotterCount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getValidators\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"\",\"type\":\"address[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"maxSnapshotsCid\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"maxSnapshotsCount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"minSubmissionsForConsensus\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"name\":\"projectFirstEpochId\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"messageHash\",\"type\":\"bytes32\"},{\"internalType\":\"bytes\",\"name\":\"signature\",\"type\":\"bytes\"}],\"name\":\"recoverAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"snapshotsReceived\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"name\":\"snapshotsReceivedCount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"snapshotStatus\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"finalized\",\"type\":\"bool\"},{\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"snapshotSubmissionWindow\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"snapshotters\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SOURCE_CHAIN_BLOCK_TIME\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SOURCE_CHAIN_ID\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"}],\"internalType\":\"structPowerloomProtocolState.Request\",\"name\":\"request\",\"type\":\"tuple\"},{\"internalType\":\"bytes\",\"name\":\"signature\",\"type\":\"bytes\"},{\"internalType\":\"address\",\"name\":\"signer\",\"type\":\"address\"}],\"name\":\"verify\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]",
+	ABI: "[{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"snapshotterAddr\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"DelayedSnapshotSubmitted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"begin\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"end\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"EpochReleased\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"previousOwner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"OwnershipTransferred\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"epochEnd\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"SnapshotFinalized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"snapshotterAddr\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"name\":\"SnapshotSubmitted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"snapshotterAddress\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"bool\",\"name\":\"allowed\",\"type\":\"bool\"}],\"name\":\"SnapshottersUpdated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"validatorAddress\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"bool\",\"name\":\"allowed\",\"type\":\"bool\"}],\"name\":\"ValidatorsUpdated\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"EPOCH_SIZE\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SOURCE_CHAIN_BLOCK_TIME\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SOURCE_CHAIN_ID\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"}],\"name\":\"checkDynamicConsensusSnapshot\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"currentEpoch\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"begin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"end\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"epochInfo\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"blocknumber\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"epochEnd\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"}],\"name\":\"forceCompleteConsensusSnapshot\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getAllSnapshotters\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"\",\"type\":\"address[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getProjects\",\"outputs\":[{\"internalType\":\"string[]\",\"name\":\"\",\"type\":\"string[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getTotalSnapshotterCount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getValidators\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"\",\"type\":\"address[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"maxSnapshotsCid\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"maxSnapshotsCount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"minSubmissionsForConsensus\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"name\":\"projectFirstEpochId\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"messageHash\",\"type\":\"bytes32\"},{\"internalType\":\"bytes\",\"name\":\"signature\",\"type\":\"bytes\"}],\"name\":\"recoverAddress\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"begin\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"end\",\"type\":\"uint256\"}],\"name\":\"releaseEpoch\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"renounceOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"snapshotStatus\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"finalized\",\"type\":\"bool\"},{\"internalType\":\"uint256\",\"name\":\"timestamp\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"snapshotSubmissionWindow\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"snapshotsReceived\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"name\":\"snapshotsReceivedCount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"snapshotters\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"}],\"internalType\":\"structPowerloomProtocolState.Request\",\"name\":\"request\",\"type\":\"tuple\"},{\"internalType\":\"bytes\",\"name\":\"signature\",\"type\":\"bytes\"}],\"name\":\"submitSnapshot\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"transferOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_minSubmissionsForConsensus\",\"type\":\"uint256\"}],\"name\":\"updateMinSnapshottersForConsensus\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"newsnapshotSubmissionWindow\",\"type\":\"uint256\"}],\"name\":\"updateSnapshotSubmissionWindow\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address[]\",\"name\":\"_snapshotters\",\"type\":\"address[]\"},{\"internalType\":\"bool[]\",\"name\":\"_status\",\"type\":\"bool[]\"}],\"name\":\"updateSnapshotters\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address[]\",\"name\":\"_validators\",\"type\":\"address[]\"},{\"internalType\":\"bool[]\",\"name\":\"_status\",\"type\":\"bool[]\"}],\"name\":\"updateValidators\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"deadline\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"snapshotCid\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"epochId\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"projectId\",\"type\":\"string\"}],\"internalType\":\"structPowerloomProtocolState.Request\",\"name\":\"request\",\"type\":\"tuple\"},{\"internalType\":\"bytes\",\"name\":\"signature\",\"type\":\"bytes\"},{\"internalType\":\"address\",\"name\":\"signer\",\"type\":\"address\"}],\"name\":\"verify\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]",
 }
 
 // ContractApiABI is the input ABI used to generate the binding from.
@@ -283,7 +283,7 @@ func (_ContractApi *ContractApiCallerSession) SOURCECHAINID() (*big.Int, error) 
 
 // CheckDynamicConsensusSnapshot is a free data retrieval call binding the contract method 0x18b53a54.
 //
-// Solidity: function checkDynamicConsensusSnapshot(string projectId, uint256 epochId) view returns(bool success)
+// Solidity: function checkDynamicConsensusSnapshot(string projectId, uint256 epochId) view returns(bool)
 func (_ContractApi *ContractApiCaller) CheckDynamicConsensusSnapshot(opts *bind.CallOpts, projectId string, epochId *big.Int) (bool, error) {
 	var out []interface{}
 	err := _ContractApi.contract.Call(opts, &out, "checkDynamicConsensusSnapshot", projectId, epochId)
@@ -300,14 +300,14 @@ func (_ContractApi *ContractApiCaller) CheckDynamicConsensusSnapshot(opts *bind.
 
 // CheckDynamicConsensusSnapshot is a free data retrieval call binding the contract method 0x18b53a54.
 //
-// Solidity: function checkDynamicConsensusSnapshot(string projectId, uint256 epochId) view returns(bool success)
+// Solidity: function checkDynamicConsensusSnapshot(string projectId, uint256 epochId) view returns(bool)
 func (_ContractApi *ContractApiSession) CheckDynamicConsensusSnapshot(projectId string, epochId *big.Int) (bool, error) {
 	return _ContractApi.Contract.CheckDynamicConsensusSnapshot(&_ContractApi.CallOpts, projectId, epochId)
 }
 
 // CheckDynamicConsensusSnapshot is a free data retrieval call binding the contract method 0x18b53a54.
 //
-// Solidity: function checkDynamicConsensusSnapshot(string projectId, uint256 epochId) view returns(bool success)
+// Solidity: function checkDynamicConsensusSnapshot(string projectId, uint256 epochId) view returns(bool)
 func (_ContractApi *ContractApiCallerSession) CheckDynamicConsensusSnapshot(projectId string, epochId *big.Int) (bool, error) {
 	return _ContractApi.Contract.CheckDynamicConsensusSnapshot(&_ContractApi.CallOpts, projectId, epochId)
 }
@@ -922,48 +922,6 @@ func (_ContractApi *ContractApiCallerSession) Verify(snapshotCid string, epochId
 	return _ContractApi.Contract.Verify(&_ContractApi.CallOpts, snapshotCid, epochId, projectId, request, signature, signer)
 }
 
-// AddValidator is a paid mutator transaction binding the contract method 0x4d238c8e.
-//
-// Solidity: function addValidator(address validatorAddr) returns()
-func (_ContractApi *ContractApiTransactor) AddValidator(opts *bind.TransactOpts, validatorAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.contract.Transact(opts, "addValidator", validatorAddr)
-}
-
-// AddValidator is a paid mutator transaction binding the contract method 0x4d238c8e.
-//
-// Solidity: function addValidator(address validatorAddr) returns()
-func (_ContractApi *ContractApiSession) AddValidator(validatorAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.Contract.AddValidator(&_ContractApi.TransactOpts, validatorAddr)
-}
-
-// AddValidator is a paid mutator transaction binding the contract method 0x4d238c8e.
-//
-// Solidity: function addValidator(address validatorAddr) returns()
-func (_ContractApi *ContractApiTransactorSession) AddValidator(validatorAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.Contract.AddValidator(&_ContractApi.TransactOpts, validatorAddr)
-}
-
-// AllowSnapshotter is a paid mutator transaction binding the contract method 0xaf3fe97f.
-//
-// Solidity: function allowSnapshotter(address snapshotterAddr) returns()
-func (_ContractApi *ContractApiTransactor) AllowSnapshotter(opts *bind.TransactOpts, snapshotterAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.contract.Transact(opts, "allowSnapshotter", snapshotterAddr)
-}
-
-// AllowSnapshotter is a paid mutator transaction binding the contract method 0xaf3fe97f.
-//
-// Solidity: function allowSnapshotter(address snapshotterAddr) returns()
-func (_ContractApi *ContractApiSession) AllowSnapshotter(snapshotterAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.Contract.AllowSnapshotter(&_ContractApi.TransactOpts, snapshotterAddr)
-}
-
-// AllowSnapshotter is a paid mutator transaction binding the contract method 0xaf3fe97f.
-//
-// Solidity: function allowSnapshotter(address snapshotterAddr) returns()
-func (_ContractApi *ContractApiTransactorSession) AllowSnapshotter(snapshotterAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.Contract.AllowSnapshotter(&_ContractApi.TransactOpts, snapshotterAddr)
-}
-
 // ForceCompleteConsensusSnapshot is a paid mutator transaction binding the contract method 0x2d5278f3.
 //
 // Solidity: function forceCompleteConsensusSnapshot(string projectId, uint256 epochId) returns()
@@ -1004,27 +962,6 @@ func (_ContractApi *ContractApiSession) ReleaseEpoch(begin *big.Int, end *big.In
 // Solidity: function releaseEpoch(uint256 begin, uint256 end) returns()
 func (_ContractApi *ContractApiTransactorSession) ReleaseEpoch(begin *big.Int, end *big.Int) (*types.Transaction, error) {
 	return _ContractApi.Contract.ReleaseEpoch(&_ContractApi.TransactOpts, begin, end)
-}
-
-// RemoveValidator is a paid mutator transaction binding the contract method 0x40a141ff.
-//
-// Solidity: function removeValidator(address validatorAddr) returns()
-func (_ContractApi *ContractApiTransactor) RemoveValidator(opts *bind.TransactOpts, validatorAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.contract.Transact(opts, "removeValidator", validatorAddr)
-}
-
-// RemoveValidator is a paid mutator transaction binding the contract method 0x40a141ff.
-//
-// Solidity: function removeValidator(address validatorAddr) returns()
-func (_ContractApi *ContractApiSession) RemoveValidator(validatorAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.Contract.RemoveValidator(&_ContractApi.TransactOpts, validatorAddr)
-}
-
-// RemoveValidator is a paid mutator transaction binding the contract method 0x40a141ff.
-//
-// Solidity: function removeValidator(address validatorAddr) returns()
-func (_ContractApi *ContractApiTransactorSession) RemoveValidator(validatorAddr common.Address) (*types.Transaction, error) {
-	return _ContractApi.Contract.RemoveValidator(&_ContractApi.TransactOpts, validatorAddr)
 }
 
 // RenounceOwnership is a paid mutator transaction binding the contract method 0x715018a6.
@@ -1130,6 +1067,48 @@ func (_ContractApi *ContractApiSession) UpdateSnapshotSubmissionWindow(newsnapsh
 // Solidity: function updateSnapshotSubmissionWindow(uint256 newsnapshotSubmissionWindow) returns()
 func (_ContractApi *ContractApiTransactorSession) UpdateSnapshotSubmissionWindow(newsnapshotSubmissionWindow *big.Int) (*types.Transaction, error) {
 	return _ContractApi.Contract.UpdateSnapshotSubmissionWindow(&_ContractApi.TransactOpts, newsnapshotSubmissionWindow)
+}
+
+// UpdateSnapshotters is a paid mutator transaction binding the contract method 0xb8cf6fee.
+//
+// Solidity: function updateSnapshotters(address[] _snapshotters, bool[] _status) returns()
+func (_ContractApi *ContractApiTransactor) UpdateSnapshotters(opts *bind.TransactOpts, _snapshotters []common.Address, _status []bool) (*types.Transaction, error) {
+	return _ContractApi.contract.Transact(opts, "updateSnapshotters", _snapshotters, _status)
+}
+
+// UpdateSnapshotters is a paid mutator transaction binding the contract method 0xb8cf6fee.
+//
+// Solidity: function updateSnapshotters(address[] _snapshotters, bool[] _status) returns()
+func (_ContractApi *ContractApiSession) UpdateSnapshotters(_snapshotters []common.Address, _status []bool) (*types.Transaction, error) {
+	return _ContractApi.Contract.UpdateSnapshotters(&_ContractApi.TransactOpts, _snapshotters, _status)
+}
+
+// UpdateSnapshotters is a paid mutator transaction binding the contract method 0xb8cf6fee.
+//
+// Solidity: function updateSnapshotters(address[] _snapshotters, bool[] _status) returns()
+func (_ContractApi *ContractApiTransactorSession) UpdateSnapshotters(_snapshotters []common.Address, _status []bool) (*types.Transaction, error) {
+	return _ContractApi.Contract.UpdateSnapshotters(&_ContractApi.TransactOpts, _snapshotters, _status)
+}
+
+// UpdateValidators is a paid mutator transaction binding the contract method 0x1b0b3ae3.
+//
+// Solidity: function updateValidators(address[] _validators, bool[] _status) returns()
+func (_ContractApi *ContractApiTransactor) UpdateValidators(opts *bind.TransactOpts, _validators []common.Address, _status []bool) (*types.Transaction, error) {
+	return _ContractApi.contract.Transact(opts, "updateValidators", _validators, _status)
+}
+
+// UpdateValidators is a paid mutator transaction binding the contract method 0x1b0b3ae3.
+//
+// Solidity: function updateValidators(address[] _validators, bool[] _status) returns()
+func (_ContractApi *ContractApiSession) UpdateValidators(_validators []common.Address, _status []bool) (*types.Transaction, error) {
+	return _ContractApi.Contract.UpdateValidators(&_ContractApi.TransactOpts, _validators, _status)
+}
+
+// UpdateValidators is a paid mutator transaction binding the contract method 0x1b0b3ae3.
+//
+// Solidity: function updateValidators(address[] _validators, bool[] _status) returns()
+func (_ContractApi *ContractApiTransactorSession) UpdateValidators(_validators []common.Address, _status []bool) (*types.Transaction, error) {
+	return _ContractApi.Contract.UpdateValidators(&_ContractApi.TransactOpts, _validators, _status)
 }
 
 // ContractApiDelayedSnapshotSubmittedIterator is returned from FilterDelayedSnapshotSubmitted and is used to iterate over the raw logs and unpacked data for DelayedSnapshotSubmitted events raised by the ContractApi contract.
@@ -1876,9 +1855,9 @@ func (_ContractApi *ContractApiFilterer) ParseSnapshotSubmitted(log types.Log) (
 	return event, nil
 }
 
-// ContractApiSnapshotterAllowedIterator is returned from FilterSnapshotterAllowed and is used to iterate over the raw logs and unpacked data for SnapshotterAllowed events raised by the ContractApi contract.
-type ContractApiSnapshotterAllowedIterator struct {
-	Event *ContractApiSnapshotterAllowed // Event containing the contract specifics and raw log
+// ContractApiSnapshottersUpdatedIterator is returned from FilterSnapshottersUpdated and is used to iterate over the raw logs and unpacked data for SnapshottersUpdated events raised by the ContractApi contract.
+type ContractApiSnapshottersUpdatedIterator struct {
+	Event *ContractApiSnapshottersUpdated // Event containing the contract specifics and raw log
 
 	contract *bind.BoundContract // Generic contract to use for unpacking event data
 	event    string              // Event name to use for unpacking event data
@@ -1892,7 +1871,7 @@ type ContractApiSnapshotterAllowedIterator struct {
 // Next advances the iterator to the subsequent event, returning whether there
 // are any more events found. In case of a retrieval or parsing error, false is
 // returned and Error() can be queried for the exact failure.
-func (it *ContractApiSnapshotterAllowedIterator) Next() bool {
+func (it *ContractApiSnapshottersUpdatedIterator) Next() bool {
 	// If the iterator failed, stop iterating
 	if it.fail != nil {
 		return false
@@ -1901,7 +1880,7 @@ func (it *ContractApiSnapshotterAllowedIterator) Next() bool {
 	if it.done {
 		select {
 		case log := <-it.logs:
-			it.Event = new(ContractApiSnapshotterAllowed)
+			it.Event = new(ContractApiSnapshottersUpdated)
 			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
 				it.fail = err
 				return false
@@ -1916,7 +1895,7 @@ func (it *ContractApiSnapshotterAllowedIterator) Next() bool {
 	// Iterator still in progress, wait for either a data or an error event
 	select {
 	case log := <-it.logs:
-		it.Event = new(ContractApiSnapshotterAllowed)
+		it.Event = new(ContractApiSnapshottersUpdated)
 		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
 			it.fail = err
 			return false
@@ -1932,41 +1911,42 @@ func (it *ContractApiSnapshotterAllowedIterator) Next() bool {
 }
 
 // Error returns any retrieval or parsing error occurred during filtering.
-func (it *ContractApiSnapshotterAllowedIterator) Error() error {
+func (it *ContractApiSnapshottersUpdatedIterator) Error() error {
 	return it.fail
 }
 
 // Close terminates the iteration process, releasing any pending underlying
 // resources.
-func (it *ContractApiSnapshotterAllowedIterator) Close() error {
+func (it *ContractApiSnapshottersUpdatedIterator) Close() error {
 	it.sub.Unsubscribe()
 	return nil
 }
 
-// ContractApiSnapshotterAllowed represents a SnapshotterAllowed event raised by the ContractApi contract.
-type ContractApiSnapshotterAllowed struct {
+// ContractApiSnapshottersUpdated represents a SnapshottersUpdated event raised by the ContractApi contract.
+type ContractApiSnapshottersUpdated struct {
 	SnapshotterAddress common.Address
+	Allowed            bool
 	Raw                types.Log // Blockchain specific contextual infos
 }
 
-// FilterSnapshotterAllowed is a free log retrieval operation binding the contract event 0xfcb9509c76f3ebc07afe1d348f7280fb6a952d80f78357319de7ce75a1350410.
+// FilterSnapshottersUpdated is a free log retrieval operation binding the contract event 0x4c765465b6151ce64f545c3d8a4a500d6c4f5ca0a25d17f4db5e8d76f72c37da.
 //
-// Solidity: event SnapshotterAllowed(address snapshotterAddress)
-func (_ContractApi *ContractApiFilterer) FilterSnapshotterAllowed(opts *bind.FilterOpts) (*ContractApiSnapshotterAllowedIterator, error) {
+// Solidity: event SnapshottersUpdated(address snapshotterAddress, bool allowed)
+func (_ContractApi *ContractApiFilterer) FilterSnapshottersUpdated(opts *bind.FilterOpts) (*ContractApiSnapshottersUpdatedIterator, error) {
 
-	logs, sub, err := _ContractApi.contract.FilterLogs(opts, "SnapshotterAllowed")
+	logs, sub, err := _ContractApi.contract.FilterLogs(opts, "SnapshottersUpdated")
 	if err != nil {
 		return nil, err
 	}
-	return &ContractApiSnapshotterAllowedIterator{contract: _ContractApi.contract, event: "SnapshotterAllowed", logs: logs, sub: sub}, nil
+	return &ContractApiSnapshottersUpdatedIterator{contract: _ContractApi.contract, event: "SnapshottersUpdated", logs: logs, sub: sub}, nil
 }
 
-// WatchSnapshotterAllowed is a free log subscription operation binding the contract event 0xfcb9509c76f3ebc07afe1d348f7280fb6a952d80f78357319de7ce75a1350410.
+// WatchSnapshottersUpdated is a free log subscription operation binding the contract event 0x4c765465b6151ce64f545c3d8a4a500d6c4f5ca0a25d17f4db5e8d76f72c37da.
 //
-// Solidity: event SnapshotterAllowed(address snapshotterAddress)
-func (_ContractApi *ContractApiFilterer) WatchSnapshotterAllowed(opts *bind.WatchOpts, sink chan<- *ContractApiSnapshotterAllowed) (event.Subscription, error) {
+// Solidity: event SnapshottersUpdated(address snapshotterAddress, bool allowed)
+func (_ContractApi *ContractApiFilterer) WatchSnapshottersUpdated(opts *bind.WatchOpts, sink chan<- *ContractApiSnapshottersUpdated) (event.Subscription, error) {
 
-	logs, sub, err := _ContractApi.contract.WatchLogs(opts, "SnapshotterAllowed")
+	logs, sub, err := _ContractApi.contract.WatchLogs(opts, "SnapshottersUpdated")
 	if err != nil {
 		return nil, err
 	}
@@ -1976,8 +1956,8 @@ func (_ContractApi *ContractApiFilterer) WatchSnapshotterAllowed(opts *bind.Watc
 			select {
 			case log := <-logs:
 				// New log arrived, parse the event and forward to the user
-				event := new(ContractApiSnapshotterAllowed)
-				if err := _ContractApi.contract.UnpackLog(event, "SnapshotterAllowed", log); err != nil {
+				event := new(ContractApiSnapshottersUpdated)
+				if err := _ContractApi.contract.UnpackLog(event, "SnapshottersUpdated", log); err != nil {
 					return err
 				}
 				event.Raw = log
@@ -1998,12 +1978,147 @@ func (_ContractApi *ContractApiFilterer) WatchSnapshotterAllowed(opts *bind.Watc
 	}), nil
 }
 
-// ParseSnapshotterAllowed is a log parse operation binding the contract event 0xfcb9509c76f3ebc07afe1d348f7280fb6a952d80f78357319de7ce75a1350410.
+// ParseSnapshottersUpdated is a log parse operation binding the contract event 0x4c765465b6151ce64f545c3d8a4a500d6c4f5ca0a25d17f4db5e8d76f72c37da.
 //
-// Solidity: event SnapshotterAllowed(address snapshotterAddress)
-func (_ContractApi *ContractApiFilterer) ParseSnapshotterAllowed(log types.Log) (*ContractApiSnapshotterAllowed, error) {
-	event := new(ContractApiSnapshotterAllowed)
-	if err := _ContractApi.contract.UnpackLog(event, "SnapshotterAllowed", log); err != nil {
+// Solidity: event SnapshottersUpdated(address snapshotterAddress, bool allowed)
+func (_ContractApi *ContractApiFilterer) ParseSnapshottersUpdated(log types.Log) (*ContractApiSnapshottersUpdated, error) {
+	event := new(ContractApiSnapshottersUpdated)
+	if err := _ContractApi.contract.UnpackLog(event, "SnapshottersUpdated", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// ContractApiValidatorsUpdatedIterator is returned from FilterValidatorsUpdated and is used to iterate over the raw logs and unpacked data for ValidatorsUpdated events raised by the ContractApi contract.
+type ContractApiValidatorsUpdatedIterator struct {
+	Event *ContractApiValidatorsUpdated // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *ContractApiValidatorsUpdatedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(ContractApiValidatorsUpdated)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(ContractApiValidatorsUpdated)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *ContractApiValidatorsUpdatedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *ContractApiValidatorsUpdatedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// ContractApiValidatorsUpdated represents a ValidatorsUpdated event raised by the ContractApi contract.
+type ContractApiValidatorsUpdated struct {
+	ValidatorAddress common.Address
+	Allowed          bool
+	Raw              types.Log // Blockchain specific contextual infos
+}
+
+// FilterValidatorsUpdated is a free log retrieval operation binding the contract event 0x7f3079c058f3e3dee87048158309898b46e9741ff53b6c7a3afac7c370649afc.
+//
+// Solidity: event ValidatorsUpdated(address validatorAddress, bool allowed)
+func (_ContractApi *ContractApiFilterer) FilterValidatorsUpdated(opts *bind.FilterOpts) (*ContractApiValidatorsUpdatedIterator, error) {
+
+	logs, sub, err := _ContractApi.contract.FilterLogs(opts, "ValidatorsUpdated")
+	if err != nil {
+		return nil, err
+	}
+	return &ContractApiValidatorsUpdatedIterator{contract: _ContractApi.contract, event: "ValidatorsUpdated", logs: logs, sub: sub}, nil
+}
+
+// WatchValidatorsUpdated is a free log subscription operation binding the contract event 0x7f3079c058f3e3dee87048158309898b46e9741ff53b6c7a3afac7c370649afc.
+//
+// Solidity: event ValidatorsUpdated(address validatorAddress, bool allowed)
+func (_ContractApi *ContractApiFilterer) WatchValidatorsUpdated(opts *bind.WatchOpts, sink chan<- *ContractApiValidatorsUpdated) (event.Subscription, error) {
+
+	logs, sub, err := _ContractApi.contract.WatchLogs(opts, "ValidatorsUpdated")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(ContractApiValidatorsUpdated)
+				if err := _ContractApi.contract.UnpackLog(event, "ValidatorsUpdated", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseValidatorsUpdated is a log parse operation binding the contract event 0x7f3079c058f3e3dee87048158309898b46e9741ff53b6c7a3afac7c370649afc.
+//
+// Solidity: event ValidatorsUpdated(address validatorAddress, bool allowed)
+func (_ContractApi *ContractApiFilterer) ParseValidatorsUpdated(log types.Log) (*ContractApiValidatorsUpdated, error) {
+	event := new(ContractApiValidatorsUpdated)
+	if err := _ContractApi.contract.UnpackLog(event, "ValidatorsUpdated", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log
