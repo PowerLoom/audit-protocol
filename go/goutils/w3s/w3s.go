@@ -10,7 +10,6 @@ import (
 
 	"github.com/hashicorp/go-retryablehttp"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 	"golang.org/x/time/rate"
 
 	"audit-protocol/goutils/datamodel"
@@ -18,19 +17,18 @@ import (
 	"audit-protocol/goutils/settings"
 )
 
+type Service interface {
+	UploadToW3s(msg interface{}) (string, error)
+}
+
 type W3S struct {
 	limiter           *rate.Limiter
 	settingsObj       *settings.SettingsObj
 	defaultHTTPClient *retryablehttp.Client
 }
 
-func InitW3S() *W3S {
+func InitW3S(settingsObj *settings.SettingsObj) Service {
 	log.Debug("initializing web3.storage client")
-
-	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
-	if err != nil {
-		log.WithError(err).Fatal("error getting settings object")
-	}
 
 	// Default values
 	tps := rate.Limit(1) // 3 TPS
@@ -54,12 +52,7 @@ func InitW3S() *W3S {
 	w := &W3S{
 		limiter:           rateLimiter,
 		settingsObj:       settingsObj,
-		defaultHTTPClient: httpclient.GetDefaultHTTPClient(),
-	}
-
-	err = gi.Inject(w)
-	if err != nil {
-		log.WithError(err).Fatal("error injecting w3s")
+		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj),
 	}
 
 	return w

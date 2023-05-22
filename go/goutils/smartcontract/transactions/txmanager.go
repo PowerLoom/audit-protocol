@@ -1,83 +1,80 @@
 package transactions
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
+	"errors"
 	"math/big"
+	"net/http"
 	"sync"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
+	"github.com/hashicorp/go-retryablehttp"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/datamodel"
+	"audit-protocol/goutils/ethclient"
+	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/settings"
-	contractApi "audit-protocol/goutils/smartcontract/api"
+	"audit-protocol/goutils/smartcontract"
 )
 
-type TxManager struct {
-	Mu          sync.Mutex
-	Nonce       uint64
-	ChainID     *big.Int
-	settingsObj *settings.SettingsObj
-	ethClient   *ethclient.Client
-	gasPrice    *big.Int
+type Service interface {
+	SubmitSnapshotToContract(privKey *ecdsa.PrivateKey, signerData *apitypes.TypedData, msg *datamodel.SnapshotRelayerPayload, signature []byte) error
+	SendSignatureToRelayer(payload *datamodel.SnapshotRelayerPayload) error
 }
 
-func NewNonceManager() *TxManager {
-	ethClient, err := gi.Invoke[*ethclient.Client]()
-	if err != nil {
-		log.Fatal("failed to invoke eth client")
-	}
+type TxManager struct {
+	Mu                 sync.Mutex
+	Nonce              uint64
+	ChainID            *big.Int
+	settingsObj        *settings.SettingsObj
+	ethService         ethclient.Service
+	contractAPIService smartcontract.Service
+	gasPrice           *big.Int
+}
 
-	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
-	if err != nil {
-		log.Fatal("failed to invoke settings object")
-	}
-
-	chainId, err := ethClient.ChainID(context.Background())
+func NewTxManager(settingsObj *settings.SettingsObj, ethService ethclient.Service, contractApiService smartcontract.Service) Service {
+	chainId, err := ethService.ChainID(context.Background())
 	if err != nil {
 		log.WithError(err).Fatal("failed to get chain id")
 	}
 
-	gasPrice, err := ethClient.SuggestGasPrice(context.Background())
+	gasPrice, err := ethService.SuggestGasPrice(context.Background())
 	if err != nil {
 		gasPrice = big.NewInt(10000000)
 	}
 
 	txMgr := &TxManager{
-		Mu:          sync.Mutex{},
-		ChainID:     chainId,
-		settingsObj: settingsObj,
-		ethClient:   ethClient,
-		gasPrice:    gasPrice,
+		Mu:                 sync.Mutex{},
+		ChainID:            chainId,
+		settingsObj:        settingsObj,
+		ethService:         ethService,
+		contractAPIService: contractApiService,
+		gasPrice:           gasPrice,
 	}
 
-	txMgr.Nonce = txMgr.getNonce(ethClient)
+	txMgr.Nonce, err = ethService.PendingNonceAt(context.Background(), common.HexToAddress(settingsObj.Signer.AccountAddress))
+	if err != nil {
+		log.WithError(err).Fatal("failed to get nonce")
+	}
 
 	return txMgr
 }
 
-// getNonce gets the nonce for the account
-func (t *TxManager) getNonce(ethClient *ethclient.Client) uint64 {
-	nonce, err := ethClient.PendingNonceAt(context.Background(), common.HexToAddress(t.settingsObj.Signer.AccountAddress))
-	if err != nil {
-		log.WithError(err).Fatal("failed to get pending transaction count")
-	}
-
-	return nonce
-}
-
-// SubmitSnapshot submits a snapshot to the smart contract
-func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *apitypes.TypedData, msg *datamodel.SnapshotRelayerPayload, signature []byte) error {
+// SubmitSnapshotToContract submits a snapshot to the smart contract
+func (t *TxManager) SubmitSnapshotToContract(privKey *ecdsa.PrivateKey, signerData *apitypes.TypedData, msg *datamodel.SnapshotRelayerPayload, signature []byte) error {
 	t.Mu.Lock()
 
-	deadline := signerData.Message["deadline"].(*math.HexOrDecimal256)
+	deadline, ok := signerData.Message["deadline"].(*math.HexOrDecimal256)
+	if !ok {
+		return errors.New("failed to get deadline from EIP712 message")
+	}
 
 	var submitSnapshotErr error
 	var signedTx *types.Transaction
@@ -85,44 +82,13 @@ func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.
 	wg := sync.WaitGroup{}
 
 	wg.Add(1)
-
 	go func(nonce uint64) {
 		defer wg.Done()
-
-		signedTx, submitSnapshotErr = api.SubmitSnapshot(
-			&bind.TransactOpts{
-				Nonce:    big.NewInt(int64(nonce)),
-				Value:    big.NewInt(0),
-				GasPrice: t.gasPrice,
-				GasLimit: 2000000,
-				From:     common.HexToAddress(t.settingsObj.Signer.AccountAddress),
-				Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
-					signedTx, err := types.SignTx(transaction, types.NewEIP155Signer(t.ChainID), privKey)
-					if err != nil {
-						log.WithError(err).Error("failed to sign transaction for snapshot")
-
-						return nil, err
-					}
-
-					return signedTx, nil
-				},
-			},
-			msg.SnapshotCID,
-			big.NewInt(int64(msg.EpochID)),
-			msg.ProjectID,
-			contractApi.PowerloomProtocolStateRequest{
-				Deadline:    (*big.Int)(deadline),
-				SnapshotCid: msg.SnapshotCID,
-				EpochId:     big.NewInt(int64(msg.EpochID)),
-				ProjectId:   msg.ProjectID,
-			},
-			signature,
-		)
+		signedTx, submitSnapshotErr = t.contractAPIService.SubmitSnapshotToContract(nonce, privKey, t.gasPrice, t.ChainID, t.settingsObj.Signer.AccountAddress, deadline, msg, signature)
 
 		if submitSnapshotErr == nil && signedTx != nil {
 			log.WithField("txHash", signedTx.Hash().Hex()).Info("snapshot submitted successfully")
 		}
-
 	}(t.Nonce)
 
 	t.Nonce++
@@ -135,6 +101,58 @@ func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.
 
 		return submitSnapshotErr
 	}
+
+	return nil
+}
+
+func (t *TxManager) SendSignatureToRelayer(payload *datamodel.SnapshotRelayerPayload) error {
+	rb := &datamodel.RelayerRequest{
+		ProjectID:   payload.ProjectID,
+		SnapshotCID: payload.SnapshotCID,
+		EpochID:     payload.EpochID,
+		Request: &datamodel.Request{
+			Deadline: (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
+		},
+		Signature: "0x" + payload.Signature,
+	}
+
+	httpClient := httpclient.GetDefaultHTTPClient(t.settingsObj)
+
+	// url = "host+port" ; endpoint = "/endpoint"
+	url := *t.settingsObj.Relayer.Host + *t.settingsObj.Relayer.Endpoint
+
+	payloadBytes, err := json.Marshal(rb)
+	if err != nil {
+		log.WithError(err).Error("failed to marshal payload")
+
+		return err
+	}
+
+	req, err := retryablehttp.NewRequest(http.MethodPost, url, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		log.WithError(err).Error("failed to create request to relayer")
+
+		return err
+	}
+
+	req.Header.Add("Content-Type", "application/json")
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		log.WithError(err).Error("failed to send request to relayer")
+
+		return err
+	}
+
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		log.WithField("status", res.StatusCode).Error("failed to send request to relayer")
+
+		return errors.New("failed to send request to relayer, status not ok")
+	}
+
+	log.Info("successfully sent signature to relayer")
 
 	return nil
 }

@@ -6,10 +6,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func HealthCheck() {
-	http.Handle("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func HealthCheckHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	})
+}
+
+func HealthCheck() {
+	http.Handle("/health", HealthCheckHandler())
 
 	go func() {
 		err := http.ListenAndServe(":9000", nil)

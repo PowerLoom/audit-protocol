@@ -4,6 +4,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/caching"
+	"audit-protocol/goutils/ethclient"
 	"audit-protocol/goutils/health"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
@@ -14,6 +15,7 @@ import (
 	taskmgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	w3storage "audit-protocol/goutils/w3s"
 	"audit-protocol/payload-commit/service"
+	"audit-protocol/payload-commit/signer"
 	"audit-protocol/payload-commit/worker"
 )
 
@@ -22,11 +24,7 @@ func main() {
 
 	settingsObj := settings.ParseSettings()
 
-	ipfsutils.InitClient(
-		settingsObj.IpfsConfig.URL,
-		settingsObj.IpfsConfig.IPFSRateLimiter,
-		settingsObj.IpfsConfig.Timeout,
-	)
+	ipfsService := ipfsutils.InitService(settingsObj)
 
 	redisClient := redisutils.InitRedisClient(
 		settingsObj.Redis.Host,
@@ -37,25 +35,46 @@ func main() {
 		-1,
 	)
 
+	ethService, ethClient := ethclient.NewClient(settingsObj)
 	reporter := reporting.InitIssueReporter(settingsObj)
 
-	caching.NewRedisCache()
-	smartcontract.InitContractAPI()
-	taskmgr.NewRabbitmqTaskMgr()
-	w3storage.InitW3S()
-	caching.InitDiskCache()
+	redisCache := caching.NewRedisCache(redisClient)
+	contractAPIService := smartcontract.InitContractAPI(settingsObj.Signer.Domain.VerifyingContract, ethClient)
 
-	service.InitPayloadCommitService(reporter)
+	rabbitmqTaskMgrConn, err := taskmgr.Dial(settingsObj)
+	if err != nil {
+		log.WithError(err).Fatal("failed to dial rabbitmq")
+	}
 
-	mqWorker := worker.NewWorker()
+	rabbitmqTaskMgr := taskmgr.NewRabbitmqTaskMgr(settingsObj, rabbitmqTaskMgrConn)
+	web3StorageService := w3storage.InitW3S(settingsObj)
+	diskCacheService := caching.InitDiskCache()
+	signerService := signer.InitService(settingsObj)
+
+	payloadCommitService := service.InitPayloadCommitService(
+		settingsObj,
+		redisCache,
+		ethService,
+		reporter,
+		ipfsService,
+		diskCacheService,
+		web3StorageService,
+		contractAPIService,
+		signerService,
+	)
+
+	mqWorker := worker.NewWorker(settingsObj, payloadCommitService, rabbitmqTaskMgr)
 
 	// health check is non-blocking health check http listener
 	health.HealthCheck()
 
 	defer func() {
-		mqWorker.ShutdownWorker()
+		err := mqWorker.ShutdownWorker()
+		if err != nil {
+			log.WithError(err).Error("error while shutting down worker")
+		}
 
-		err := redisClient.Close()
+		err = redisClient.Close()
 		if err != nil {
 			log.WithError(err).Error("error while closing redis client")
 		}

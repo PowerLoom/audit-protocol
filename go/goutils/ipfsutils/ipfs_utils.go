@@ -10,7 +10,6 @@ import (
 	shell "github.com/ipfs/go-ipfs-api"
 	ma "github.com/multiformats/go-multiaddr"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 	"golang.org/x/time/rate"
 
 	"audit-protocol/goutils/datamodel"
@@ -18,22 +17,28 @@ import (
 	"audit-protocol/goutils/settings"
 )
 
+type Service interface {
+	UploadSnapshotToIPFS(snapshot *datamodel.PayloadCommitMessage) error
+	GetSnapshotFromIPFS(snapshotCID string, outputPath string) error
+	Unpin(cid string) error
+}
+
 type IpfsClient struct {
 	ipfsClient            *shell.Shell
 	ipfsClientRateLimiter *rate.Limiter
 }
 
-// InitClient initializes the IPFS client.
-func InitClient(url string, rateLimiter *settings.RateLimiter, timeoutSecs int) *IpfsClient {
-	url = ParseMultiAddrURL(url)
+// InitService initializes the IPFS client.
+func InitService(settingsObj *settings.SettingsObj) Service {
+	url := ParseMultiAddrURL(settingsObj.IpfsConfig.URL)
 
-	ipfsHTTPClient := httpclient.GetDefaultHTTPClient()
+	ipfsHTTPClient := httpclient.GetDefaultHTTPClient(settingsObj)
 
 	log.Debug("initializing the IPFS client with IPFS Daemon URL:", url)
 
 	client := new(IpfsClient)
 	client.ipfsClient = shell.NewShellWithClient(url, ipfsHTTPClient.HTTPClient)
-	timeout := time.Duration(timeoutSecs * int(time.Second))
+	timeout := time.Duration(settingsObj.IpfsConfig.Timeout) * time.Second
 	client.ipfsClient.SetTimeout(timeout)
 
 	log.Debugf("setting IPFS timeout of %f seconds", timeout.Seconds())
@@ -41,6 +46,7 @@ func InitClient(url string, rateLimiter *settings.RateLimiter, timeoutSecs int) 
 	tps := rate.Limit(10) // 10 TPS
 	burst := 10
 
+	rateLimiter := settingsObj.IpfsConfig.IPFSRateLimiter
 	if rateLimiter != nil {
 		burst = rateLimiter.Burst
 
@@ -54,11 +60,6 @@ func InitClient(url string, rateLimiter *settings.RateLimiter, timeoutSecs int) 
 
 	log.Infof("rate Limit configured for IPFS Client at %v TPS with a burst of %d", tps, burst)
 	client.ipfsClientRateLimiter = rate.NewLimiter(tps, burst)
-
-	// exit if injection fails
-	if err := gi.Inject(client); err != nil {
-		log.Fatalln("Failed to inject dependencies", err)
-	}
 
 	// check if ipfs connection is successful
 	_, _, err := client.ipfsClient.Version()
@@ -77,7 +78,7 @@ func ParseMultiAddrURL(url string) string {
 	return url
 }
 
-func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadCommitMessage) error {
+func (client *IpfsClient) UploadSnapshotToIPFS(message *datamodel.PayloadCommitMessage) error {
 	err := client.ipfsClientRateLimiter.Wait(context.Background())
 	if err != nil {
 		log.WithError(err).Error("ipfs rate limiter errored")
@@ -85,7 +86,7 @@ func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadC
 		return err
 	}
 
-	msg, err := json.Marshal(payloadCommit.Message)
+	msg, err := json.Marshal(message.Message)
 	if err != nil {
 		log.WithError(err).Error("failed to marshal payload commit message")
 
@@ -100,10 +101,10 @@ func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadC
 	}
 
 	log.WithField("snapshotCID", snapshotCid).
-		WithField("epochId", payloadCommit.EpochID).
+		WithField("epochId", message.EpochID).
 		Debug("ipfs add Successful")
 
-	payloadCommit.SnapshotCID = snapshotCid
+	message.SnapshotCID = snapshotCid
 
 	return nil
 }

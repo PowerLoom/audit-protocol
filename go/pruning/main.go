@@ -15,11 +15,7 @@ func main() {
 
 	settingsObj := settings.ParseSettings()
 
-	ipfsClient := ipfsutils.InitClient(
-		settingsObj.IpfsConfig.URL,
-		settingsObj.IpfsConfig.IPFSRateLimiter,
-		settingsObj.IpfsConfig.Timeout,
-	)
+	ipfsClient := ipfsutils.InitService(settingsObj)
 
 	cronRunner := cron.New(cron.WithChain(
 		cron.Recover(cron.DefaultLogger),

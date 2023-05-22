@@ -27,6 +27,10 @@ const (
 	SubmittedIncorrectSnapshotIssue IssueType = "SUBMITTED_INCORRECT_SNAPSHOT"  // when a snapshot was submitted but it was incorrect
 )
 
+type Service interface {
+	Report(issueType IssueType, projectID string, epochID string, extra map[string]interface{})
+}
+
 type IssueReporter struct {
 	httpClient       *retryablehttp.Client
 	slackRateLimiter *rate.Limiter
@@ -35,7 +39,7 @@ type IssueReporter struct {
 
 func InitIssueReporter(settingsObj *settings.SettingsObj) *IssueReporter {
 	client := &IssueReporter{
-		httpClient:       httpclient.GetDefaultHTTPClient(),
+		httpClient:       httpclient.GetDefaultHTTPClient(settingsObj),
 		slackRateLimiter: rate.NewLimiter(1, 1),
 		settingsObj:      settingsObj,
 	}

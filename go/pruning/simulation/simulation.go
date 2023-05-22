@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ipfs/go-cid"
 	"github.com/remeh/sizedwaitgroup"
 	log "github.com/sirupsen/logrus"
 
+	"audit-protocol/goutils/ethclient"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/settings"
@@ -43,7 +43,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ipfsClient := ipfsutils.InitClient(settingsObj.IpfsConfig.URL, settingsObj.IpfsConfig.IPFSRateLimiter, settingsObj.IpfsConfig.Timeout)
+	ipfsClient := ipfsutils.InitService(settingsObj)
 
 	state := new(State)
 
@@ -52,10 +52,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	contractApi := smartcontract.InitContractAPI()
+	_, ethClient := ethclient.NewClient(settingsObj)
+	contractApi := smartcontract.InitContractAPI(settingsObj.Signer.Domain.VerifyingContract, ethClient)
 
 	log.Info("getting projects from contract")
-	projects, err := contractApi.GetProjects(&bind.CallOpts{})
+	projects, err := contractApi.GetProjects()
 	if err != nil {
 		log.Fatal(err)
 	}

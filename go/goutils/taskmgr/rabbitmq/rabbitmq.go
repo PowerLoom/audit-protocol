@@ -7,8 +7,6 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/swagftw/gi"
-
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/taskmgr"
 	"audit-protocol/goutils/taskmgr/worker"
@@ -22,27 +20,11 @@ type RabbitmqTaskMgr struct {
 	settings *settings.SettingsObj
 }
 
-var _ taskmgr.TaskMgr = &RabbitmqTaskMgr{}
-
 // NewRabbitmqTaskMgr returns a new rabbitmq task manager
-func NewRabbitmqTaskMgr() *RabbitmqTaskMgr {
-	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
-	if err != nil {
-		log.WithError(err).Fatalf("failed to invoke settingsObj object")
-	}
-
-	conn, err := Dial(settingsObj)
-	if err != nil {
-		log.WithError(err).Fatalf("failed to connect to rabbitmq")
-	}
-
+func NewRabbitmqTaskMgr(settingsObj *settings.SettingsObj, conn *amqp.Connection) taskmgr.TaskMgr {
 	taskMgr := &RabbitmqTaskMgr{
 		conn:     conn,
 		settings: settingsObj,
-	}
-
-	if err := gi.Inject(taskMgr); err != nil {
-		log.WithError(err).Fatalf("failed to inject dependencies")
 	}
 
 	log.Debug("rabbitmq task manager initialized")

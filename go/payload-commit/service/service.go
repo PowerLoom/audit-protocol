@@ -1,37 +1,30 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"math/big"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
-	"github.com/hashicorp/go-retryablehttp"
+	"github.com/go-playground/validator/v10"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 
 	"audit-protocol/caching"
 	"audit-protocol/goutils/datamodel"
-	"audit-protocol/goutils/httpclient"
+	"audit-protocol/goutils/ethclient"
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/reporting"
 	"audit-protocol/goutils/settings"
-	contractApi "audit-protocol/goutils/smartcontract/api"
+	"audit-protocol/goutils/smartcontract"
 	"audit-protocol/goutils/smartcontract/transactions"
 	"audit-protocol/goutils/taskmgr"
 	w3storage "audit-protocol/goutils/w3s"
@@ -40,81 +33,56 @@ import (
 
 const ServiceName = "payload-commit"
 
+type Service interface {
+	Run(msgBody []byte, topic string) error
+}
+
 type PayloadCommitService struct {
-	settingsObj   *settings.SettingsObj
-	redisCache    *caching.RedisCache
-	ethClient     *ethclient.Client
-	contractAPI   *contractApi.ContractApi
-	ipfsClient    *ipfsutils.IpfsClient
-	web3sClient   *w3storage.W3S
-	diskCache     *caching.LocalDiskCache
-	txManager     *transactions.TxManager
-	privKey       *ecdsa.PrivateKey
-	issueReporter *reporting.IssueReporter
-	httpClient    *retryablehttp.Client
+	settingsObj        *settings.SettingsObj
+	redisCache         caching.DbCache
+	ethService         ethclient.Service
+	contractAPIService smartcontract.Service
+	ipfsService        ipfsutils.Service
+	web3sClient        w3storage.Service
+	diskCache          caching.DiskCache
+	txManager          transactions.Service
+	privKey            *ecdsa.PrivateKey
+	issueReporter      reporting.Service
+	signerService      signer.Service
 }
 
 // InitPayloadCommitService initializes the payload commit service.
-func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitService {
-	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke settings object")
-	}
-
-	redisCache, err := gi.Invoke[*caching.RedisCache]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke redis cache")
-	}
-
-	ethClient, err := gi.Invoke[*ethclient.Client]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke eth client")
-	}
-
-	contractAPI, err := gi.Invoke[*contractApi.ContractApi]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke contract api")
-	}
-
-	ipfsClient, err := gi.Invoke[*ipfsutils.IpfsClient]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke ipfs client")
-	}
-
-	web3sClient, err := gi.Invoke[*w3storage.W3S]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke web3s client")
-	}
-
-	diskCache, err := gi.Invoke[*caching.LocalDiskCache]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke disk cache")
-	}
-
-	privKey, err := signer.GetPrivateKey(settingsObj.Signer.PrivateKey)
+func InitPayloadCommitService(
+	settingsObj *settings.SettingsObj,
+	redisCache caching.DbCache,
+	ethService ethclient.Service,
+	reporter reporting.Service,
+	ipfsService ipfsutils.Service,
+	diskCache caching.DiskCache,
+	web3StorageService w3storage.Service,
+	contractApiService smartcontract.Service,
+	signerService signer.Service,
+) Service {
+	privKey, err := signerService.GetPrivateKey(settingsObj.Signer.PrivateKey)
 	if err != nil {
 		log.WithError(err).Fatal("failed to get private key")
 	}
 
 	pcService := &PayloadCommitService{
-		settingsObj:   settingsObj,
-		redisCache:    redisCache,
-		ethClient:     ethClient,
-		contractAPI:   contractAPI,
-		ipfsClient:    ipfsClient,
-		web3sClient:   web3sClient,
-		diskCache:     diskCache,
-		txManager:     transactions.NewNonceManager(),
-		privKey:       privKey,
-		issueReporter: reporter,
-		httpClient:    httpclient.GetDefaultHTTPClient(),
+		settingsObj:        settingsObj,
+		redisCache:         redisCache,
+		ethService:         ethService,
+		contractAPIService: contractApiService,
+		ipfsService:        ipfsService,
+		web3sClient:        web3StorageService,
+		diskCache:          diskCache,
+		txManager:          transactions.NewTxManager(settingsObj, ethService, contractApiService),
+		privKey:            privKey,
+		issueReporter:      reporter,
+		signerService:      signerService,
 	}
 
 	_ = pcService.initLocalCachedData()
-
-	if err := gi.Inject(pcService); err != nil {
-		log.WithError(err).Fatal("failed to inject payload commit service")
-	}
 
 	return pcService
 }
@@ -122,6 +90,7 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 	log.WithField("msg", string(msgBody)).Debug("running new task")
 
+	validate := validator.New()
 	if strings.Contains(topic, taskmgr.FinalizedSuffix) {
 		finalizedEventMsg := new(datamodel.PayloadCommitFinalizedMessage)
 
@@ -130,6 +99,13 @@ func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 			log.WithError(err).Error("failed to unmarshal finalized payload commit message")
 
 			// not able to report this issue as data for the reporting is not available
+			return err
+		}
+
+		err = validate.Struct(finalizedEventMsg)
+		if err != nil {
+			log.WithError(err).Error("failed to validate finalized payload commit message")
+
 			return err
 		}
 
@@ -147,6 +123,13 @@ func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 			log.WithError(err).Error("failed to unmarshal payload commit message")
 
 			// not able to report this issue as data for the reporting is not available
+			return err
+		}
+
+		err = validate.Struct(payloadCommitMsg)
+		if err != nil {
+			log.WithError(err).Error("failed to validate payload commit message")
+
 			return err
 		}
 
@@ -192,7 +175,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	}
 
 	// store unfinalized payload cid in redis
-	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg)
+	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg, time.Now().Unix()+3600*24)
 	if err != nil {
 		log.WithField("epochId", msg.EpochID).
 			WithField("messageId", msg.ProjectID).
@@ -218,7 +201,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	// if relayer host is not set, submit snapshot directly to contract
 	if *s.settingsObj.Relayer.Host == "" {
 		err = backoff.Retry(func() error {
-			err = s.txManager.SubmitSnapshot(s.contractAPI, s.privKey, signerData, txPayload, signature)
+			err = s.txManager.SubmitSnapshotToContract(s.privKey, signerData, txPayload, signature)
 
 			return err
 		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
@@ -238,7 +221,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		}
 	} else {
 		// send payload commit message with signature to relayer
-		err = s.sendSignatureToRelayer(txPayload)
+		err = s.txManager.SendSignatureToRelayer(txPayload)
 		if err != nil {
 			log.WithError(err).Error("failed to send signature to relayer")
 
@@ -286,7 +269,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		}
 
 		// get snapshot from ipfs and store it in output path
-		err = s.ipfsClient.GetSnapshotFromIPFS(msg.Message.SnapshotCID, filePath)
+		err = s.ipfsService.GetSnapshotFromIPFS(msg.Message.SnapshotCID, filePath)
 		if err != nil {
 			log.WithError(err).Error("failed to get snapshot from ipfs")
 
@@ -329,7 +312,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		}
 
 		// get snapshot from ipfs and store it in output path
-		err = s.ipfsClient.GetSnapshotFromIPFS(msg.Message.SnapshotCID, filePath)
+		err = s.ipfsService.GetSnapshotFromIPFS(msg.Message.SnapshotCID, filePath)
 		if err != nil {
 			log.WithError(err).Error("failed to get snapshot from ipfs")
 
@@ -352,7 +335,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		}
 
 		// unpin unfinalized snapshot cid from ipfs
-		err = s.ipfsClient.Unpin(unfinalizedSnapshot.SnapshotCID)
+		err = s.ipfsService.Unpin(unfinalizedSnapshot.SnapshotCID)
 		if err != nil {
 			log.WithError(err).WithField("cid", unfinalizedSnapshot.SnapshotCID).Error("failed to unpin snapshot cid from ipfs")
 		}
@@ -400,7 +383,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 		defer wg.Done()
 
 		ipfsUploadErr = backoff.Retry(func() error {
-			ipfsUploadErr = s.ipfsClient.UploadSnapshotToIPFS(msg)
+			ipfsUploadErr = s.ipfsService.UploadSnapshotToIPFS(msg)
 			if ipfsUploadErr != nil {
 				log.WithError(ipfsUploadErr).Error("failed to upload snapshot to ipfs, retrying")
 
@@ -469,7 +452,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochId int64) (*apitypes.TypedData, []byte, error) {
 	log.Debug("signing payload commit message")
 
-	signerData, err := signer.GetSignerData(s.ethClient, snapshotCid, projectId, epochId)
+	signerData, err := s.signerService.GetSignerData(s.ethService, snapshotCid, projectId, epochId)
 	if err != nil {
 		log.WithError(err).Error("failed to get signer data")
 
@@ -485,7 +468,7 @@ func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochI
 		return nil, nil, err
 	}
 
-	signature, err := signer.SignMessage(s.privKey, signerData)
+	signature, err := s.signerService.SignMessage(s.privKey, signerData)
 	if err != nil {
 		log.WithError(err).Error("failed to sign message")
 
@@ -504,78 +487,6 @@ func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochI
 	return signerData, signature, nil
 }
 
-// sendSignatureToRelayer sends the signature to the relayer.
-func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.SnapshotRelayerPayload) error {
-	type reqBody struct {
-		ProjectID   string `json:"projectId"`
-		SnapshotCID string `json:"snapshotCid"`
-		EpochID     int    `json:"epochId"`
-		Request     struct {
-			Deadline    uint64 `json:"deadline"`
-			SnapshotCid string `json:"snapshotCid"`
-			EpochId     int    `json:"epochId"`
-			ProjectId   string `json:"projectId"`
-		} `json:"request"`
-		Signature string `json:"signature"`
-	}
-
-	rb := &reqBody{
-		ProjectID:   payload.ProjectID,
-		SnapshotCID: payload.SnapshotCID,
-		EpochID:     payload.EpochID,
-		Request: struct {
-			Deadline    uint64 `json:"deadline"`
-			SnapshotCid string `json:"snapshotCid"`
-			EpochId     int    `json:"epochId"`
-			ProjectId   string `json:"projectId"`
-		}{
-			Deadline:    (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
-			SnapshotCid: payload.SnapshotCID,
-			EpochId:     payload.EpochID,
-			ProjectId:   payload.ProjectID,
-		},
-		Signature: "0x" + payload.Signature,
-	}
-
-	// url = "host+port" ; endpoint = "/endpoint"
-	url := *s.settingsObj.Relayer.Host + *s.settingsObj.Relayer.Endpoint
-
-	payloadBytes, err := json.Marshal(rb)
-	if err != nil {
-		log.WithError(err).Error("failed to marshal payload")
-
-		return err
-	}
-
-	req, err := retryablehttp.NewRequest(http.MethodPost, url, bytes.NewBuffer(payloadBytes))
-	if err != nil {
-		log.WithError(err).Error("failed to create request to relayer")
-
-		return err
-	}
-
-	req.Header.Add("Content-Type", "application/json")
-
-	res, err := s.httpClient.Do(req)
-	if err != nil {
-		log.WithError(err).Error("failed to send request to relayer")
-
-		return err
-	}
-
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		log.WithField("status", res.StatusCode).Error("failed to send request to relayer")
-
-		return errors.New("failed to send request to relayer, status not ok")
-	}
-
-	log.Info("successfully sent signature to relayer")
-
-	return nil
-}
-
 // initLocalCachedData fills data in redis cache from smart contract if not present locally.
 func (s *PayloadCommitService) initLocalCachedData() error {
 	log.Debug("initializing local cached data")
@@ -592,7 +503,7 @@ func (s *PayloadCommitService) initLocalCachedData() error {
 	}
 
 	// get projects from smart contract
-	projects, err = s.contractAPI.GetProjects(&bind.CallOpts{})
+	projects, err = s.contractAPIService.GetProjects()
 	if err != nil {
 		log.WithError(err).Error("failed to get projects from smart contract")
 

@@ -18,13 +18,15 @@ import (
 
 const ServiceName = "pruning"
 
-func Prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
+func Prune(settingsObj *settings.SettingsObj, ipfsService ipfsutils.Service) error {
 	log.Debug("pruning started")
 
 	// get all files from local disk cache.
 	dirEntries, err := os.ReadDir(settingsObj.LocalCachePath)
 	if err != nil {
 		log.WithError(err).Error("failed to read local cache dir")
+
+		return err
 	}
 
 	cidsToUnpin := make([]string, 0)
@@ -124,7 +126,7 @@ func Prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 			go func(cidToUnpin string) {
 				defer swg.Done()
 
-				err = client.Unpin(cidToUnpin)
+				err = ipfsService.Unpin(cidToUnpin)
 				if err != nil {
 					log.WithField("cid", cidToUnpin).WithError(err).Error("failed to unpin cid")
 
@@ -166,4 +168,6 @@ func Prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 
 	log.Info("ipfs unpinning completed")
 	log.Info("local disk cleanup completed")
+
+	return nil
 }

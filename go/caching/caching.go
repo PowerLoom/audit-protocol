@@ -14,7 +14,7 @@ type DbCache interface {
 	GetStoredProjects(ctx context.Context) ([]string, error)
 	CheckIfProjectExists(ctx context.Context, projectID string) (bool, error)
 	StoreProjects(background context.Context, projects []string) error
-	AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage) error
+	AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage, ttl int64) error
 	AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error
 }
 

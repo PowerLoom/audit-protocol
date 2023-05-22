@@ -37,25 +37,25 @@ type (
 )
 
 type PayloadCommitMessage struct {
-	Message       map[string]interface{} `json:"message"`
+	Message       map[string]interface{} `json:"message" validate:"required"`
 	Web3Storage   bool                   `json:"web3Storage"`
-	SourceChainID int                    `json:"sourceChainId"`
-	ProjectID     string                 `json:"projectId"`
-	EpochID       int                    `json:"epochId"`
-	SnapshotCID   string                 `json:"snapshotCID"`
+	SourceChainID int                    `json:"sourceChainId" validate:"required"`
+	ProjectID     string                 `json:"projectId" validate:"required"`
+	EpochID       int                    `json:"epochId" validate:"required"`
+	SnapshotCID   string                 `json:"snapshotCID" validate:"required"`
 }
 
 type PowerloomSnapshotFinalizedMessage struct {
-	EpochID     int    `json:"epochId"`
-	ProjectID   string `json:"projectId"`
-	SnapshotCID string `json:"snapshotCid"`
-	Timestamp   int    `json:"timestamp"`
+	EpochID     int    `json:"epochId" validate:"required"`
+	ProjectID   string `json:"projectId" validate:"required"`
+	SnapshotCID string `json:"snapshotCid" validate:"required"`
+	Timestamp   int    `json:"timestamp" validate:"required"`
 }
 
 type PayloadCommitFinalizedMessage struct {
-	Message       *PowerloomSnapshotFinalizedMessage `json:"message"`
+	Message       *PowerloomSnapshotFinalizedMessage `json:"message" validate:"required"`
 	Web3Storage   bool                               `json:"web3Storage"`
-	SourceChainID int                                `json:"sourceChainId"`
+	SourceChainID int                                `json:"sourceChainId" validate:"required"`
 }
 
 type SnapshotRelayerPayload struct {
@@ -75,7 +75,7 @@ type SnapshotterStatusReport struct {
 type UnfinalizedSnapshot struct {
 	SnapshotCID string                 `json:"snapshotCid"`
 	Snapshot    map[string]interface{} `json:"snapshot"`
-	Expiration  int64                  `json:"expiration"`
+	TTL         int64                  `json:"ttl"`
 }
 
 type SnapshotterIssue struct {
@@ -85,4 +85,16 @@ type SnapshotterIssue struct {
 	EpochID         string `json:"epochId"`
 	TimeOfReporting string `json:"timeOfReporting"`
 	Extra           string `json:"extra"`
+}
+
+type RelayerRequest struct {
+	ProjectID   string   `json:"projectId"`
+	SnapshotCID string   `json:"snapshotCid"`
+	EpochID     int      `json:"epochId"`
+	Signature   string   `json:"signature"`
+	Request     *Request `json:"request"`
+}
+
+type Request struct {
+	Deadline uint64 `json:"deadline"`
 }

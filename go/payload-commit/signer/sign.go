@@ -10,15 +10,30 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
 	types "github.com/ethereum/go-ethereum/signer/core/apitypes"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 
+	"audit-protocol/goutils/ethclient"
 	"audit-protocol/goutils/settings"
 )
 
-func SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte, error) {
+type Service interface {
+	SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte, error)
+	GetSignerData(ethService ethclient.Service, snapshotCid, projectId string, epochId int64) (*types.TypedData, error)
+	GetPrivateKey(privateKey string) (*ecdsa.PrivateKey, error)
+}
+
+type Signer struct{
+	settingsObj *settings.SettingsObj
+}
+
+func InitService(settingsObj *settings.SettingsObj) Service {
+	return &Signer{
+		settingsObj: settingsObj,
+	}
+}
+
+func (s *Signer) SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte, error) {
 	data, _, err := types.TypedDataAndHash(*signerData)
 	if err != nil {
 		log.WithError(err).Error("failed to encode for signing")
@@ -41,15 +56,13 @@ func SignMessage(privKey *ecdsa.PrivateKey, signerData *types.TypedData) ([]byte
 	return finalSig, nil
 }
 
-func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epochId int64) (*types.TypedData, error) {
+func (s *Signer) GetSignerData(ethService ethclient.Service, snapshotCid, projectId string, epochId int64) (*types.TypedData, error) {
 	log.Debug("getting signer data")
 	var block uint64
 	var err error
 
-	settingsObj, _ := gi.Invoke[*settings.SettingsObj]()
-
 	err = backoff.Retry(func() error {
-		block, err = client.BlockNumber(context.Background())
+		block, err = ethService.BlockNumber(context.Background())
 		if err != nil {
 			log.WithError(err).Error("failed to get block number")
 
@@ -83,13 +96,13 @@ func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epoc
 			},
 		},
 		Domain: types.TypedDataDomain{
-			Name:              settingsObj.Signer.Domain.Name,
-			Version:           settingsObj.Signer.Domain.Version,
-			ChainId:           (*math.HexOrDecimal256)(math.MustParseBig256(settingsObj.Signer.Domain.ChainId)),
-			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
+			Name:              s.settingsObj.Signer.Domain.Name,
+			Version:           s.settingsObj.Signer.Domain.Version,
+			ChainId:           (*math.HexOrDecimal256)(math.MustParseBig256(s.settingsObj.Signer.Domain.ChainId)),
+			VerifyingContract: s.settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
-			"deadline":    (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(settingsObj.Signer.DeadlineBuffer))),
+			"deadline":    (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(s.settingsObj.Signer.DeadlineBuffer))),
 			"snapshotCid": snapshotCid,
 			"epochId":     (*math.HexOrDecimal256)(big.NewInt(epochId)),
 			"projectId":   projectId,
@@ -104,7 +117,7 @@ func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epoc
 	return signerData, nil
 }
 
-func GetPrivateKey(privateKey string) (*ecdsa.PrivateKey, error) {
+func (s *Signer) GetPrivateKey(privateKey string) (*ecdsa.PrivateKey, error) {
 	pkBytes, err := hex.DecodeString(privateKey)
 	if err != nil {
 		log.WithError(err).Error("failed to decode private key")

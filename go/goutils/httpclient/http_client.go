@@ -7,11 +7,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-retryablehttp"
-	"github.com/rs/dnscache"
-	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/settings"
+	"github.com/rs/dnscache"
 )
 
 var dnsResolver *dnscache.Resolver
@@ -31,12 +29,7 @@ func init() {
 
 // GetDefaultHTTPClient returns a retryablehttp.Client with default values
 // use this method for default http client needs for specific settings create custom method
-func GetDefaultHTTPClient() *retryablehttp.Client {
-	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke settings object")
-	}
-
+func GetDefaultHTTPClient(settingsObj *settings.SettingsObj) *retryablehttp.Client {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network string, addr string) (conn net.Conn, err error) {
 			host, port, err := net.SplitHostPort(addr)
