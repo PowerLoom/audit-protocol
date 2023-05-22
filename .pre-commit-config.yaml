@@ -28,3 +28,14 @@ repos:
         pass_filenames: false
         always_run: true
         verbose: true
+
+  - repo: local
+    hooks:
+      - id: testing
+        name: go test
+        entry: bash -c "cd go && go test -failfast -v ./..."
+        language: system
+        types: [bash]
+        pass_filenames: false
+        always_run: true
+        verbose: true

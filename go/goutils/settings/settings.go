@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 )
 
 type (
@@ -157,11 +156,6 @@ func ParseSettings() *SettingsObj {
 
 	SetDefaults(settingsObj)
 	log.Infof("final Settings Object being used %+v", settingsObj)
-
-	err = gi.Inject(settingsObj)
-	if err != nil {
-		log.Fatal("cannot inject the settings object", err)
-	}
 
 	return settingsObj
 }

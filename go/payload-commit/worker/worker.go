@@ -6,17 +6,15 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/remeh/sizedwaitgroup"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/taskmgr"
-	rabbitmqMgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	workerInterface "audit-protocol/goutils/taskmgr/worker"
-	"audit-protocol/payload-commit/service"
+	pcService "audit-protocol/payload-commit/service"
 )
 
 type Worker struct {
-	service  *service.PayloadCommitService
+	service  pcService.Service
 	taskmgr  taskmgr.TaskMgr
 	settings *settings.SettingsObj
 }
@@ -90,34 +88,18 @@ func (w *Worker) ConsumeTask() error {
 	}
 }
 
-// should be implemented by all the workers
-var _ workerInterface.Worker = (*Worker)(nil)
-
 // NewWorker creates a new *Worker listening for pruning tasks published by service responsible for creating segments
 // a single Worker has capability to run multiple tasks concurrently using go routines.
 // running multiple instances of this whole service will create multiple workers which can horizontally scale the service.
-func NewWorker() *Worker {
-	pcService, err := gi.Invoke[*service.PayloadCommitService]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke payload commit service")
-	}
-
-	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke settings")
-	}
-
-	mgr, err := gi.Invoke[*rabbitmqMgr.RabbitmqTaskMgr]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke rabbitmq task manager")
-	}
-
+func NewWorker(settingsObj *settings.SettingsObj, pcService pcService.Service, mgr taskmgr.TaskMgr) workerInterface.Worker {
 	return &Worker{service: pcService, settings: settingsObj, taskmgr: mgr}
 }
 
-func (w *Worker) ShutdownWorker() {
+func (w *Worker) ShutdownWorker() error {
 	err := w.taskmgr.Shutdown(context.Background())
 	if err != nil {
 		log.WithError(err).Error("failed to shutdown the worker")
 	}
+
+	return err
 }

@@ -24,9 +24,9 @@ func main() {
 
 	settingsObj := settings.ParseSettings()
 
-	ipfsClient := ipfsutils.InitClient(
+	ipfsService := ipfsutils.InitService(
 		settingsObj.IpfsConfig.URL,
-		settingsObj.IpfsConfig.IPFSRateLimiter,
+		settingsObj,
 		settingsObj.IpfsConfig.Timeout,
 	)
 
@@ -36,7 +36,7 @@ func main() {
 
 	// Run every 7days
 	cronId, err := cronRunner.AddFunc(settingsObj.Pruning.CronFrequency, func() {
-		prune(settingsObj, ipfsClient)
+		_ = prune(settingsObj, ipfsService)
 	})
 	if err != nil {
 		log.WithError(err).Fatal("failed to add pruning cron job")
@@ -50,13 +50,15 @@ func main() {
 	select {}
 }
 
-func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
+func prune(settingsObj *settings.SettingsObj, ipfsService ipfsutils.Service) error {
 	log.Debug("pruning started")
 
 	// get all files from local disk cache.
 	dirEntries, err := os.ReadDir(settingsObj.LocalCachePath)
 	if err != nil {
 		log.WithError(err).Error("failed to read local cache dir")
+
+		return err
 	}
 
 	cidsToUnpin := make([]string, 0)
@@ -148,7 +150,7 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 		go func(cidToUnpin string) {
 			defer wg.Done()
 
-			err = client.Unpin(cidToUnpin)
+			err = ipfsService.Unpin(cidToUnpin)
 			if err != nil {
 				log.WithField("cid", cidToUnpin).WithError(err).Error("failed to unpin cid")
 
@@ -162,6 +164,8 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 		log.Debug("removing file: ", file)
 
 		go func(fileToRemove string) {
+			defer wg.Done()
+
 			err = os.Remove(fileToRemove)
 			if err != nil {
 				log.WithField("file", fileToRemove).WithError(err).Error("failed to remove file")
@@ -175,4 +179,6 @@ func prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 
 	log.Info("ipfs unpinning completed")
 	log.Info("local disk cleanup completed")
+
+	return nil
 }

@@ -6,19 +6,12 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 )
 
 type LocalDiskCache struct{}
 
-var _ DiskCache = (*LocalDiskCache)(nil)
-
-func InitDiskCache() *LocalDiskCache {
+func InitDiskCache() DiskCache {
 	l := new(LocalDiskCache)
-
-	if err := gi.Inject(l); err != nil {
-		log.Fatal("Failed to inject disk cache", err)
-	}
 
 	return l
 }

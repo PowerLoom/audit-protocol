@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
-	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/redisutils"
@@ -20,20 +19,8 @@ type RedisCache struct {
 	redisClient *redis.Client
 }
 
-var _ DbCache = (*RedisCache)(nil)
-
-func NewRedisCache() *RedisCache {
-	client, err := gi.Invoke[*redis.Client]()
-	if err != nil {
-		log.Fatal("Failed to invoke redis client", err)
-	}
-
+func NewRedisCache(client *redis.Client) DbCache {
 	cache := &RedisCache{redisClient: client}
-
-	err = gi.Inject(cache)
-	if err != nil {
-		log.Fatal("Failed to inject redis cache", err)
-	}
 
 	return cache
 }
@@ -132,10 +119,10 @@ func (r *RedisCache) StoreProjects(background context.Context, projects []string
 }
 
 // AddUnfinalizedSnapshotCID adds the given snapshot cid to the given project's zset.
-func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage) error {
+func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage, ttl int64) error {
 	p := new(datamodel.UnfinalizedSnapshot)
 
-	p.Expiration = time.Now().Unix() + 3600*24 // 1 day
+	p.TTL = ttl // 1 day
 	p.SnapshotCID = msg.SnapshotCID
 
 	p.Snapshot = msg.Message
@@ -182,7 +169,7 @@ func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamod
 			continue
 		}
 
-		if float64(m.Expiration) < float64(time.Now().Unix()) {
+		if m.TTL < time.Now().Unix() {
 			err = r.redisClient.ZRem(ctx, key, member.Member).Err()
 			if err != nil {
 				log.WithError(err).Error("failed to remove expired snapshot cid from zset")

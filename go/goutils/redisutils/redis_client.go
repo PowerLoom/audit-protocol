@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/swagftw/gi"
-
 	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 )
@@ -31,12 +29,6 @@ func InitRedisClient(redisHost string, port int, redisDb int, poolSize int, pass
 	}
 
 	log.Info("Connected successfully to Redis and received ", pong, " back")
-
-	// exit if injection fails
-	err = gi.Inject(redisClient)
-	if err != nil {
-		log.Fatalln("Failed to inject redis client", err)
-	}
 
 	return redisClient
 }
