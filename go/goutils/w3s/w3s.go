@@ -68,6 +68,10 @@ func InitW3S() *W3S {
 func (w *W3S) UploadToW3s(msg interface{}) (string, error) {
 	log.Debug("uploading payload commit message to web3 storage")
 
+	if w.settingsObj.Web3Storage.URL == "" {
+		return "", nil
+	}
+
 	reqURL := w.settingsObj.Web3Storage.URL + w.settingsObj.Web3Storage.UploadURLSuffix
 
 	payloadCommit, err := json.Marshal(msg)

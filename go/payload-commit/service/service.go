@@ -452,7 +452,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 		return fmt.Errorf("failed to upload to ipfs and web3 storage")
 	}
 
-	if ipfsUploadErr != nil && w3sUploadErr == nil {
+	if ipfsUploadErr != nil && w3sUploadErr == nil && snapshotCid != "" {
 		msg.SnapshotCID = snapshotCid
 
 		return nil
