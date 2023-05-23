@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ipfs/go-cid"
+	"github.com/remeh/sizedwaitgroup"
 	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/goutils/ipfsutils"
@@ -33,13 +33,17 @@ func main() {
 
 	settingsObj := settings.ParseSettings()
 
+	settingsObj.LocalCachePath = "/tmp"
+
 	// state export's file path
 	log.Info("reading state file")
 
-	contents, err := os.ReadFile("../state.json")
+	contents, err := os.ReadFile("/tmp/state.json")
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	ipfsClient := ipfsutils.InitClient(settingsObj.IpfsConfig.URL, settingsObj.IpfsConfig.IPFSRateLimiter, settingsObj.IpfsConfig.Timeout)
 
 	state := new(State)
 
@@ -79,46 +83,26 @@ func main() {
 		}
 	}
 
-	ipfsClient := ipfsutils.InitClient(settingsObj.IpfsConfig.URL, settingsObj.IpfsConfig.IPFSRateLimiter, settingsObj.IpfsConfig.Timeout)
-
-	err = os.MkdirAll(settingsObj.LocalCachePath, 0755)
-	if err != nil {
-		log.WithError(err).Fatal("failed to create cache dir")
-	}
-
-	wg := new(sync.WaitGroup)
+	wg := sizedwaitgroup.New(settingsObj.Concurrency)
 
 	for project, cids := range projectToCIDsMapping {
 		// storing snapshots locally
 		dirPath := filepath.Join(settingsObj.LocalCachePath, project, "snapshots")
 
-		err = os.MkdirAll(dirPath, 0755)
-		if err != nil {
-			log.WithError(err).Error("failed to create project cache dir", project)
-
-			continue
-		}
-
-		log.Info("creating project cache files")
+		log.WithField("projectId", project).Info("creating project cache files")
 
 		for _, c := range cids {
+			wg.Add()
+
 			go func(cid cid.Cid) {
-				wg.Add(1)
 				defer wg.Done()
 
-				filePath := filepath.Join(dirPath, c.String()+".json")
-
-				err = os.WriteFile(filePath, []byte(c.String()), 0644)
-				if err != nil {
-					log.WithError(err).Error("failed to write cid to file", c.String())
-
-					return
-				}
+				filePath := filepath.Join(dirPath, cid.String()+".json")
 
 				// change mod time of file to simulate as old files
-				err = os.Chtimes(filePath, time.Now().AddDate(0, 0, -(settingsObj.Pruning.LocalDiskMaxAge+2)), time.Now().AddDate(0, 0, -(settingsObj.Pruning.LocalDiskMaxAge+2)))
+				err = os.Chtimes(filePath, time.Now().AddDate(0, 0, -(settingsObj.Pruning.LocalDiskMaxAge+2)), time.Now().AddDate(0, 0, -(settingsObj.Pruning.LocalDiskMaxAge+2))) // +2 is just buffer
 				if err != nil {
-					log.WithError(err).Error("failed to change file mod time", c.String())
+					log.WithError(err).Error("failed to change file mod time", cid.String())
 
 					return
 				}

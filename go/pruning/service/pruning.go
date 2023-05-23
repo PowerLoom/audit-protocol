@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"github.com/remeh/sizedwaitgroup"
 	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/goutils/ipfsutils"
@@ -107,38 +108,56 @@ func Prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 	}
 
 	// unpin all the cids.
-	wg := sync.WaitGroup{}
-	for _, c := range cidsToUnpin {
+	wg := new(sync.WaitGroup)
+	go func() {
+		swg := sizedwaitgroup.New(settingsObj.Concurrency)
 		wg.Add(1)
-		log.Debug("unpinning cid: ", c)
 
-		go func(cidToUnpin string) {
-			defer wg.Done()
+		defer wg.Done()
 
-			err = client.Unpin(cidToUnpin)
-			if err != nil {
-				log.WithField("cid", cidToUnpin).WithError(err).Error("failed to unpin cid")
+		for _, c := range cidsToUnpin {
+			swg.Add()
+			log.Debug("unpinning cid: ", c)
 
-				return
-			}
-		}(c)
-	}
+			go func(cidToUnpin string) {
+				defer swg.Done()
 
-	for _, file := range filesToRemove {
+				err = client.Unpin(cidToUnpin)
+				if err != nil {
+					log.WithField("cid", cidToUnpin).WithError(err).Error("failed to unpin cid")
+
+					return
+				}
+			}(c)
+		}
+
+		swg.Wait()
+	}()
+
+	go func() {
+		swg := sizedwaitgroup.New(settingsObj.Concurrency)
 		wg.Add(1)
-		log.Debug("removing file: ", file)
 
-		go func(fileToRemove string) {
-			defer wg.Done()
+		defer wg.Done()
 
-			err = os.Remove(fileToRemove)
-			if err != nil {
-				log.WithField("file", fileToRemove).WithError(err).Error("failed to remove file")
+		for _, file := range filesToRemove {
+			swg.Add()
+			log.Debug("removing file: ", file)
 
-				return
-			}
-		}(file)
-	}
+			go func(fileToRemove string) {
+				defer swg.Done()
+
+				err = os.Remove(fileToRemove)
+				if err != nil {
+					log.WithField("file", fileToRemove).WithError(err).Error("failed to remove file")
+
+					return
+				}
+			}(file)
+		}
+
+		swg.Wait()
+	}()
 
 	wg.Wait()
 
