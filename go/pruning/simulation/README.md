@@ -1,17 +1,23 @@
 # Running simulation for the Pruning service
 
-### Prerequisites
+## Prerequisites
 
 1. Docker should be installed
 2. IPFS node running on docker with exposed port `5001`
 3. Golang should be installed
 
-### Running simulation
+## Running simulation
 
-For running simulation first we export states of the source instance which is already running PowerLoom system.
-States here are `protocol state` and `ipfs local cache`
+To run simulation, first we export states of the source instance which is already running PowerLoom system.
+States here are `protocol state`, `ipfs local cache` and `local disk cache`
 
-1. Run `pre_simulation_setup.sh` to setup the environment for pruning
+### Run `pre_simulation_setup.sh` to setup the environment for pruning
+
+Pre simulation setup script will export the above-mentioned states from source instance and copy them to the current instance.
+
+- gets protocol state from pooler service
+- gets ipfs local cache from source ipfs instance
+- gets local disk cache from audit-protocol service's local cache (which contains snapshot files <cid.json>)
 
 ```shell
 cd audit-protocol/go/pruning/simulation
@@ -21,7 +27,7 @@ cd audit-protocol/go/pruning/simulation
 ./pre_simulation_setup.sh -s host@ip -n name_of_ipfs_container
 ```
 
-2. Run `simulation.go` to run the simulation
+### Run `simulation.go` to run the pruning simulation
 
 ```shell
 cd audit-protocol/go/pruning/simulation
@@ -33,3 +39,5 @@ CONFIG_PATH="../../../" LOCAL_TESTING=true go run simulation.go
 # make sure to change the host of ipfs url in settings.json accordingly
 CONFIG_PATH="../../../" go run simulation.go
 ```
+
+*NOTE: depending on the size of the data, simulation can take a long time to complete as ipfs unpinning is slow*
