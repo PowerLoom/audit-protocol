@@ -137,6 +137,10 @@ func (i *IssueReporter) ReportOnSlack(issue []byte) {
 }
 
 func (i *IssueReporter) ReportToOffchainConsensus(issue []byte) {
+	if i.settingsObj.Reporting.OffchainConsensusIssueEndpoint == "" {
+		return
+	}
+
 	req, err := retryablehttp.NewRequest(http.MethodPost, i.settingsObj.Reporting.OffchainConsensusIssueEndpoint, bytes.NewBuffer(issue))
 	if err != nil {
 		log.WithError(err).Error("failed to create request to slack webhook url")

@@ -47,7 +47,7 @@ type (
 	}
 
 	IpfsConfig struct {
-		URL             string       `json:"url"`
+		URL             string       `json:"url" validate:"required"`
 		ReaderURL       string       `json:"reader_url"`
 		IPFSRateLimiter *RateLimiter `json:"write_rate_limit,omitempty"`
 		Timeout         int          `json:"timeout"`

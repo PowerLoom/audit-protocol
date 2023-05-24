@@ -4,7 +4,7 @@
   "anchor_chain_rpc_url": "https://rpc-url",
   "local_cache_path": "/home/ubuntu/local_cache/",
   "concurrency": 20,
-  "worker_concurrency": 5,
+  "worker_concurrency": 100,
   "http_client": {
     "max_idle_conns": 5,
     "max_conns_per_host": 5,

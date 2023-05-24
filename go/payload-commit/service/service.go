@@ -196,8 +196,6 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			WithField("messageId", msg.ProjectID).
 			WithField("snapshotCid", msg.SnapshotCID).
 			WithError(err).Error("failed to store snapshot cid in redis")
-
-		return err
 	}
 
 	// sign payload commit message (eip712 signature)
@@ -268,8 +266,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	unfinalizedSnapshot, err := s.redisCache.GetSnapshotAtEpochID(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
 	if err != nil {
 		log.WithError(err).Error("failed to get snapshot cid from redis")
-
-		return err
 	}
 
 	var report *datamodel.SnapshotterStatusReport
@@ -452,7 +448,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 		return fmt.Errorf("failed to upload to ipfs and web3 storage")
 	}
 
-	if ipfsUploadErr != nil && w3sUploadErr == nil {
+	if ipfsUploadErr != nil && w3sUploadErr == nil && snapshotCid != "" {
 		msg.SnapshotCID = snapshotCid
 
 		return nil

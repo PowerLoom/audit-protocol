@@ -60,6 +60,12 @@ func InitClient(url string, rateLimiter *settings.RateLimiter, timeoutSecs int) 
 		log.Fatalln("Failed to inject dependencies", err)
 	}
 
+	// check if ipfs connection is successful
+	_, _, err := client.ipfsClient.Version()
+	if err != nil {
+		log.WithError(err).Fatal("failed to connect to IPFS daemon")
+	}
+
 	return client
 }
 
