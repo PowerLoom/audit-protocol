@@ -507,7 +507,10 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 		SnapshotCID string `json:"snapshotCid"`
 		EpochID     int    `json:"epochId"`
 		Request     struct {
-			Deadline uint64 `json:"deadline"`
+			Deadline    uint64 `json:"deadline"`
+			SnapshotCid string `json:"snapshotCid"`
+			EpochId     int    `json:"epochId"`
+			ProjectId   string `json:"projectId"`
 		} `json:"request"`
 		Signature string `json:"signature"`
 	}
@@ -517,9 +520,15 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 		SnapshotCID: payload.SnapshotCID,
 		EpochID:     payload.EpochID,
 		Request: struct {
-			Deadline uint64 `json:"deadline"`
+			Deadline    uint64 `json:"deadline"`
+			SnapshotCid string `json:"snapshotCid"`
+			EpochId     int    `json:"epochId"`
+			ProjectId   string `json:"projectId"`
 		}{
-			Deadline: (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
+			Deadline:    (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
+			SnapshotCid: payload.SnapshotCID,
+			EpochId:     payload.EpochID,
+			ProjectId:   payload.ProjectID,
 		},
 		Signature: "0x" + payload.Signature,
 	}
