@@ -26,6 +26,7 @@ type TxManager struct {
 	ChainID     *big.Int
 	settingsObj *settings.SettingsObj
 	ethClient   *ethclient.Client
+	gasPrice    *big.Int
 }
 
 func NewNonceManager() *TxManager {
@@ -44,11 +45,17 @@ func NewNonceManager() *TxManager {
 		log.WithError(err).Fatal("failed to get chain id")
 	}
 
+	gasPrice, err := ethClient.SuggestGasPrice(context.Background())
+	if err != nil {
+		gasPrice = big.NewInt(10000000)
+	}
+
 	txMgr := &TxManager{
 		Mu:          sync.Mutex{},
 		ChainID:     chainId,
 		settingsObj: settingsObj,
 		ethClient:   ethClient,
+		gasPrice:    gasPrice,
 	}
 
 	txMgr.Nonce = txMgr.getNonce(ethClient)
@@ -76,18 +83,11 @@ func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.
 
 	deadline := signerData.Message["deadline"].(*math.HexOrDecimal256)
 
-	gasPrice, err := t.ethClient.SuggestGasPrice(context.Background())
-	if err != nil {
-		log.WithError(err).Error("failed to get gas price")
-
-		return err
-	}
-
 	signedTx, err := api.SubmitSnapshot(
 		&bind.TransactOpts{
 			Nonce:    big.NewInt(int64(t.Nonce)),
 			Value:    big.NewInt(0),
-			GasPrice: gasPrice,
+			GasPrice: t.gasPrice,
 			GasLimit: 2000000,
 			From:     common.HexToAddress(t.settingsObj.Signer.AccountAddress),
 			Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
@@ -110,7 +110,8 @@ func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.
 			EpochId:     big.NewInt(int64(msg.EpochID)),
 			ProjectId:   msg.ProjectID,
 		},
-		signature)
+		signature,
+	)
 
 	if err != nil {
 		log.WithError(err).Error("failed to submit snapshot")
