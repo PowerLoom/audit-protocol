@@ -109,11 +109,13 @@ func Prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 
 	// unpin all the cids.
 	wg := new(sync.WaitGroup)
-	go func() {
-		swg := sizedwaitgroup.New(settingsObj.Concurrency)
-		wg.Add(1)
 
+	wg.Add(1)
+
+	go func() {
 		defer wg.Done()
+
+		swg := sizedwaitgroup.New(settingsObj.Concurrency)
 
 		for _, c := range cidsToUnpin {
 			swg.Add()
@@ -134,9 +136,10 @@ func Prune(settingsObj *settings.SettingsObj, client *ipfsutils.IpfsClient) {
 		swg.Wait()
 	}()
 
+	wg.Add(1)
+
 	go func() {
 		swg := sizedwaitgroup.New(settingsObj.Concurrency)
-		wg.Add(1)
 
 		defer wg.Done()
 
