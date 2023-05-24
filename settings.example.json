@@ -31,8 +31,8 @@
     "url": "/dns/ipfs/tcp/5001",
     "reader_url": "/dns/ipfs/tcp/5001",
     "write_rate_limit": {
-      "req_per_sec": 10,
-      "burst": 10
+      "req_per_sec": 130,
+      "burst": 1
     },
     "timeout": 20,
     "timeout_secs": 30,
@@ -60,7 +60,7 @@
     "idle_conn_timeout": 0,
     "rate_limit": {
       "req_per_sec": 3,
-      "burst": 6
+      "burst": 1
     }
   },
   "signer": {
