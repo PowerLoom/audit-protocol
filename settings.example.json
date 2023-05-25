@@ -34,8 +34,7 @@
       "req_per_sec": 130,
       "burst": 1
     },
-    "timeout": 20,
-    "timeout_secs": 30,
+    "timeout": 120,
     "max_idle_conns": 5,
     "idle_conn_timeout": 0
   },

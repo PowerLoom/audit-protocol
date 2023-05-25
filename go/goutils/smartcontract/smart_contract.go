@@ -1,11 +1,15 @@
 package smartcontract
 
 import (
+	"context"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
+	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/settings"
 	contractApi "audit-protocol/goutils/smartcontract/api"
 )
@@ -19,17 +23,21 @@ func InitContractAPI() *contractApi.ContractApi {
 		log.Fatal("failed to invoke settings object")
 	}
 
-	client, err := ethclient.Dial(settingsObj.AnchorChainRPCURL)
+	httpClient := httpclient.GetDefaultHTTPClient()
+
+	rpClient, err := rpc.DialOptions(context.Background(), settingsObj.AnchorChainRPCURL, rpc.WithHTTPClient(httpClient.HTTPClient))
 	if err != nil {
-		log.WithError(err).Fatal("failed to init eth client")
+		log.WithError(err).Fatal("failed to init rpc client")
 	}
 
-	err = gi.Inject(client)
+	ethClient := ethclient.NewClient(rpClient)
+
+	err = gi.Inject(ethClient)
 	if err != nil {
 		log.WithError(err).Fatal("failed to inject eth client")
 	}
 
-	apiConn, err := contractApi.NewContractApi(common.HexToAddress(settingsObj.Signer.Domain.VerifyingContract), client)
+	apiConn, err := contractApi.NewContractApi(common.HexToAddress(settingsObj.Signer.Domain.VerifyingContract), ethClient)
 	if err != nil {
 		log.WithError(err).Fatal("failed to init api connection")
 	}

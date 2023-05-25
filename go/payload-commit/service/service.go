@@ -51,6 +51,7 @@ type PayloadCommitService struct {
 	txManager     *transactions.TxManager
 	privKey       *ecdsa.PrivateKey
 	issueReporter *reporting.IssueReporter
+	httpClient    *retryablehttp.Client
 }
 
 // InitPayloadCommitService initializes the payload commit service.
@@ -106,6 +107,7 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		txManager:     transactions.NewNonceManager(),
 		privKey:       privKey,
 		issueReporter: reporter,
+		httpClient:    httpclient.GetDefaultHTTPClient(),
 	}
 
 	_ = pcService.initLocalCachedData()
@@ -387,10 +389,12 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 
 	wg := sync.WaitGroup{}
 
-	wg.Add(1)
-
 	// upload to ipfs
 	var ipfsUploadErr error
+
+	ipfsErrChan := make(chan error)
+
+	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
@@ -408,7 +412,12 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 
 		if ipfsUploadErr != nil {
 			log.WithError(ipfsUploadErr).Error("failed to upload snapshot to ipfs after max retries")
+			ipfsErrChan <- ipfsUploadErr
+
+			return
 		}
+
+		ipfsErrChan <- nil
 	}()
 
 	// upload to web3 storage
@@ -421,7 +430,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 		wg.Add(1)
 
 		go func() {
-			wg.Done()
+			defer wg.Done()
 
 			w3sUploadErr = backoff.Retry(func() error {
 				snapshotCid, w3sUploadErr = s.web3sClient.UploadToW3s(msg.Message)
@@ -438,20 +447,19 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 		}()
 	}
 
-	wg.Wait()
+	// if ipfs upload fails, wait for web3 storage upload to finish if msg.Web3Storage flag is true
+	if err := <-ipfsErrChan; err != nil {
+		if msg.Web3Storage {
+			wg.Wait()
 
-	if ipfsUploadErr != nil && !msg.Web3Storage {
-		return fmt.Errorf("failed to upload to ipfs")
-	}
+			if w3sUploadErr != nil || snapshotCid == "" {
+				return fmt.Errorf("failed to upload to ipfs and web3 storage")
+			}
 
-	if ipfsUploadErr != nil && w3sUploadErr != nil {
-		return fmt.Errorf("failed to upload to ipfs and web3 storage")
-	}
-
-	if ipfsUploadErr != nil && w3sUploadErr == nil && snapshotCid != "" {
-		msg.SnapshotCID = snapshotCid
-
-		return nil
+			msg.SnapshotCID = snapshotCid
+		} else {
+			return fmt.Errorf("failed to upload to ipfs")
+		}
 	}
 
 	return nil
@@ -529,8 +537,6 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 		Signature: "0x" + payload.Signature,
 	}
 
-	httpClient := httpclient.GetDefaultHTTPClient()
-
 	// url = "host+port" ; endpoint = "/endpoint"
 	url := *s.settingsObj.Relayer.Host + *s.settingsObj.Relayer.Endpoint
 
@@ -550,7 +556,7 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 
 	req.Header.Add("Content-Type", "application/json")
 
-	res, err := httpClient.Do(req)
+	res, err := s.httpClient.Do(req)
 	if err != nil {
 		log.WithError(err).Error("failed to send request to relayer")
 

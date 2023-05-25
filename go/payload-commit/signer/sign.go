@@ -52,6 +52,8 @@ func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epoc
 		block, err = client.BlockNumber(context.Background())
 		if err != nil {
 			log.WithError(err).Error("failed to get block number")
+
+			return err
 		}
 
 		log.Info("block number fetched: ", block)

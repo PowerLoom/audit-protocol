@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/remeh/sizedwaitgroup"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
@@ -48,13 +47,7 @@ func (w *Worker) ConsumeTask() error {
 		}
 	}()
 
-	// create a wait group to wait for previous the tasks to finish.
-	// limit number of concurrent tasks per Worker
-	swg := sizedwaitgroup.New(w.settings.WorkerConcurrency)
-
 	for {
-		swg.Add()
-
 		// as task chan is buffered channel, we can use it as a semaphore to limit the number of concurrent tasks.
 		taskHandler := <-taskChan
 
@@ -81,12 +74,7 @@ func (w *Worker) ConsumeTask() error {
 					log.WithError(err).Error("failed to ack the message")
 				}
 			}
-
-			swg.Done()
 		}(taskHandler)
-
-		// wait till all the previous tasks are finished.
-		swg.Wait()
 	}
 }
 

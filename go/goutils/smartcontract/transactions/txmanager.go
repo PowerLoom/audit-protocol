@@ -76,50 +76,65 @@ func (t *TxManager) getNonce(ethClient *ethclient.Client) uint64 {
 // SubmitSnapshot submits a snapshot to the smart contract
 func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.PrivateKey, signerData *apitypes.TypedData, msg *datamodel.SnapshotRelayerPayload, signature []byte) error {
 	t.Mu.Lock()
-	defer func() {
-		t.Nonce++
-		t.Mu.Unlock()
-	}()
 
 	deadline := signerData.Message["deadline"].(*math.HexOrDecimal256)
 
-	signedTx, err := api.SubmitSnapshot(
-		&bind.TransactOpts{
-			Nonce:    big.NewInt(int64(t.Nonce)),
-			Value:    big.NewInt(0),
-			GasPrice: t.gasPrice,
-			GasLimit: 2000000,
-			From:     common.HexToAddress(t.settingsObj.Signer.AccountAddress),
-			Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
-				signedTx, err := types.SignTx(transaction, types.NewEIP155Signer(t.ChainID), privKey)
-				if err != nil {
-					log.WithError(err).Error("failed to sign transaction for snapshot")
+	var submitSnapshotErr error
+	var signedTx *types.Transaction
 
-					return nil, err
-				}
+	wg := sync.WaitGroup{}
 
-				return signedTx, nil
+	wg.Add(1)
+
+	go func(nonce uint64) {
+		defer wg.Done()
+
+		signedTx, submitSnapshotErr = api.SubmitSnapshot(
+			&bind.TransactOpts{
+				Nonce:    big.NewInt(int64(nonce)),
+				Value:    big.NewInt(0),
+				GasPrice: t.gasPrice,
+				GasLimit: 2000000,
+				From:     common.HexToAddress(t.settingsObj.Signer.AccountAddress),
+				Signer: func(address common.Address, transaction *types.Transaction) (*types.Transaction, error) {
+					signedTx, err := types.SignTx(transaction, types.NewEIP155Signer(t.ChainID), privKey)
+					if err != nil {
+						log.WithError(err).Error("failed to sign transaction for snapshot")
+
+						return nil, err
+					}
+
+					return signedTx, nil
+				},
 			},
-		},
-		msg.SnapshotCID,
-		big.NewInt(int64(msg.EpochID)),
-		msg.ProjectID,
-		contractApi.PowerloomProtocolStateRequest{
-			Deadline:    (*big.Int)(deadline),
-			SnapshotCid: msg.SnapshotCID,
-			EpochId:     big.NewInt(int64(msg.EpochID)),
-			ProjectId:   msg.ProjectID,
-		},
-		signature,
-	)
+			msg.SnapshotCID,
+			big.NewInt(int64(msg.EpochID)),
+			msg.ProjectID,
+			contractApi.PowerloomProtocolStateRequest{
+				Deadline:    (*big.Int)(deadline),
+				SnapshotCid: msg.SnapshotCID,
+				EpochId:     big.NewInt(int64(msg.EpochID)),
+				ProjectId:   msg.ProjectID,
+			},
+			signature,
+		)
 
-	if err != nil {
-		log.WithError(err).Error("failed to submit snapshot")
+		if submitSnapshotErr == nil && signedTx != nil {
+			log.WithField("txHash", signedTx.Hash().Hex()).Info("snapshot submitted successfully")
+		}
 
-		return err
+	}(t.Nonce)
+
+	t.Nonce++
+	t.Mu.Unlock()
+
+	wg.Wait()
+
+	if submitSnapshotErr != nil {
+		log.WithError(submitSnapshotErr).Error("failed to submit snapshot")
+
+		return submitSnapshotErr
 	}
-
-	log.WithField("txHash", signedTx.Hash().Hex()).Info("snapshot submitted successfully")
 
 	return nil
 }
