@@ -25,7 +25,6 @@ func main() {
 		cron.Recover(cron.DefaultLogger),
 	))
 
-	// Run every 7days
 	cronId, err := cronRunner.AddFunc(settingsObj.Pruning.CronFrequency, func() {
 		pruning.Prune(settingsObj, ipfsClient)
 	})

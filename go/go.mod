@@ -11,6 +11,7 @@ require (
 	github.com/ipfs/go-cid v0.4.1
 	github.com/ipfs/go-ipfs-api v0.6.0
 	github.com/multiformats/go-multiaddr v0.9.0
+	github.com/remeh/sizedwaitgroup v1.0.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/dnscache v0.0.0-20211102005908-e0241e321417
 	github.com/sirupsen/logrus v1.9.2
