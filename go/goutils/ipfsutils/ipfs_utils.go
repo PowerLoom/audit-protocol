@@ -124,7 +124,7 @@ func (client *IpfsClient) GetSnapshotFromIPFS(snapshotCID string, outputPath str
 		return err
 	}
 
-	log.Debug("successfully fetched snapshot message from ipfs and wrote in local disk")
+	log.WithField("cid", snapshotCID).Debug("successfully fetched snapshot message from ipfs and wrote in local disk")
 
 	return nil
 }
