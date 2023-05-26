@@ -47,12 +47,14 @@ type (
 	}
 
 	IpfsConfig struct {
-		URL             string       `json:"url" validate:"required"`
-		ReaderURL       string       `json:"reader_url"`
-		IPFSRateLimiter *RateLimiter `json:"write_rate_limit,omitempty"`
-		Timeout         int          `json:"timeout"`
-		MaxIdleConns    int          `json:"max_idle_conns"`
-		IdleConnTimeout int          `json:"idle_conn_timeout"`
+		URL              string       `json:"url" validate:"required"`
+		ReaderURL        string       `json:"reader_url"`
+		IPFSRateLimiter  *RateLimiter `json:"write_rate_limit,omitempty"`
+		Timeout          int          `json:"timeout"`
+		MaxIdleConns     int          `json:"max_idle_conns"`
+		IdleConnTimeout  int          `json:"idle_conn_timeout"`
+		ProjectApiKey    string       `json:"project_api_key"`
+		ProjectApiSecret string       `json:"project_api_secret"`
 	}
 
 	Redis struct {
@@ -96,6 +98,7 @@ type (
 		MaxConnsPerHost     int `json:"max_conns_per_host"`
 		MaxIdleConnsPerHost int `json:"max_idle_conns_per_host"`
 		IdleConnTimeout     int `json:"idle_conn_timeout"`
+		ConnectionTimeout   int `json:"connection_timeout"`
 	}
 
 	Reporting struct {

@@ -24,22 +24,26 @@ type IpfsClient struct {
 }
 
 // InitClient initializes the IPFS client.
-func InitClient(url string, rateLimiter *settings.RateLimiter, timeoutSecs int) *IpfsClient {
+func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
+	url := settingsObj.IpfsConfig.URL
+
 	url = ParseMultiAddrURL(url)
 
-	ipfsHTTPClient := httpclient.GetDefaultHTTPClient()
+	ipfsHTTPClient := httpclient.GetIPFSHTTPClient(settingsObj)
 
 	log.Debug("initializing the IPFS client with IPFS Daemon URL:", url)
 
 	client := new(IpfsClient)
-	client.ipfsClient = shell.NewShellWithClient(url, ipfsHTTPClient.HTTPClient)
-	timeout := time.Duration(timeoutSecs * int(time.Second))
+	client.ipfsClient = shell.NewShellWithClient(url, ipfsHTTPClient)
+	timeout := time.Duration(settingsObj.IpfsConfig.Timeout * int(time.Second))
 	client.ipfsClient.SetTimeout(timeout)
 
 	log.Debugf("setting IPFS timeout of %f seconds", timeout.Seconds())
 
 	tps := rate.Limit(10) // 10 TPS
 	burst := 10
+
+	rateLimiter := settingsObj.IpfsConfig.IPFSRateLimiter
 
 	if rateLimiter != nil {
 		burst = rateLimiter.Burst
@@ -61,10 +65,12 @@ func InitClient(url string, rateLimiter *settings.RateLimiter, timeoutSecs int) 
 	}
 
 	// check if ipfs connection is successful
-	_, _, err := client.ipfsClient.Version()
+	version, commit, err := client.ipfsClient.Version()
 	if err != nil {
 		log.WithError(err).Fatal("failed to connect to IPFS daemon")
 	}
+
+	log.Infof("connected to IPFS daemon with version %s and commit %s", version, commit)
 
 	return client
 }
@@ -72,6 +78,14 @@ func InitClient(url string, rateLimiter *settings.RateLimiter, timeoutSecs int) 
 func ParseMultiAddrURL(url string) string {
 	if _, err := ma.NewMultiaddr(url); err == nil {
 		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+	}
+
+	if strings.Contains(url, "localhost") {
+		return url
+	}
+
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "https://" + url
 	}
 
 	return url

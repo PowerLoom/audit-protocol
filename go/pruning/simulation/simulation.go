@@ -43,7 +43,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ipfsClient := ipfsutils.InitClient(settingsObj.IpfsConfig.URL, settingsObj.IpfsConfig.IPFSRateLimiter, settingsObj.IpfsConfig.Timeout)
+	ipfsClient := ipfsutils.InitClient(settingsObj)
 
 	state := new(State)
 

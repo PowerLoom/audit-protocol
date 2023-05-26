@@ -107,7 +107,7 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		txManager:     transactions.NewNonceManager(),
 		privKey:       privKey,
 		issueReporter: reporter,
-		httpClient:    httpclient.GetDefaultHTTPClient(),
+		httpClient:    httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout),
 	}
 
 	_ = pcService.initLocalCachedData()

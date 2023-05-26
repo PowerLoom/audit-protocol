@@ -31,13 +31,41 @@ func init() {
 
 // GetDefaultHTTPClient returns a retryablehttp.Client with default values
 // use this method for default http client needs for specific settings create custom method
-func GetDefaultHTTPClient() *retryablehttp.Client {
+func GetDefaultHTTPClient(timeout int) *retryablehttp.Client {
 	settingsObj, err := gi.Invoke[*settings.SettingsObj]()
 	if err != nil {
 		log.WithError(err).Fatal("failed to invoke settings object")
 	}
 
-	transport := &http.Transport{
+	rawHTTPClient := &http.Client{
+		Transport: getDefaultHTTPTransport(settingsObj),
+		Timeout:   time.Duration(timeout) * time.Second,
+	}
+
+	retryableHTTPClient := retryablehttp.NewClient()
+	retryableHTTPClient.RetryMax = 5
+	retryableHTTPClient.HTTPClient = rawHTTPClient
+
+	return retryableHTTPClient
+}
+
+func GetIPFSHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
+	if settingsObj.IpfsConfig.ProjectApiKey == "" || settingsObj.IpfsConfig.ProjectApiSecret == "" {
+		return GetDefaultHTTPClient(settingsObj.IpfsConfig.Timeout).HTTPClient
+	}
+
+	return &http.Client{
+		Transport: ipfsAuthTransport{
+			RoundTripper:  getDefaultHTTPTransport(settingsObj),
+			ProjectId:     settingsObj.IpfsConfig.ProjectApiKey,
+			ProjectSecret: settingsObj.IpfsConfig.ProjectApiSecret,
+		},
+		Timeout: time.Duration(settingsObj.IpfsConfig.Timeout) * time.Second,
+	}
+}
+
+func getDefaultHTTPTransport(settingsObj *settings.SettingsObj) *http.Transport {
+	return &http.Transport{
 		DialContext: func(ctx context.Context, network string, addr string) (conn net.Conn, err error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -64,14 +92,17 @@ func GetDefaultHTTPClient() *retryablehttp.Client {
 		MaxIdleConnsPerHost: settingsObj.HttpClient.MaxIdleConnsPerHost,
 		IdleConnTimeout:     time.Duration(settingsObj.HttpClient.IdleConnTimeout) * time.Second,
 	}
+}
 
-	rawHTTPClient := &http.Client{
-		Transport: transport,
-	}
+// ipfsAuthTransport decorates each request with a basic auth header.
+type ipfsAuthTransport struct {
+	http.RoundTripper
+	ProjectId     string
+	ProjectSecret string
+}
 
-	retryableHTTPClient := retryablehttp.NewClient()
-	retryableHTTPClient.RetryMax = 5
-	retryableHTTPClient.HTTPClient = rawHTTPClient
+func (t ipfsAuthTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r.SetBasicAuth(t.ProjectId, t.ProjectSecret)
 
-	return retryableHTTPClient
+	return t.RoundTripper.RoundTrip(r)
 }

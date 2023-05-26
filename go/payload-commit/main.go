@@ -22,11 +22,7 @@ func main() {
 
 	settingsObj := settings.ParseSettings()
 
-	ipfsutils.InitClient(
-		settingsObj.IpfsConfig.URL,
-		settingsObj.IpfsConfig.IPFSRateLimiter,
-		settingsObj.IpfsConfig.Timeout,
-	)
+	ipfsutils.InitClient(settingsObj)
 
 	redisClient := redisutils.InitRedisClient(
 		settingsObj.Redis.Host,

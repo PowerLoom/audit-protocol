@@ -35,7 +35,7 @@ type IssueReporter struct {
 
 func InitIssueReporter(settingsObj *settings.SettingsObj) *IssueReporter {
 	client := &IssueReporter{
-		httpClient:       httpclient.GetDefaultHTTPClient(),
+		httpClient:       httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout),
 		slackRateLimiter: rate.NewLimiter(1, 1),
 		settingsObj:      settingsObj,
 	}
