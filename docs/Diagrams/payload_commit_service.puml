@@ -1,0 +1,53 @@
+@startuml "Payload commit service"
+autonumber
+
+participant "payload_commit_service" as pcs
+participant relayer
+participant smart_contract
+queue rabbitmq
+database redis
+database local_disk as disk
+database ipfs
+database web3_storage
+
+group snapshot payload message
+    rabbitmq -> pcs: received snapshot payload message
+
+    pcs -> ipfs: store snapshot payload
+
+    alt check message payload for upload to web3_storage  flag
+        pcs -> web3_storage: store snapshot payload
+    end
+
+    pcs -> redis: store unfinalized snapshot cid against epochId for the project with timestamp
+
+    note over pcs: create EIP-712 signature for smart contract transaction
+    alt relayer is enabled in config
+        pcs -> relayer: send EIP-712 signature
+    else relayer is disabled in config
+        pcs -> smart_contract: send EIP-712 signature directly to contract
+    end
+end
+
+group snapshot finalized message
+    rabbitmq -> pcs: received snapshot finalized message
+
+    pcs -> redis: get snapshot cid against epochId for the project
+
+    alt stored snapshotCid == finalized snapshotCid
+        pcs -> local_disk: store snapshot data
+
+    else stored snapshotCid != finalized snapshotCid
+        pcs -> ipfs: unpin unfinalized snapshotCid
+        pcs -> ipfs: get snapshot for finalized cid
+
+        pcs -> local_disk: store fetched snapshot data
+    end
+
+    pcs -> redis: prune unfinalized snapshotCid older than 7 days
+
+    pcs -> redis: generate and store snapshotter report
+    note left: [project wise]\ntotal missed snapshots count\ntotal successful snapshots count\nstatus report
+end
+
+@enduml
