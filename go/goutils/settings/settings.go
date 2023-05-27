@@ -191,4 +191,14 @@ func SetDefaults(settingsObj *SettingsObj) {
 	if privKey != "" {
 		settingsObj.Signer.PrivateKey = privKey
 	}
+
+	ipfsProjectApiKey := os.Getenv("IPFS_PROJECT_API_KEY")
+	if ipfsProjectApiKey != "" {
+		settingsObj.IpfsConfig.ProjectApiKey = ipfsProjectApiKey
+	}
+
+	ipfsProjectApiSecret := os.Getenv("IPFS_PROJECT_API_SECRET")
+	if ipfsProjectApiSecret != "" {
+		settingsObj.IpfsConfig.ProjectApiSecret = ipfsProjectApiSecret
+	}
 }
