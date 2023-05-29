@@ -311,7 +311,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		// if stored snapshot cid does not match with finalized snapshot cid, fetch snapshot from ipfs and store in local disk.
 		log.Debug("cached snapshot cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
-		s.issueReporter.Report(
+		go s.issueReporter.Report(
 			reporting.SubmittedIncorrectSnapshotIssue,
 			msg.Message.ProjectID,
 			strconv.Itoa(msg.Message.EpochID),

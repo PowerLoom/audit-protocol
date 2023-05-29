@@ -76,6 +76,7 @@ type (
 		Port     int    `json:"port"`
 		Db       int    `json:"db"`
 		Password string `json:"password"`
+		PoolSize int    `json:"pool_size"`
 	}
 
 	Web3Storage struct {

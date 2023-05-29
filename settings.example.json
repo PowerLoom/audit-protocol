@@ -55,13 +55,15 @@
     "host": "redis",
     "port": 6379,
     "db": 0,
-    "password": null
+    "password": null,
+    "pool_size": 10
   },
   "redis_reader": {
     "host": "redis",
     "port": 6379,
     "db": 0,
-    "password": null
+    "password": null,
+    "pool_size": 10
   },
   "web3_storage": {
     "url": "https://api.web3.storage",
