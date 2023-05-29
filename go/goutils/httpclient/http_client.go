@@ -49,16 +49,31 @@ func GetDefaultHTTPClient(timeout int) *retryablehttp.Client {
 	return retryableHTTPClient
 }
 
-func GetIPFSHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
-	if settingsObj.IpfsConfig.ProjectApiKey == "" || settingsObj.IpfsConfig.ProjectApiSecret == "" {
+func GetIPFSWriteHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
+	if settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiKey == "" || settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiSecret == "" {
 		return GetDefaultHTTPClient(settingsObj.IpfsConfig.Timeout).HTTPClient
 	}
 
 	return &http.Client{
 		Transport: ipfsAuthTransport{
 			RoundTripper:  getDefaultHTTPTransport(settingsObj),
-			ProjectId:     settingsObj.IpfsConfig.ProjectApiKey,
-			ProjectSecret: settingsObj.IpfsConfig.ProjectApiSecret,
+			ProjectKey:    settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiKey,
+			ProjectSecret: settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiSecret,
+		},
+		Timeout: time.Duration(settingsObj.IpfsConfig.Timeout) * time.Second,
+	}
+}
+
+func GetIPFSReadHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
+	if settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiKey == "" || settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiSecret == "" {
+		return GetDefaultHTTPClient(settingsObj.IpfsConfig.Timeout).HTTPClient
+	}
+
+	return &http.Client{
+		Transport: ipfsAuthTransport{
+			RoundTripper:  getDefaultHTTPTransport(settingsObj),
+			ProjectKey:    settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiKey,
+			ProjectSecret: settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiSecret,
 		},
 		Timeout: time.Duration(settingsObj.IpfsConfig.Timeout) * time.Second,
 	}
@@ -97,12 +112,12 @@ func getDefaultHTTPTransport(settingsObj *settings.SettingsObj) *http.Transport 
 // ipfsAuthTransport decorates each request with a basic auth header.
 type ipfsAuthTransport struct {
 	http.RoundTripper
-	ProjectId     string
+	ProjectKey    string
 	ProjectSecret string
 }
 
 func (t ipfsAuthTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	r.SetBasicAuth(t.ProjectId, t.ProjectSecret)
+	r.SetBasicAuth(t.ProjectKey, t.ProjectSecret)
 
 	return t.RoundTripper.RoundTrip(r)
 }

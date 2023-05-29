@@ -31,12 +31,22 @@
   "ipfs": {
     "url": "/dns/ipfs/tcp/5001",
     "reader_url": "/dns/ipfs/tcp/5001",
+    "reader_auth_config": {
+      "project_api_key": "ipfs-project-id",
+      "project_api_secret": "ipfs-project-secret"
+    },
+    "writer_auth_config": {
+      "project_api_key": "ipfs-project-id",
+      "project_api_secret": "ipfs-project-secret"
+    },
     "write_rate_limit": {
       "req_per_sec": 130,
       "burst": 1
     },
-    "project_api_key": "ipfs-project-id",
-    "project_api_secret": "ipfs-project-secret",
+    "read_rate_limit": {
+      "req_per_sec": 1200,
+      "burst": 1
+    },
     "timeout": 120,
     "max_idle_conns": 5,
     "idle_conn_timeout": 0

@@ -47,14 +47,20 @@ type (
 	}
 
 	IpfsConfig struct {
-		URL              string       `json:"url" validate:"required"`
-		ReaderURL        string       `json:"reader_url"`
-		IPFSRateLimiter  *RateLimiter `json:"write_rate_limit,omitempty"`
-		Timeout          int          `json:"timeout"`
-		MaxIdleConns     int          `json:"max_idle_conns"`
-		IdleConnTimeout  int          `json:"idle_conn_timeout"`
-		ProjectApiKey    string       `json:"project_api_key"`
-		ProjectApiSecret string       `json:"project_api_secret"`
+		URL              string          `json:"url" validate:"required"`
+		ReaderURL        string          `json:"reader_url"`
+		WriteRateLimiter *RateLimiter    `json:"write_rate_limit,omitempty"`
+		ReadRateLimiter  *RateLimiter    `json:"read_rate_limit,omitempty"`
+		Timeout          int             `json:"timeout"`
+		MaxIdleConns     int             `json:"max_idle_conns"`
+		IdleConnTimeout  int             `json:"idle_conn_timeout"`
+		ReaderAuthConfig *IPFSAuthConfig `json:"reader_auth_config"`
+		WriterAuthConfig *IPFSAuthConfig `json:"writer_auth_config"`
+	}
+
+	IPFSAuthConfig struct {
+		ProjectApiKey    string `json:"project_api_key"`
+		ProjectApiSecret string `json:"project_api_secret"`
 	}
 
 	Redis struct {
@@ -192,13 +198,23 @@ func SetDefaults(settingsObj *SettingsObj) {
 		settingsObj.Signer.PrivateKey = privKey
 	}
 
-	ipfsProjectApiKey := os.Getenv("IPFS_PROJECT_API_KEY")
-	if ipfsProjectApiKey != "" {
-		settingsObj.IpfsConfig.ProjectApiKey = ipfsProjectApiKey
+	ipfsReaderProjectApiKey := os.Getenv("IPFS_READER_PROJECT_API_KEY")
+	if ipfsReaderProjectApiKey != "" {
+		settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiKey = ipfsReaderProjectApiKey
 	}
 
-	ipfsProjectApiSecret := os.Getenv("IPFS_PROJECT_API_SECRET")
-	if ipfsProjectApiSecret != "" {
-		settingsObj.IpfsConfig.ProjectApiSecret = ipfsProjectApiSecret
+	ipfsReaderProjectApiSecret := os.Getenv("IPFS_READER_PROJECT_API_SECRET")
+	if ipfsReaderProjectApiSecret != "" {
+		settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiSecret = ipfsReaderProjectApiSecret
+	}
+
+	ipfsWriterProjectApiKey := os.Getenv("IPFS_WRITER_PROJECT_API_KEY")
+	if ipfsWriterProjectApiKey != "" {
+		settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiKey = ipfsWriterProjectApiKey
+	}
+
+	ipfsWriterProjectApiSecret := os.Getenv("IPFS_WRITER_PROJECT_API_SECRET")
+	if ipfsWriterProjectApiSecret != "" {
+		settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiSecret = ipfsWriterProjectApiSecret
 	}
 }
