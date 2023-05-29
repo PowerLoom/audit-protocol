@@ -30,10 +30,18 @@ type IpfsClient struct {
 // InitClient initializes the IPFS client.
 func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
 	writeUrl := settingsObj.IpfsConfig.URL
-	writeUrl = ParseMultiAddrURL(writeUrl)
+
+	writeUrl, err := ParseMultiAddrURL(writeUrl)
+	if err != nil {
+		log.WithError(err).Fatal("failed to parse IPFS write URL: ", writeUrl)
+	}
 
 	readUrl := settingsObj.IpfsConfig.ReaderURL
-	readUrl = ParseMultiAddrURL(readUrl)
+
+	readUrl, err = ParseMultiAddrURL(readUrl)
+	if err != nil {
+		log.WithError(err).Fatal("failed to parse IPFS read URL: ", readUrl)
+	}
 
 	ipfsReadHTTPClient := httpclient.GetIPFSReadHTTPClient(settingsObj)
 	ipfsWriteHTTPClient := httpclient.GetIPFSWriteHTTPClient(settingsObj)
@@ -112,7 +120,7 @@ func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
 	return client
 }
 
-func ParseMultiAddrURL(url string) string {
+func ParseMultiAddrURL(url string) (string, error) {
 	if _, err := ma.NewMultiaddr(url); err == nil {
 		urlSplits := strings.Split(url, "/")
 
@@ -120,12 +128,14 @@ func ParseMultiAddrURL(url string) string {
 		url = net.JoinHostPort(urlSplits[2], urlSplits[4])
 
 		// check if scheme is present
-		if len(urlSplits) >= 6 {
+		if len(urlSplits) >= 6 && urlSplits[5] != "" {
 			url = fmt.Sprintf("%s://%s", urlSplits[5], url)
 		}
+	} else {
+		return "", err
 	}
 
-	return url
+	return url, nil
 }
 
 func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadCommitMessage) error {
