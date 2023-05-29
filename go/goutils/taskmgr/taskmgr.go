@@ -9,6 +9,13 @@ import (
 	"audit-protocol/goutils/taskmgr/worker"
 )
 
+const (
+	TaskSuffix      string = "task"
+	DataSuffix      string = ".Data"
+	FinalizedSuffix string = ".Finalized"
+	DLXSuffix       string = "dlx"
+)
+
 // TaskMgr interface is used to publish and consume tasks.
 // can be implemented by rabbitmq, kafka, webhooks etc.
 type TaskMgr interface {
@@ -20,20 +27,30 @@ type TaskMgr interface {
 	// in http webhook, we need to create a new http server listening on a port and configured path, etc.
 	// we need workerType to identify which worker is consuming the tasks and depending on the worker type,
 	// we can create configure for consumer initialization.
-	Consume(ctx context.Context, workerType worker.Type, msgChan chan TaskHandler, errChan chan error) error
+	Consume(ctx context.Context, workerType worker.Type, msgChan chan TaskHandler) error
+
+	Shutdown(ctx context.Context) error
 }
 
 type TaskHandler interface {
 	GetBody() []byte
+	GetTopic() string
 	Ack() error
 	Nack(requeue bool) error
 }
 
 type Task struct {
-	Msg interface{} // this is original message type from broker, e.g. amqp.Delivery, kafka.Message, simple http request body, etc.
+	Msg   interface{} // this is original message type from broker, e.g. amqp.Delivery, kafka.Message, simple http request body, etc.
+	Topic string
 }
 
-func (t Task) GetBody() []byte {
+var _ TaskHandler = (*Task)(nil)
+
+func (t *Task) GetTopic() string {
+	return t.Topic
+}
+
+func (t *Task) GetBody() []byte {
 	switch msg := t.Msg.(type) {
 	case amqp.Delivery:
 		return msg.Body
@@ -42,7 +59,7 @@ func (t Task) GetBody() []byte {
 	}
 }
 
-func (t Task) Ack() error {
+func (t *Task) Ack() error {
 	switch msg := t.Msg.(type) {
 	case amqp.Delivery:
 		return msg.Ack(false)
@@ -51,7 +68,7 @@ func (t Task) Ack() error {
 	}
 }
 
-func (t Task) Nack(requeue bool) error {
+func (t *Task) Nack(requeue bool) error {
 	switch msg := t.Msg.(type) {
 	case amqp.Delivery:
 		return msg.Nack(false, requeue)

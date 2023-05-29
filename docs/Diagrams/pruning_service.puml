@@ -1,0 +1,18 @@
+@startuml "pruning_service"
+
+participant "pruning_service" as ps
+participant cron
+database ipfs
+database local_disk
+
+ps -> cron: create cron entry according to config (default every 7days)
+
+group cron job triggered
+    ps -> local_disk: read all snapshot cids older than configured max age (default 7days)
+
+    ps -> ipfs: unpin snapshot cids
+
+    ps -> local_disk: delete snapshot files from disk which are older than configured max age (default 7days)
+end
+
+@enduml
