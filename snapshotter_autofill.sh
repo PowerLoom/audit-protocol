@@ -1,7 +1,6 @@
 #!/bin/bash
 
 #This script is run from high level docker-compose. Refer to https://github.com/PowerLoom/deploy
-source .env
 set -e
 
 echo 'populating setting from environment values...';
