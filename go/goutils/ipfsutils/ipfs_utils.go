@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -27,26 +29,26 @@ type IpfsClient struct {
 
 // InitClient initializes the IPFS client.
 func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
-	url := settingsObj.IpfsConfig.URL
+	writeUrl := settingsObj.IpfsConfig.URL
+	writeUrl = ParseMultiAddrURL(writeUrl)
 
-	url = ParseMultiAddrURL(url)
+	readUrl := settingsObj.IpfsConfig.ReaderURL
+	readUrl = ParseMultiAddrURL(readUrl)
 
 	ipfsReadHTTPClient := httpclient.GetIPFSReadHTTPClient(settingsObj)
 	ipfsWriteHTTPClient := httpclient.GetIPFSWriteHTTPClient(settingsObj)
-
-	log.Debug("initializing the IPFS client with IPFS Daemon URL:", url)
 
 	client := new(IpfsClient)
 	timeout := time.Duration(settingsObj.IpfsConfig.Timeout * int(time.Second))
 
 	// init read client
-	client.readClient = shell.NewShellWithClient(url, ipfsReadHTTPClient)
+	client.readClient = shell.NewShellWithClient(readUrl, ipfsReadHTTPClient)
 	client.readClient.SetTimeout(timeout)
 
 	log.Debugf("setting IPFS read client timeout of %f seconds", timeout.Seconds())
 
 	// init write client
-	client.writeClient = shell.NewShellWithClient(url, ipfsWriteHTTPClient)
+	client.writeClient = shell.NewShellWithClient(writeUrl, ipfsWriteHTTPClient)
 	client.writeClient.SetTimeout(timeout)
 
 	tps := rate.Limit(10) // 10 TPS
@@ -112,15 +114,15 @@ func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
 
 func ParseMultiAddrURL(url string) string {
 	if _, err := ma.NewMultiaddr(url); err == nil {
-		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
-	}
+		urlSplits := strings.Split(url, "/")
 
-	if strings.Contains(url, "localhost") {
-		return url
-	}
+		// join host and port
+		url = net.JoinHostPort(urlSplits[2], urlSplits[4])
 
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		url = "https://" + url
+		// check if scheme is present
+		if len(urlSplits) >= 6 {
+			url = fmt.Sprintf("%s://%s", urlSplits[5], url)
+		}
 	}
 
 	return url
