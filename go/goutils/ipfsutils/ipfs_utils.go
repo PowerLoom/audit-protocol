@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
+	"fmt"
+	"net"
 	"time"
 
 	shell "github.com/ipfs/go-ipfs-api"
@@ -27,26 +28,34 @@ type IpfsClient struct {
 
 // InitClient initializes the IPFS client.
 func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
-	url := settingsObj.IpfsConfig.URL
+	writeUrl := settingsObj.IpfsConfig.URL
 
-	url = ParseMultiAddrURL(url)
+	writeUrl, err := ParseMultiAddrURL(writeUrl)
+	if err != nil {
+		log.WithError(err).Fatal("failed to parse IPFS write multiaddr URL: ", writeUrl)
+	}
+
+	readUrl := settingsObj.IpfsConfig.ReaderURL
+
+	readUrl, err = ParseMultiAddrURL(readUrl)
+	if err != nil {
+		log.WithError(err).Fatal("failed to parse IPFS read multiaddr URL: ", readUrl)
+	}
 
 	ipfsReadHTTPClient := httpclient.GetIPFSReadHTTPClient(settingsObj)
 	ipfsWriteHTTPClient := httpclient.GetIPFSWriteHTTPClient(settingsObj)
-
-	log.Debug("initializing the IPFS client with IPFS Daemon URL:", url)
 
 	client := new(IpfsClient)
 	timeout := time.Duration(settingsObj.IpfsConfig.Timeout * int(time.Second))
 
 	// init read client
-	client.readClient = shell.NewShellWithClient(url, ipfsReadHTTPClient)
+	client.readClient = shell.NewShellWithClient(readUrl, ipfsReadHTTPClient)
 	client.readClient.SetTimeout(timeout)
 
 	log.Debugf("setting IPFS read client timeout of %f seconds", timeout.Seconds())
 
 	// init write client
-	client.writeClient = shell.NewShellWithClient(url, ipfsWriteHTTPClient)
+	client.writeClient = shell.NewShellWithClient(writeUrl, ipfsWriteHTTPClient)
 	client.writeClient.SetTimeout(timeout)
 
 	tps := rate.Limit(10) // 10 TPS
@@ -110,20 +119,63 @@ func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
 	return client
 }
 
-func ParseMultiAddrURL(url string) string {
-	if _, err := ma.NewMultiaddr(url); err == nil {
-		url = strings.Split(url, "/")[2] + ":" + strings.Split(url, "/")[4]
+type UnsupportedMultiaddrError struct {
+	URL string
+}
+
+func (e *UnsupportedMultiaddrError) Error() string {
+	return fmt.Sprintf("unsupported multiaddr url pattern: %s", e.URL)
+}
+
+func ParseMultiAddrURL(url string) (string, error) {
+	parts := make([]string, 0) // [host,port,scheme]
+
+	if multiaddr, err := ma.NewMultiaddr(url); err == nil {
+		addrSplits := ma.Split(multiaddr)
+
+		// host and port are required
+		if len(addrSplits) < 2 {
+			return "", &UnsupportedMultiaddrError{URL: url}
+		}
+
+		for index, addr := range addrSplits {
+			component, _ := ma.SplitFirst(addr)
+			if index == 1 && component.Protocol().Code != ma.P_TCP {
+				return "", &UnsupportedMultiaddrError{URL: url}
+			}
+
+			// check if scheme is present
+			if index == 2 {
+				if component.Protocol().Code != ma.P_HTTP && component.Protocol().Code != ma.P_HTTPS {
+					return "", &UnsupportedMultiaddrError{URL: url}
+				}
+
+				parts = append(parts, component.Protocol().Name)
+
+				continue
+			}
+
+			parts = append(parts, component.Value())
+		}
+
+		if len(parts) < 2 {
+			return "", &UnsupportedMultiaddrError{URL: url}
+		}
+
+		// join host and port
+		url = net.JoinHostPort(parts[0], parts[1])
+
+		// add scheme if present
+		if len(parts) >= 3 {
+			url = fmt.Sprintf("%s://%s", parts[2], url)
+		} else {
+			url = fmt.Sprintf("http://%s", url) // default to http if scheme is not present
+		}
+	} else {
+		return "", err
 	}
 
-	if strings.Contains(url, "localhost") {
-		return url
-	}
-
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		url = "https://" + url
-	}
-
-	return url
+	return url, nil
 }
 
 func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadCommitMessage) error {
