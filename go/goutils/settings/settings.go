@@ -47,12 +47,20 @@ type (
 	}
 
 	IpfsConfig struct {
-		URL             string       `json:"url" validate:"required"`
-		ReaderURL       string       `json:"reader_url"`
-		IPFSRateLimiter *RateLimiter `json:"write_rate_limit,omitempty"`
-		Timeout         int          `json:"timeout"`
-		MaxIdleConns    int          `json:"max_idle_conns"`
-		IdleConnTimeout int          `json:"idle_conn_timeout"`
+		URL              string          `json:"url" validate:"required"`
+		ReaderURL        string          `json:"reader_url"`
+		WriteRateLimiter *RateLimiter    `json:"write_rate_limit,omitempty"`
+		ReadRateLimiter  *RateLimiter    `json:"read_rate_limit,omitempty"`
+		Timeout          int             `json:"timeout"`
+		MaxIdleConns     int             `json:"max_idle_conns"`
+		IdleConnTimeout  int             `json:"idle_conn_timeout"`
+		ReaderAuthConfig *IPFSAuthConfig `json:"reader_auth_config"`
+		WriterAuthConfig *IPFSAuthConfig `json:"writer_auth_config"`
+	}
+
+	IPFSAuthConfig struct {
+		ProjectApiKey    string `json:"project_api_key"`
+		ProjectApiSecret string `json:"project_api_secret"`
 	}
 
 	Redis struct {
@@ -68,6 +76,7 @@ type (
 		Port     int    `json:"port"`
 		Db       int    `json:"db"`
 		Password string `json:"password"`
+		PoolSize int    `json:"pool_size"`
 	}
 
 	Web3Storage struct {
@@ -96,6 +105,7 @@ type (
 		MaxConnsPerHost     int `json:"max_conns_per_host"`
 		MaxIdleConnsPerHost int `json:"max_idle_conns_per_host"`
 		IdleConnTimeout     int `json:"idle_conn_timeout"`
+		ConnectionTimeout   int `json:"connection_timeout"`
 	}
 
 	Reporting struct {
@@ -187,5 +197,25 @@ func SetDefaults(settingsObj *SettingsObj) {
 	privKey := os.Getenv("PRIVATE_KEY")
 	if privKey != "" {
 		settingsObj.Signer.PrivateKey = privKey
+	}
+
+	ipfsReaderProjectApiKey := os.Getenv("IPFS_READER_PROJECT_API_KEY")
+	if ipfsReaderProjectApiKey != "" {
+		settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiKey = ipfsReaderProjectApiKey
+	}
+
+	ipfsReaderProjectApiSecret := os.Getenv("IPFS_READER_PROJECT_API_SECRET")
+	if ipfsReaderProjectApiSecret != "" {
+		settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiSecret = ipfsReaderProjectApiSecret
+	}
+
+	ipfsWriterProjectApiKey := os.Getenv("IPFS_WRITER_PROJECT_API_KEY")
+	if ipfsWriterProjectApiKey != "" {
+		settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiKey = ipfsWriterProjectApiKey
+	}
+
+	ipfsWriterProjectApiSecret := os.Getenv("IPFS_WRITER_PROJECT_API_SECRET")
+	if ipfsWriterProjectApiSecret != "" {
+		settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiSecret = ipfsWriterProjectApiSecret
 	}
 }

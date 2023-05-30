@@ -23,7 +23,7 @@ func InitContractAPI() *contractApi.ContractApi {
 		log.Fatal("failed to invoke settings object")
 	}
 
-	httpClient := httpclient.GetDefaultHTTPClient()
+	httpClient := httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout)
 
 	rpClient, err := rpc.DialOptions(context.Background(), settingsObj.AnchorChainRPCURL, rpc.WithHTTPClient(httpClient.HTTPClient))
 	if err != nil {

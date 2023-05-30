@@ -107,7 +107,7 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		txManager:     transactions.NewNonceManager(),
 		privKey:       privKey,
 		issueReporter: reporter,
-		httpClient:    httpclient.GetDefaultHTTPClient(),
+		httpClient:    httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout),
 	}
 
 	_ = pcService.initLocalCachedData()
@@ -311,7 +311,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		// if stored snapshot cid does not match with finalized snapshot cid, fetch snapshot from ipfs and store in local disk.
 		log.Debug("cached snapshot cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
-		s.issueReporter.Report(
+		go s.issueReporter.Report(
 			reporting.SubmittedIncorrectSnapshotIssue,
 			msg.Message.ProjectID,
 			strconv.Itoa(msg.Message.EpochID),
