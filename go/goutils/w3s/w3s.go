@@ -52,7 +52,7 @@ func InitW3S(settingsObj *settings.SettingsObj) Service {
 	w := &W3S{
 		limiter:           rateLimiter,
 		settingsObj:       settingsObj,
-		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj),
+		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj.Web3Storage.Timeout, settingsObj),
 	}
 
 	return w

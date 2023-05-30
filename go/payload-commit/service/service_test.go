@@ -3,26 +3,21 @@ package service
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"math/big"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
-	"audit-protocol/caching"
 	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/ethclient"
-	"audit-protocol/goutils/ipfsutils"
-	"audit-protocol/goutils/reporting"
+	"audit-protocol/goutils/mock"
 	"audit-protocol/goutils/settings"
-	"audit-protocol/goutils/smartcontract"
 	"audit-protocol/goutils/taskmgr"
-	w3storage "audit-protocol/goutils/w3s"
-	"audit-protocol/payload-commit/signer"
 )
 
 func initSettings() *settings.SettingsObj {
@@ -61,161 +56,100 @@ func initSettings() *settings.SettingsObj {
 	}
 }
 
-type MockRedisCache struct{}
+func getPrivateKey() *ecdsa.PrivateKey {
+	privateKey, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 
-func (m MockRedisCache) GetSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.UnfinalizedSnapshot, error) {
-	return &datamodel.UnfinalizedSnapshot{
-		SnapshotCID: "snapshotCID",
-		Snapshot: map[string]interface{}{
-			"snapshot": "snapshot",
-		},
-		TTL: 123,
-	}, nil
-}
-
-var _ caching.DbCache = &MockRedisCache{}
-
-func (m MockRedisCache) GetStoredProjects(ctx context.Context) ([]string, error) {
-	return []string{"project1", "project2"}, nil
-}
-
-func (m MockRedisCache) CheckIfProjectExists(ctx context.Context, projectID string) (bool, error) {
-	return true, nil
-}
-
-func (m MockRedisCache) StoreProjects(background context.Context, projects []string) error {
-	return nil
-}
-
-func (m MockRedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage, ttl int64) error {
-	return nil
-}
-
-func (m MockRedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error {
-	return nil
-}
-
-type MockEthClient struct{}
-
-func (m MockEthClient) ChainID(ctx context.Context) (*big.Int, error) {
-	return big.NewInt(1), nil
-}
-
-func (m MockEthClient) PendingNonceAt(ctx context.Context, account common.Address) (uint64, error) {
-	return 1, nil
-}
-
-func (m MockEthClient) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
-	return big.NewInt(1), nil
-}
-
-func (m MockEthClient) BlockNumber(ctx context.Context) (uint64, error) {
-	return 1, nil
-}
-
-var _ ethclient.Service = &MockEthClient{}
-
-type MockReporter struct{}
-
-func (m MockReporter) Report(issueType reporting.IssueType, projectID string, epochID string, extra map[string]interface{}) {
-	return
-}
-
-var _ reporting.Service = &MockReporter{}
-
-type MockIPFSService struct{}
-
-func (m MockIPFSService) UploadSnapshotToIPFS(snapshot *datamodel.PayloadCommitMessage) error {
-	return nil
-}
-
-func (m MockIPFSService) GetSnapshotFromIPFS(snapshotCID string, outputPath string) error {
-	return nil
-}
-
-func (m MockIPFSService) Unpin(cid string) error {
-	return nil
-}
-
-var _ ipfsutils.Service = &MockIPFSService{}
-
-type MockDiskCache struct{}
-
-func (m MockDiskCache) Read(filepath string) ([]byte, error) {
-	return []byte("hello world!"), nil
-
-}
-
-func (m MockDiskCache) Write(filepath string, data []byte) error {
-	return nil
-}
-
-var _ caching.DiskCache = &MockDiskCache{}
-
-type MockWeb3Storage struct{}
-
-func (m MockWeb3Storage) UploadToW3s(msg interface{}) (string, error) {
-	return "w3sCID", nil
-}
-
-var _ w3storage.Service = &MockWeb3Storage{}
-
-type MockContractAPIService struct{}
-
-func (m MockContractAPIService) SubmitSnapshotToContract(nonce uint64, privKey *ecdsa.PrivateKey, gasPrice, chainId *big.Int, accountAddress string, deadline *math.HexOrDecimal256, msg *datamodel.SnapshotRelayerPayload, signature []byte) (*types.Transaction, error) {
-	to := common.HexToAddress("0x6FC64a0356Ebb41F88cd31e69A5C16e35DFFaDd1")
-	return types.NewTx(&types.LegacyTx{
-		Nonce:    1,
-		GasPrice: big.NewInt(1),
-		Gas:      1,
-		To:       &to,
-		Value:    big.NewInt(1),
-		Data:     nil,
-		V:        nil,
-		R:        nil,
-		S:        nil,
-	}), nil
-}
-
-func (m MockContractAPIService) GetProjects() ([]string, error) {
-	return []string{"project1", "project2"}, nil
-}
-
-var _ smartcontract.Service = &MockContractAPIService{}
-
-type MockSignerService struct{}
-
-func (m MockSignerService) SignMessage(privKey *ecdsa.PrivateKey, signerData *apitypes.TypedData) ([]byte, error) {
-	return []byte("signature"), nil
-}
-
-func (m MockSignerService) GetSignerData(ethService ethclient.Service, snapshotCid, projectId string, epochId int64) (*apitypes.TypedData, error) {
-	return &apitypes.TypedData{}, nil
-}
-
-func (m MockSignerService) GetPrivateKey(privateKey string) (*ecdsa.PrivateKey, error) {
-	return nil, nil
-}
-
-var _ signer.Service = &MockSignerService{}
-
-func initPayloadCommitService() Service {
-	settingsObj := initSettings()
-
-	mockRedisCache := new(MockRedisCache)
-	mockEthClientService := new(MockEthClient)
-	mockReportingService := new(MockReporter)
-	mockIPfsService := new(MockIPFSService)
-	mockDiskCache := new(MockDiskCache)
-	mockWeb3Storage := new(MockWeb3Storage)
-	mockContractAPIService := new(MockContractAPIService)
-	mockSignerService := new(MockSignerService)
-
-	return InitPayloadCommitService(settingsObj, mockRedisCache, mockEthClientService, mockReportingService, mockIPfsService, mockDiskCache, mockWeb3Storage, mockContractAPIService, mockSignerService)
+	return privateKey
 }
 
 func TestPayloadCommitService_Run(t *testing.T) {
-	pcService := initPayloadCommitService()
+	settingsObj := initSettings()
+
+	mockRedisCache := new(mock.RedisMock)
+	mockEthClientService := new(mock.EthServiceMock)
+	mockReportingService := new(mock.ReportingServiceMock)
+	mockIPfsService := new(mock.IPFSServiceMock)
+	mockDiskCache := new(mock.DiskMock)
+	mockWeb3Storage := new(mock.W3SMock)
+	mockContractAPIService := new(mock.SmartContractAPIMock)
+	mockSignerService := new(mock.SignerMock)
+	mockTxManager := new(mock.TxManagerMock)
+
+	mockSignerService.GetPrivateKeyMock = func(string) (*ecdsa.PrivateKey, error) {
+		// generate private key
+
+		return getPrivateKey(), nil
+	}
+
+	mockEthClientService.ChainIDMock = func(context.Context) (*big.Int, error) {
+		return big.NewInt(100), nil
+	}
+
+	mockEthClientService.SuggestGasPriceMock = func(context.Context) (*big.Int, error) {
+		return big.NewInt(100), nil
+	}
+
+	mockEthClientService.PendingNonceAtMock = func(context.Context, common.Address) (uint64, error) {
+		return 1, nil
+	}
+
+	mockRedisCache.GetStoredProjectsMock = func(context.Context) ([]string, error) {
+		return []string{"project1"}, nil
+	}
+
+	mockRedisCache.GetSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+		return &datamodel.UnfinalizedSnapshot{
+			SnapshotCID: "snapshotCid",
+			Snapshot:    map[string]interface{}{},
+			TTL:         time.Now().Unix(),
+		}, nil
+	}
+
+	mockIPfsService.UploadSnapshotToIPFSMock = func(message *datamodel.PayloadCommitMessage) error {
+		return nil
+	}
+
+	mockWeb3Storage.UploadToW3sMock = func(interface{}) (string, error) {
+		return "snapshotCid", nil
+	}
+
+	mockRedisCache.AddUnfinalizedSnapshotCIDMock = func(context.Context, *datamodel.PayloadCommitMessage, int64) error {
+		return nil
+	}
+
+	mockSignerService.GetSignerDataMock = func(ethclient.Service, string, string, int64) (*apitypes.TypedData, error) {
+		return &apitypes.TypedData{}, nil
+	}
+
+	mockSignerService.SignMessageMock = func(*ecdsa.PrivateKey, *apitypes.TypedData) ([]byte, error) {
+		return []byte{}, nil
+	}
+
+	mockTxManager.SubmitSnapshotToContractMock = func(*ecdsa.PrivateKey, *apitypes.TypedData, *datamodel.SnapshotRelayerPayload, []byte) error {
+		return nil
+	}
+
+	mockTxManager.SendSignatureToRelayerMock = func(*datamodel.SnapshotRelayerPayload) error {
+		return nil
+	}
+
+	mockReportingService.ReportMock = func(issueType datamodel.IssueType, projectID string, epochID string, extra map[string]interface{}) {
+		return
+	}
+
+	mockIPfsService.GetSnapshotFromIPFSMock = func(string, string) error {
+		return nil
+	}
+
+	mockIPfsService.UnpinMock = func(string) error {
+		return nil
+	}
+
+	mockRedisCache.AddSnapshotterStatusReportMock = func(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error {
+		return nil
+	}
+
+	pcService := InitPayloadCommitService(settingsObj, mockRedisCache, mockEthClientService, mockReportingService, mockIPfsService, mockDiskCache, mockWeb3Storage, mockContractAPIService, mockSignerService, mockTxManager)
 
 	payloadCommitMsg := &datamodel.PayloadCommitMessage{
 		Message:       map[string]interface{}{"hello": "world"},

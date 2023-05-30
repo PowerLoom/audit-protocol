@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 
 	"audit-protocol/goutils/settings"
+
 	"github.com/rs/dnscache"
 )
 
@@ -29,8 +30,51 @@ func init() {
 
 // GetDefaultHTTPClient returns a retryablehttp.Client with default values
 // use this method for default http client needs for specific settings create custom method
-func GetDefaultHTTPClient(settingsObj *settings.SettingsObj) *retryablehttp.Client {
-	transport := &http.Transport{
+func GetDefaultHTTPClient(timeout int, settingsObj *settings.SettingsObj) *retryablehttp.Client {
+	rawHTTPClient := &http.Client{
+		Transport: getDefaultHTTPTransport(settingsObj),
+		Timeout:   time.Duration(timeout) * time.Second,
+	}
+
+	retryableHTTPClient := retryablehttp.NewClient()
+	retryableHTTPClient.RetryMax = 5
+	retryableHTTPClient.HTTPClient = rawHTTPClient
+
+	return retryableHTTPClient
+}
+
+func GetIPFSWriteHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
+	if settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiKey == "" || settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiSecret == "" {
+		return GetDefaultHTTPClient(settingsObj.IpfsConfig.Timeout, settingsObj).HTTPClient
+	}
+
+	return &http.Client{
+		Transport: ipfsAuthTransport{
+			RoundTripper:  getDefaultHTTPTransport(settingsObj),
+			ProjectKey:    settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiKey,
+			ProjectSecret: settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiSecret,
+		},
+		Timeout: time.Duration(settingsObj.IpfsConfig.Timeout) * time.Second,
+	}
+}
+
+func GetIPFSReadHTTPClient(settingsObj *settings.SettingsObj) *http.Client {
+	if settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiKey == "" || settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiSecret == "" {
+		return GetDefaultHTTPClient(settingsObj.IpfsConfig.Timeout, settingsObj).HTTPClient
+	}
+
+	return &http.Client{
+		Transport: ipfsAuthTransport{
+			RoundTripper:  getDefaultHTTPTransport(settingsObj),
+			ProjectKey:    settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiKey,
+			ProjectSecret: settingsObj.IpfsConfig.ReaderAuthConfig.ProjectApiSecret,
+		},
+		Timeout: time.Duration(settingsObj.IpfsConfig.Timeout) * time.Second,
+	}
+}
+
+func getDefaultHTTPTransport(settingsObj *settings.SettingsObj) *http.Transport {
+	return &http.Transport{
 		DialContext: func(ctx context.Context, network string, addr string) (conn net.Conn, err error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -57,14 +101,17 @@ func GetDefaultHTTPClient(settingsObj *settings.SettingsObj) *retryablehttp.Clie
 		MaxIdleConnsPerHost: settingsObj.HttpClient.MaxIdleConnsPerHost,
 		IdleConnTimeout:     time.Duration(settingsObj.HttpClient.IdleConnTimeout) * time.Second,
 	}
+}
 
-	rawHTTPClient := &http.Client{
-		Transport: transport,
-	}
+// ipfsAuthTransport decorates each request with a basic auth header.
+type ipfsAuthTransport struct {
+	http.RoundTripper
+	ProjectKey    string
+	ProjectSecret string
+}
 
-	retryableHTTPClient := retryablehttp.NewClient()
-	retryableHTTPClient.RetryMax = 5
-	retryableHTTPClient.HTTPClient = rawHTTPClient
+func (t ipfsAuthTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r.SetBasicAuth(t.ProjectKey, t.ProjectSecret)
 
-	return retryableHTTPClient
+	return t.RoundTripper.RoundTrip(r)
 }

@@ -19,16 +19,8 @@ import (
 	"audit-protocol/goutils/settings"
 )
 
-type IssueType string
-
-const (
-	PayloadCommitInternalIssue      IssueType = "PAYLOAD_COMMIT_INTERNAL_ISSUE" // generic issue type for internal errors
-	MissedSnapshotIssue             IssueType = "MISSED_SNAPSHOT"               // when a snapshot was missed
-	SubmittedIncorrectSnapshotIssue IssueType = "SUBMITTED_INCORRECT_SNAPSHOT"  // when a snapshot was submitted but it was incorrect
-)
-
 type Service interface {
-	Report(issueType IssueType, projectID string, epochID string, extra map[string]interface{})
+	Report(issueType datamodel.IssueType, projectID string, epochID string, extra map[string]interface{})
 }
 
 type IssueReporter struct {
@@ -39,7 +31,7 @@ type IssueReporter struct {
 
 func InitIssueReporter(settingsObj *settings.SettingsObj) *IssueReporter {
 	client := &IssueReporter{
-		httpClient:       httpclient.GetDefaultHTTPClient(settingsObj),
+		httpClient:       httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout, settingsObj),
 		slackRateLimiter: rate.NewLimiter(1, 1),
 		settingsObj:      settingsObj,
 	}
@@ -47,7 +39,7 @@ func InitIssueReporter(settingsObj *settings.SettingsObj) *IssueReporter {
 	return client
 }
 
-func (i *IssueReporter) Report(issueType IssueType, projectID string, epochID string, extra map[string]interface{}) {
+func (i *IssueReporter) Report(issueType datamodel.IssueType, projectID string, epochID string, extra map[string]interface{}) {
 	extraData, err := json.Marshal(extra)
 	if err != nil {
 		log.WithError(err).Error("failed to marshal extra data")

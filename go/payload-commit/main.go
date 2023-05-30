@@ -12,6 +12,7 @@ import (
 	"audit-protocol/goutils/reporting"
 	"audit-protocol/goutils/settings"
 	"audit-protocol/goutils/smartcontract"
+	"audit-protocol/goutils/smartcontract/transactions"
 	taskmgr "audit-protocol/goutils/taskmgr/rabbitmq"
 	w3storage "audit-protocol/goutils/w3s"
 	"audit-protocol/payload-commit/service"
@@ -26,20 +27,27 @@ func main() {
 
 	ipfsService := ipfsutils.InitService(settingsObj)
 
-	redisClient := redisutils.InitRedisClient(
+	readRedisClient := redisutils.InitReaderRedisClient(
+		settingsObj.RedisReader.Host,
+		settingsObj.RedisReader.Port,
+		settingsObj.RedisReader.Db,
+		settingsObj.RedisReader.PoolSize,
+		settingsObj.RedisReader.Password,
+	)
+
+	writeRedisClient := redisutils.InitWriterRedisClient(
 		settingsObj.Redis.Host,
 		settingsObj.Redis.Port,
 		settingsObj.Redis.Db,
 		settingsObj.Redis.PoolSize,
 		settingsObj.Redis.Password,
-		-1,
 	)
 
 	ethService, ethClient := ethclient.NewClient(settingsObj)
 	reporter := reporting.InitIssueReporter(settingsObj)
 
-	redisCache := caching.NewRedisCache(redisClient)
 	contractAPIService := smartcontract.InitContractAPI(settingsObj.Signer.Domain.VerifyingContract, ethClient)
+	redisCache := caching.NewRedisCache(readRedisClient, writeRedisClient)
 
 	rabbitmqTaskMgrConn, err := taskmgr.Dial(settingsObj)
 	if err != nil {
@@ -50,6 +58,7 @@ func main() {
 	web3StorageService := w3storage.InitW3S(settingsObj)
 	diskCacheService := caching.InitDiskCache()
 	signerService := signer.InitService(settingsObj)
+	txManagerService := transactions.NewTxManager(settingsObj, ethClient, contractAPIService)
 
 	payloadCommitService := service.InitPayloadCommitService(
 		settingsObj,
@@ -61,6 +70,7 @@ func main() {
 		web3StorageService,
 		contractAPIService,
 		signerService,
+		txManagerService,
 	)
 
 	mqWorker := worker.NewWorker(settingsObj, payloadCommitService, rabbitmqTaskMgr)
@@ -74,7 +84,12 @@ func main() {
 			log.WithError(err).Error("error while shutting down worker")
 		}
 
-		err = redisClient.Close()
+		err = readRedisClient.Close()
+		if err != nil {
+			log.WithError(err).Error("error while closing redis client")
+		}
+
+		err = writeRedisClient.Close()
 		if err != nil {
 			log.WithError(err).Error("error while closing redis client")
 		}

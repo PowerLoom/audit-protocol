@@ -9,6 +9,14 @@ const (
 	IncorrectSnapshotSubmission SnapshotSubmissionState = "SUBMITTED_INCORRECT_SNAPSHOT"
 )
 
+type IssueType string
+
+const (
+	PayloadCommitInternalIssue      IssueType = "PAYLOAD_COMMIT_INTERNAL_ISSUE" // generic issue type for internal errors
+	MissedSnapshotIssue             IssueType = "MISSED_SNAPSHOT"               // when a snapshot was missed
+	SubmittedIncorrectSnapshotIssue IssueType = "SUBMITTED_INCORRECT_SNAPSHOT"  // when a snapshot was submitted but it was incorrect
+)
+
 type SummaryProjectVerificationStatus struct {
 	ProjectId     string `json:"projectId"`
 	ProjectHeight string `json:"chainHeight"`

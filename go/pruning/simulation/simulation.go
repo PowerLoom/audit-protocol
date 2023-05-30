@@ -43,7 +43,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ipfsClient := ipfsutils.InitService(settingsObj)
+	ipfsService := ipfsutils.InitService(settingsObj)
 
 	state := new(State)
 
@@ -114,7 +114,7 @@ func main() {
 	wg.Wait()
 
 	// start pruning
-	pruning.Prune(settingsObj, ipfsClient)
+	pruning.Prune(settingsObj, ipfsService)
 
 	log.Info("pruning completed")
 

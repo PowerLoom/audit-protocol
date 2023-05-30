@@ -116,7 +116,7 @@ func (t *TxManager) SendSignatureToRelayer(payload *datamodel.SnapshotRelayerPay
 		Signature: "0x" + payload.Signature,
 	}
 
-	httpClient := httpclient.GetDefaultHTTPClient(t.settingsObj)
+	httpClient := httpclient.GetDefaultHTTPClient(t.settingsObj.Relayer.Timeout, t.settingsObj)
 
 	// url = "host+port" ; endpoint = "/endpoint"
 	url := *t.settingsObj.Relayer.Host + *t.settingsObj.Relayer.Endpoint

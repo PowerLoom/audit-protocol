@@ -16,11 +16,14 @@ import (
 )
 
 type RedisCache struct {
-	redisClient *redis.Client
+	readClient  *redis.Client
+	writeClient *redis.Client
 }
 
-func NewRedisCache(client *redis.Client) DbCache {
-	cache := &RedisCache{redisClient: client}
+var _ DbCache = (*RedisCache)(nil)
+
+func NewRedisCache(readClient, writeClient *redis.Client) *RedisCache {
+	cache := &RedisCache{readClient: readClient, writeClient: writeClient}
 
 	return cache
 }
@@ -35,7 +38,7 @@ func (r *RedisCache) GetSnapshotAtEpochID(ctx context.Context, projectID string,
 		WithField("key", key).
 		Debug("getting snapshotCid from redis at given epochId from the given projectId")
 
-	res, err := r.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+	res, err := r.readClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 		Min: height,
 		Max: height,
 	}).Result()
@@ -76,7 +79,7 @@ func (r *RedisCache) GetSnapshotAtEpochID(ctx context.Context, projectID string,
 func (r *RedisCache) GetStoredProjects(ctx context.Context) ([]string, error) {
 	key := redisutils.REDIS_KEY_STORED_PROJECTS
 
-	val, err := r.redisClient.SMembers(ctx, key).Result()
+	val, err := r.readClient.SMembers(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
 			log.Errorf("error getting stored projects, key %s not found", key)
@@ -91,7 +94,7 @@ func (r *RedisCache) GetStoredProjects(ctx context.Context) ([]string, error) {
 }
 
 func (r *RedisCache) CheckIfProjectExists(ctx context.Context, projectID string) (bool, error) {
-	res, err := r.redisClient.Keys(ctx, fmt.Sprintf("projectID:%s:*", projectID)).Result()
+	res, err := r.readClient.Keys(ctx, fmt.Sprintf("projectID:%s:*", projectID)).Result()
 	if err != nil {
 		log.WithError(err).Error("failed to check if project exists")
 
@@ -107,7 +110,7 @@ func (r *RedisCache) CheckIfProjectExists(ctx context.Context, projectID string)
 
 // StoreProjects stores the given projects in the redis cache.
 func (r *RedisCache) StoreProjects(background context.Context, projects []string) error {
-	_, err := r.redisClient.SAdd(background, redisutils.REDIS_KEY_STORED_PROJECTS, projects).Result()
+	_, err := r.writeClient.SAdd(background, redisutils.REDIS_KEY_STORED_PROJECTS, projects).Result()
 
 	if err != nil {
 		log.WithError(err).Error("failed to store projects")
@@ -131,7 +134,7 @@ func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamod
 
 	data, _ := json.Marshal(p)
 
-	err := r.redisClient.ZAdd(ctx, key, &redis.Z{
+	err := r.writeClient.ZAdd(ctx, key, &redis.Z{
 		Score:  float64(msg.EpochID),
 		Member: string(data),
 	}).Err()
@@ -142,7 +145,7 @@ func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamod
 	}
 
 	// get all the members
-	res, err := r.redisClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+	res, err := r.writeClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
 		Min: "-inf",
 		Max: "+inf",
 	}).Result()
@@ -170,7 +173,7 @@ func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamod
 		}
 
 		if m.TTL < time.Now().Unix() {
-			err = r.redisClient.ZRem(ctx, key, member.Member).Err()
+			err = r.writeClient.ZRem(ctx, key, member.Member).Err()
 			if err != nil {
 				log.WithError(err).Error("failed to remove expired snapshot cid from zset")
 			}
@@ -197,7 +200,7 @@ func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int
 			return err
 		}
 
-		err = r.redisClient.HSet(ctx, key, strconv.Itoa(epochId), string(reportJson)).Err()
+		err = r.writeClient.HSet(ctx, key, strconv.Itoa(epochId), string(reportJson)).Err()
 		if err != nil {
 			log.WithError(err).Error("failed to add snapshotter status report in redis")
 
@@ -214,7 +217,7 @@ func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int
 		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_SUCCESSFUL_SNAPSHOT_COUNT, projectId)
 	}
 
-	err := r.redisClient.Incr(ctx, key).Err()
+	err := r.writeClient.Incr(ctx, key).Err()
 	if err != nil {
 		log.WithError(err).Error("failed to increment total missed snapshot count")
 	}

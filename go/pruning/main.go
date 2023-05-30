@@ -15,14 +15,14 @@ func main() {
 
 	settingsObj := settings.ParseSettings()
 
-	ipfsClient := ipfsutils.InitService(settingsObj)
+	ipfsService := ipfsutils.InitService(settingsObj)
 
 	cronRunner := cron.New(cron.WithChain(
 		cron.Recover(cron.DefaultLogger),
 	))
 
 	cronId, err := cronRunner.AddFunc(settingsObj.Pruning.CronFrequency, func() {
-		pruning.Prune(settingsObj, ipfsClient)
+		pruning.Prune(settingsObj, ipfsService)
 	})
 	if err != nil {
 		log.WithError(err).Fatal("failed to add pruning cron job")

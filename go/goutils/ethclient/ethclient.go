@@ -25,7 +25,7 @@ type Client struct {
 }
 
 func NewClient(settingsObj *settings.SettingsObj) (Service, *ethclient.Client) {
-	httpClient := httpclient.GetDefaultHTTPClient(settingsObj)
+	httpClient := httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout, settingsObj)
 
 	rpClient, err := rpc.DialOptions(context.Background(), settingsObj.AnchorChainRPCURL, rpc.WithHTTPClient(httpClient.HTTPClient))
 	if err != nil {

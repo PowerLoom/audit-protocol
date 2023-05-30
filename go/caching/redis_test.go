@@ -20,10 +20,10 @@ import (
 func TestNewRedisCache(t *testing.T) {
 	db, _ := redismock.NewClientMock()
 
-	want := &RedisCache{redisClient: db}
+	want := &RedisCache{readClient: db, writeClient: db}
 
 	t.Run("successful init", func(t *testing.T) {
-		if got := NewRedisCache(db); !reflect.DeepEqual(got, want) {
+		if got := NewRedisCache(db, db); !reflect.DeepEqual(got, want) {
 			t.Errorf("NewRedisCache() = %v, want %v", got, want)
 		}
 	})
@@ -34,7 +34,8 @@ func TestRedisCache_GetSnapshotAtEpochID(t *testing.T) {
 	mockClient, mock := redismock.NewClientMock()
 
 	cache := RedisCache{
-		redisClient: mockClient,
+		readClient:  mockClient,
+		writeClient: mockClient,
 	}
 
 	projectID := "testProject"
@@ -129,7 +130,8 @@ func TestRedisCache_GetStoredProjects(t *testing.T) {
 	mockClient, mock := redismock.NewClientMock()
 
 	cache := RedisCache{
-		redisClient: mockClient,
+		readClient:  mockClient,
+		writeClient: mockClient,
 	}
 
 	t.Run("Get stored projects", func(t *testing.T) {
@@ -185,7 +187,8 @@ func TestRedisCache_GetStoredProjects(t *testing.T) {
 func TestRedisCache_CheckIfProjectExists(t *testing.T) {
 	mockClient, mock := redismock.NewClientMock()
 	cache := RedisCache{
-		redisClient: mockClient,
+		readClient:  mockClient,
+		writeClient: mockClient,
 	}
 
 	projectID := "testProject"
@@ -241,7 +244,8 @@ func TestRedisCache_CheckIfProjectExists(t *testing.T) {
 func TestRedisCache_StoreProjects(t *testing.T) {
 	mockClient, mock := redismock.NewClientMock()
 	cache := RedisCache{
-		redisClient: mockClient,
+		readClient:  mockClient,
+		writeClient: mockClient,
 	}
 
 	background := context.Background()
@@ -277,7 +281,8 @@ func TestRedisCache_StoreProjects(t *testing.T) {
 func TestRedisCache_AddUnfinalizedSnapshotCID(t *testing.T) {
 	mockClient, mock := redismock.NewClientMock()
 	cache := RedisCache{
-		redisClient: mockClient,
+		readClient:  mockClient,
+		writeClient: mockClient,
 	}
 
 	ctx := context.Background()
@@ -353,7 +358,8 @@ func TestRedisCache_AddUnfinalizedSnapshotCID(t *testing.T) {
 func TestRedisCache_AddSnapshotterStatusReport(t *testing.T) {
 	mockClient, mock := redismock.NewClientMock()
 	cache := RedisCache{
-		redisClient: mockClient,
+		readClient:  mockClient,
+		writeClient: mockClient,
 	}
 
 	ctx := context.Background()

@@ -1,4 +1,4 @@
-package main
+package pruning
 
 import (
 	"os"
@@ -8,8 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"audit-protocol/goutils/datamodel"
-	"audit-protocol/goutils/ipfsutils"
+	"audit-protocol/goutils/mock"
 	"audit-protocol/goutils/settings"
 )
 
@@ -21,31 +20,19 @@ var settingsObj = &settings.SettingsObj{
 	},
 }
 
-type MockIPFSService struct{}
-
-func (m MockIPFSService) UploadSnapshotToIPFS(snapshot *datamodel.PayloadCommitMessage) error {
-	// TODO implement me
-	panic("implement me")
-}
-
-func (m MockIPFSService) GetSnapshotFromIPFS(snapshotCID string, outputPath string) error {
-	// TODO implement me
-	panic("implement me")
-}
-
-func (m MockIPFSService) Unpin(cid string) error {
-	return nil
-}
-
-var _ ipfsutils.Service = &MockIPFSService{}
-
 func Test_prune(t *testing.T) {
-	err := prune(settingsObj, new(MockIPFSService))
+	ipfsServiceMock := new(mock.IPFSServiceMock)
+
+	ipfsServiceMock.UnpinMock = func(cid string) error {
+		return nil
+	}
+
+	err := Prune(settingsObj, ipfsServiceMock)
 	assert.Equal(t, err, nil)
 
 	// read invalid directory
 	settingsObj.LocalCachePath = "/tmp/invalid"
-	err = prune(settingsObj, new(MockIPFSService))
+	err = Prune(settingsObj, ipfsServiceMock)
 	assert.NotEqual(t, err, nil)
 
 	// create tmp directory
@@ -63,7 +50,7 @@ func Test_prune(t *testing.T) {
 	err = os.Chtimes(filePath, time.Now().AddDate(0, 0, -2), time.Now().AddDate(0, 0, -2))
 	assert.Equal(t, err, nil)
 
-	err = prune(settingsObj, new(MockIPFSService))
+	err = Prune(settingsObj, ipfsServiceMock)
 	assert.Equal(t, err, nil)
 
 	// check if file is removed

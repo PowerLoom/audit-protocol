@@ -35,6 +35,8 @@ const ServiceName = "payload-commit"
 
 type Service interface {
 	Run(msgBody []byte, topic string) error
+	HandlePayloadCommitTask(msg *datamodel.PayloadCommitMessage) error
+	HandleFinalizedPayloadCommitTask(msg *datamodel.PayloadCommitFinalizedMessage) error
 }
 
 type PayloadCommitService struct {
@@ -62,6 +64,7 @@ func InitPayloadCommitService(
 	web3StorageService w3storage.Service,
 	contractApiService smartcontract.Service,
 	signerService signer.Service,
+	txManagerService transactions.Service,
 ) Service {
 	privKey, err := signerService.GetPrivateKey(settingsObj.Signer.PrivateKey)
 	if err != nil {
@@ -76,7 +79,7 @@ func InitPayloadCommitService(
 		ipfsService:        ipfsService,
 		web3sClient:        web3StorageService,
 		diskCache:          diskCache,
-		txManager:          transactions.NewTxManager(settingsObj, ethService, contractApiService),
+		txManager:          txManagerService,
 		privKey:            privKey,
 		issueReporter:      reporter,
 		signerService:      signerService,
@@ -168,7 +171,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			errMsg = "failed to upload payload commit message to ipfs and web3 storage"
 		}
 
-		go s.issueReporter.Report(reporting.PayloadCommitInternalIssue, msg.ProjectID, strconv.Itoa(msg.EpochID), map[string]interface{}{
+		go s.issueReporter.Report(datamodel.PayloadCommitInternalIssue, msg.ProjectID, strconv.Itoa(msg.EpochID), map[string]interface{}{
 			"issueDetails": "Error: " + err.Error(),
 			"msg":          errMsg,
 		})
@@ -209,7 +212,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			log.WithError(err).Error("failed to submit snapshot to contract")
 
 			go s.issueReporter.Report(
-				reporting.MissedSnapshotIssue,
+				datamodel.MissedSnapshotIssue,
 				msg.ProjectID,
 				strconv.Itoa(msg.EpochID),
 				map[string]interface{}{
@@ -226,7 +229,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			log.WithError(err).Error("failed to send signature to relayer")
 
 			go s.issueReporter.Report(
-				reporting.MissedSnapshotIssue,
+				datamodel.MissedSnapshotIssue,
 				msg.ProjectID,
 				strconv.Itoa(msg.EpochID),
 				map[string]interface{}{
@@ -274,7 +277,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).Error("failed to get snapshot from ipfs")
 
 			go s.issueReporter.Report(
-				reporting.PayloadCommitInternalIssue,
+				datamodel.PayloadCommitInternalIssue,
 				msg.Message.ProjectID,
 				strconv.Itoa(msg.Message.EpochID),
 				map[string]interface{}{
@@ -294,8 +297,8 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		// if stored snapshot cid does not match with finalized snapshot cid, fetch snapshot from ipfs and store in local disk.
 		log.Debug("cached snapshot cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
-		s.issueReporter.Report(
-			reporting.SubmittedIncorrectSnapshotIssue,
+		go s.issueReporter.Report(
+			datamodel.SubmittedIncorrectSnapshotIssue,
 			msg.Message.ProjectID,
 			strconv.Itoa(msg.Message.EpochID),
 			map[string]interface{}{
@@ -317,7 +320,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).Error("failed to get snapshot from ipfs")
 
 			go s.issueReporter.Report(
-				reporting.PayloadCommitInternalIssue,
+				datamodel.PayloadCommitInternalIssue,
 				msg.Message.ProjectID,
 				strconv.Itoa(msg.Message.EpochID),
 				map[string]interface{}{
@@ -457,7 +460,7 @@ func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochI
 		log.WithError(err).Error("failed to get signer data")
 
 		go s.issueReporter.Report(
-			reporting.PayloadCommitInternalIssue,
+			datamodel.PayloadCommitInternalIssue,
 			projectId,
 			strconv.Itoa(int(epochId)),
 			map[string]interface{}{
@@ -473,7 +476,7 @@ func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochI
 		log.WithError(err).Error("failed to sign message")
 
 		go s.issueReporter.Report(
-			reporting.PayloadCommitInternalIssue,
+			datamodel.PayloadCommitInternalIssue,
 			projectId,
 			strconv.Itoa(int(epochId)),
 			map[string]interface{}{

@@ -54,7 +54,7 @@ func TestUploadToW3s_Success(t *testing.T) {
 	w := &W3S{
 		limiter:           rate.NewLimiter(1, 1),
 		settingsObj:       settingsObj,
-		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj),
+		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj.Web3Storage.Timeout, settingsObj),
 	}
 
 	// Invoke the function
@@ -105,7 +105,7 @@ func TestUploadToW3s_Error(t *testing.T) {
 	w := &W3S{
 		limiter:           rate.NewLimiter(1, 1),
 		settingsObj:       settingsObj,
-		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj),
+		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj.Web3Storage.Timeout, settingsObj),
 	}
 
 	// Invoke the function
