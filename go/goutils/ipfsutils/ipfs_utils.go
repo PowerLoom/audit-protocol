@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	shell "github.com/ipfs/go-ipfs-api"
@@ -33,14 +32,14 @@ func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
 
 	writeUrl, err := ParseMultiAddrURL(writeUrl)
 	if err != nil {
-		log.WithError(err).Fatal("failed to parse IPFS write URL: ", writeUrl)
+		log.WithError(err).Fatal("failed to parse IPFS write multiaddr URL: ", writeUrl)
 	}
 
 	readUrl := settingsObj.IpfsConfig.ReaderURL
 
 	readUrl, err = ParseMultiAddrURL(readUrl)
 	if err != nil {
-		log.WithError(err).Fatal("failed to parse IPFS read URL: ", readUrl)
+		log.WithError(err).Fatal("failed to parse IPFS read multiaddr URL: ", readUrl)
 	}
 
 	ipfsReadHTTPClient := httpclient.GetIPFSReadHTTPClient(settingsObj)
@@ -120,16 +119,57 @@ func InitClient(settingsObj *settings.SettingsObj) *IpfsClient {
 	return client
 }
 
+type UnsupportedMultiaddrError struct {
+	URL string
+}
+
+func (e *UnsupportedMultiaddrError) Error() string {
+	return fmt.Sprintf("unsupported multiaddr url pattern: %s", e.URL)
+}
+
 func ParseMultiAddrURL(url string) (string, error) {
-	if _, err := ma.NewMultiaddr(url); err == nil {
-		urlSplits := strings.Split(url, "/")
+	parts := make([]string, 0) // [host,port,scheme]
+
+	if multiaddr, err := ma.NewMultiaddr(url); err == nil {
+		addrSplits := ma.Split(multiaddr)
+
+		// host and port are required
+		if len(addrSplits) < 2 {
+			return "", &UnsupportedMultiaddrError{URL: url}
+		}
+
+		for index, addr := range addrSplits {
+			component, _ := ma.SplitFirst(addr)
+			if index == 1 && component.Protocol().Code != ma.P_TCP {
+				return "", &UnsupportedMultiaddrError{URL: url}
+			}
+
+			// check if scheme is present
+			if index == 2 {
+				if component.Protocol().Code != ma.P_HTTP && component.Protocol().Code != ma.P_HTTPS {
+					return "", &UnsupportedMultiaddrError{URL: url}
+				}
+
+				parts = append(parts, component.Protocol().Name)
+
+				continue
+			}
+
+			parts = append(parts, component.Value())
+		}
+
+		if len(parts) < 2 {
+			return "", &UnsupportedMultiaddrError{URL: url}
+		}
 
 		// join host and port
-		url = net.JoinHostPort(urlSplits[2], urlSplits[4])
+		url = net.JoinHostPort(parts[0], parts[1])
 
-		// check if scheme is present
-		if len(urlSplits) >= 6 && urlSplits[5] != "" {
-			url = fmt.Sprintf("%s://%s", urlSplits[5], url)
+		// add scheme if present
+		if len(parts) >= 3 {
+			url = fmt.Sprintf("%s://%s", parts[2], url)
+		} else {
+			url = fmt.Sprintf("http://%s", url) // default to http if scheme is not present
 		}
 	} else {
 		return "", err
