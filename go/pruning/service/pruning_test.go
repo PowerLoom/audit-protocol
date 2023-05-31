@@ -27,13 +27,17 @@ func Test_prune(t *testing.T) {
 		return nil
 	}
 
-	err := Prune(settingsObj, ipfsServiceMock)
-	assert.Equal(t, err, nil)
+	t.Run("reading empty dir", func(t *testing.T) {
+		err := Prune(settingsObj, ipfsServiceMock)
+		assert.Equal(t, err, nil)
+	})
 
 	// read invalid directory
 	settingsObj.LocalCachePath = "/tmp/invalid"
-	err = Prune(settingsObj, ipfsServiceMock)
-	assert.NotEqual(t, err, nil)
+	t.Run("reading invalid dir", func(t *testing.T) {
+		err := Prune(settingsObj, ipfsServiceMock)
+		assert.NotEqual(t, err, nil)
+	})
 
 	// create tmp directory
 	settingsObj.LocalCachePath = "/tmp/pruning_test"
@@ -44,16 +48,18 @@ func Test_prune(t *testing.T) {
 	_ = os.MkdirAll(dirPath, os.ModePerm)
 	defer os.RemoveAll(dirPath)
 
-	_, err = os.Create(filePath)
+	_, err := os.Create(filePath)
 	assert.Equal(t, err, nil)
 
 	err = os.Chtimes(filePath, time.Now().AddDate(0, 0, -2), time.Now().AddDate(0, 0, -2))
 	assert.Equal(t, err, nil)
 
-	err = Prune(settingsObj, ipfsServiceMock)
-	assert.Equal(t, err, nil)
+	t.Run("prune file", func(t *testing.T) {
+		err = Prune(settingsObj, ipfsServiceMock)
+		assert.Equal(t, err, nil)
 
-	// check if file is removed
-	_, err = os.Stat(filePath)
-	assert.NotEqual(t, err, nil)
+		// check if file is removed
+		_, err = os.Stat(filePath)
+		assert.NotEqual(t, err, nil)
+	})
 }
