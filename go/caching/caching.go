@@ -16,6 +16,7 @@ type DbCache interface {
 	StoreProjects(background context.Context, projects []string) error
 	AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage) error
 	AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error
+	StoreLastFinalizedEpoch(ctx context.Context, projectID string, epochId int) error
 }
 
 // DiskCache is responsible for data caching in local disk
