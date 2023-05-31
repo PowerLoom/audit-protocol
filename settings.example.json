@@ -81,7 +81,7 @@
     "domain": {
       "name": "PowerloomProtocolContract",
       "version": "0.1",
-      "chainId": "100",
+      "chainId": "102",
       "verifyingContract": "protocol-state-contract"
     },
     "accountAddress": "signer-account-address",
