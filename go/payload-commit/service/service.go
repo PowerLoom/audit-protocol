@@ -517,7 +517,8 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 			EpochId     int    `json:"epochId"`
 			ProjectId   string `json:"projectId"`
 		} `json:"request"`
-		Signature string `json:"signature"`
+		Signature       string `json:"signature"`
+		ContractAddress string `json:"contractAddress"`
 	}
 
 	rb := &reqBody{
@@ -535,7 +536,8 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 			EpochId:     payload.EpochID,
 			ProjectId:   payload.ProjectID,
 		},
-		Signature: "0x" + payload.Signature,
+		Signature:       "0x" + payload.Signature,
+		ContractAddress: s.settingsObj.Signer.Domain.VerifyingContract,
 	}
 
 	// url = "host+port" ; endpoint = "/endpoint"
