@@ -231,3 +231,40 @@ func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int
 
 	return nil
 }
+
+func (r *RedisCache) StoreLastFinalizedEpoch(ctx context.Context, projectID string, epochId int) error {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_LAST_FINALIZED_EPOCH, projectID)
+
+	l := log.WithField("key", key)
+
+	lastEpochStr, err := r.readClient.Get(ctx, key).Result()
+	if err != nil {
+		l.WithError(err).Error("failed to get last finalized epoch from redis")
+	}
+
+	lastEpoch := 0
+
+	if lastEpochStr != "" {
+		lastEpoch, err = strconv.Atoi(lastEpochStr)
+		if err != nil {
+			l.WithError(err).Error("failed to convert last finalized epoch to int")
+		}
+	}
+
+	if epochId <= lastEpoch {
+		l.WithField("epochId", epochId).Debug("epochId is less than or equal to last finalized epoch, skipping update")
+
+		return nil
+	}
+
+	err = r.writeClient.Set(ctx, key, epochId, 0).Err()
+	if err != nil {
+		l.WithError(err).Error("failed to store last finalized epoch in redis")
+
+		return err
+	}
+
+	l.WithField("projectID", projectID).WithField("epochId", epochId).Debug("stored last finalized epoch in redis")
+
+	return nil
+}
