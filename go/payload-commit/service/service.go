@@ -298,8 +298,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to get snapshot from ipfs",
 				})
-
-			return err
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
@@ -316,7 +314,9 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			msg.Message.ProjectID,
 			strconv.Itoa(msg.Message.EpochID),
 			map[string]interface{}{
-				"issueDetails": "Error: " + "submitted snapshot cid does not match with finalized snapshot cid",
+				"issueDetails":         "Error: " + "submitted snapshot cid does not match with finalized snapshot cid",
+				"submittedSnapshotCID": unfinalizedSnapshot.SnapshotCID,
+				"finalizedSnapshotCID": msg.Message.SnapshotCID,
 			})
 
 		dirPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, "snapshots")
@@ -341,8 +341,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to get snapshot from ipfs",
 				})
-
-			return err
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
@@ -382,8 +380,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	err = s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.Message.EpochID, msg.Message.ProjectID, report)
 	if err != nil {
 		log.WithError(err).Error("failed to add snapshotter status report to redis")
-
-		return err
 	}
 
 	return nil
