@@ -175,6 +175,8 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			"issueDetails": "Error: " + err.Error(),
 			"msg":          errMsg,
 		})
+
+		return err
 	}
 
 	// store unfinalized payload cid in redis
@@ -207,7 +209,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			err = s.txManager.SubmitSnapshotToContract(s.privKey, signerData, txPayload, signature)
 
 			return err
-		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
+		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(s.settingsObj.RetryCount)))
 		if err != nil {
 			log.WithError(err).Error("failed to submit snapshot to contract")
 
@@ -394,7 +396,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 			}
 
 			return nil
-		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
+		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(s.settingsObj.RetryCount)))
 
 		if ipfsUploadErr != nil {
 			log.WithError(ipfsUploadErr).Error("failed to upload snapshot to ipfs after max retries")
@@ -425,7 +427,7 @@ func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMe
 				}
 
 				return nil
-			}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
+			}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(s.settingsObj.RetryCount)))
 
 			if w3sUploadErr != nil {
 				log.WithError(w3sUploadErr).Error("failed to upload snapshot to web3 storage after max retries")

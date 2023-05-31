@@ -38,7 +38,7 @@ func (w *Worker) ConsumeTask() error {
 			}
 
 			return nil
-		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
+		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(w.settings.RetryCount)))
 
 		if err != nil {
 			log.WithError(err).Fatal("failed to consume the messages after max retries")

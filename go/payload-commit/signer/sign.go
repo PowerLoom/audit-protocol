@@ -72,7 +72,7 @@ func (s *Signer) GetSignerData(ethService ethclient.Service, snapshotCid, projec
 		log.Info("block number fetched: ", block)
 
 		return nil
-	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3))
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(s.settingsObj.RetryCount)))
 	if err != nil {
 		log.WithError(err).Error("failed to get block number after max retries")
 

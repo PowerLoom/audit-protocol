@@ -121,6 +121,7 @@ type SettingsObj struct {
 	LocalCachePath    string       `json:"local_cache_path" validate:"required"`
 	Concurrency       int          `json:"concurrency" validate:"required"`
 	WorkerConcurrency int          `json:"worker_concurrency" validate:"required"`
+	RetryCount        int          `json:"retry_count"`
 	HttpClient        *HTTPClient  `json:"http_client" validate:"required,dive"`
 	Rabbitmq          *Rabbitmq    `json:"rabbitmq" validate:"required,dive"`
 	IpfsConfig        *IpfsConfig  `json:"ipfs" validate:"required,dive"`
