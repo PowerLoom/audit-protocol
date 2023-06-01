@@ -112,6 +112,11 @@ type (
 		SlackWebhookURL                string `json:"slack_webhook_url"`
 		OffchainConsensusIssueEndpoint string `json:"offchain_consensus_issue_endpoint"`
 	}
+
+	Healthcheck struct {
+		Port     int    `json:"port"`
+		Endpoint string `json:"endpoint"`
+	}
 )
 
 type SettingsObj struct {
@@ -131,6 +136,7 @@ type SettingsObj struct {
 	Relayer           *Relayer     `json:"relayer" validate:"required,dive"`
 	Pruning           *Pruning     `json:"pruning" validate:"required,dive"`
 	Reporting         *Reporting   `json:"reporting" validate:"required,dive"`
+	Healthcheck       *Healthcheck `json:"healthcheck" validate:"required"`
 }
 
 // ParseSettings parses the settings.json file and returns a SettingsObj
@@ -217,5 +223,13 @@ func SetDefaults(settingsObj *SettingsObj) {
 	ipfsWriterProjectApiSecret := os.Getenv("IPFS_WRITER_PROJECT_API_SECRET")
 	if ipfsWriterProjectApiSecret != "" {
 		settingsObj.IpfsConfig.WriterAuthConfig.ProjectApiSecret = ipfsWriterProjectApiSecret
+	}
+
+	if settingsObj.Healthcheck.Endpoint == "" {
+		settingsObj.Healthcheck.Endpoint = "/health"
+	}
+
+	if settingsObj.Healthcheck.Port == 0 {
+		settingsObj.Healthcheck.Port = 9000
 	}
 }
