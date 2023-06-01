@@ -7,4 +7,5 @@ const (
 	REDIS_KEY_TOTAL_MISSED_SNAPSHOT_COUNT       string = "projectID:%s:totalMissedSnapshotCount"
 	REDIS_KEY_TOTAL_SUCCESSFUL_SNAPSHOT_COUNT   string = "projectID:%s:totalSuccessfulSnapshotCount"
 	REDIS_KEY_TOTAL_INCORRECT_SNAPSHOT_COUNT    string = "projectID:%s:totalIncorrectSnapshotCount"
+	REDIS_KEY_LAST_FINALIZED_EPOCH              string = "projectID:%s:lastFinalizedEpoch"
 )

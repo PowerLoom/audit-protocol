@@ -22,24 +22,27 @@ func main() {
 
 	settingsObj := settings.ParseSettings()
 
-	ipfsutils.InitClient(
-		settingsObj.IpfsConfig.URL,
-		settingsObj.IpfsConfig.IPFSRateLimiter,
-		settingsObj.IpfsConfig.Timeout,
+	ipfsutils.InitClient(settingsObj)
+
+	readRedisClient := redisutils.InitReaderRedisClient(
+		settingsObj.RedisReader.Host,
+		settingsObj.RedisReader.Port,
+		settingsObj.RedisReader.Db,
+		settingsObj.RedisReader.PoolSize,
+		settingsObj.RedisReader.Password,
 	)
 
-	redisClient := redisutils.InitRedisClient(
+	writeRedisClient := redisutils.InitWriterRedisClient(
 		settingsObj.Redis.Host,
 		settingsObj.Redis.Port,
 		settingsObj.Redis.Db,
 		settingsObj.Redis.PoolSize,
 		settingsObj.Redis.Password,
-		-1,
 	)
 
 	reporter := reporting.InitIssueReporter(settingsObj)
 
-	caching.NewRedisCache()
+	caching.NewRedisCache(readRedisClient, writeRedisClient)
 	smartcontract.InitContractAPI()
 	taskmgr.NewRabbitmqTaskMgr()
 	w3storage.InitW3S()
@@ -55,7 +58,12 @@ func main() {
 	defer func() {
 		mqWorker.ShutdownWorker()
 
-		err := redisClient.Close()
+		err := readRedisClient.Close()
+		if err != nil {
+			log.WithError(err).Error("error while closing redis client")
+		}
+
+		err = writeRedisClient.Close()
 		if err != nil {
 			log.WithError(err).Error("error while closing redis client")
 		}

@@ -54,7 +54,7 @@ func InitW3S() *W3S {
 	w := &W3S{
 		limiter:           rateLimiter,
 		settingsObj:       settingsObj,
-		defaultHTTPClient: httpclient.GetDefaultHTTPClient(),
+		defaultHTTPClient: httpclient.GetDefaultHTTPClient(settingsObj.Web3Storage.Timeout),
 	}
 
 	err = gi.Inject(w)

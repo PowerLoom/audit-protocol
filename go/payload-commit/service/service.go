@@ -107,7 +107,7 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		txManager:     transactions.NewNonceManager(),
 		privKey:       privKey,
 		issueReporter: reporter,
-		httpClient:    httpclient.GetDefaultHTTPClient(),
+		httpClient:    httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout),
 	}
 
 	_ = pcService.initLocalCachedData()
@@ -298,8 +298,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to get snapshot from ipfs",
 				})
-
-			return err
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
@@ -311,12 +309,14 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		// if stored snapshot cid does not match with finalized snapshot cid, fetch snapshot from ipfs and store in local disk.
 		log.Debug("cached snapshot cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
-		s.issueReporter.Report(
+		go s.issueReporter.Report(
 			reporting.SubmittedIncorrectSnapshotIssue,
 			msg.Message.ProjectID,
 			strconv.Itoa(msg.Message.EpochID),
 			map[string]interface{}{
-				"issueDetails": "Error: " + "submitted snapshot cid does not match with finalized snapshot cid",
+				"issueDetails":         "Error: " + "submitted snapshot cid does not match with finalized snapshot cid",
+				"submittedSnapshotCID": unfinalizedSnapshot.SnapshotCID,
+				"finalizedSnapshotCID": msg.Message.SnapshotCID,
 			})
 
 		dirPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, "snapshots")
@@ -341,8 +341,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to get snapshot from ipfs",
 				})
-
-			return err
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
@@ -357,6 +355,11 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).WithField("cid", unfinalizedSnapshot.SnapshotCID).Error("failed to unpin snapshot cid from ipfs")
 		}
 	} else {
+		err = s.redisCache.StoreLastFinalizedEpoch(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
+		if err != nil {
+			log.WithError(err).Error("failed to store last finalized epoch")
+		}
+
 		outputPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, "snapshots", msg.Message.SnapshotCID+".json")
 
 		data, err := json.Marshal(unfinalizedSnapshot.Snapshot)
@@ -377,8 +380,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	err = s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.Message.EpochID, msg.Message.ProjectID, report)
 	if err != nil {
 		log.WithError(err).Error("failed to add snapshotter status report to redis")
-
-		return err
 	}
 
 	return nil
@@ -516,7 +517,8 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 			EpochId     int    `json:"epochId"`
 			ProjectId   string `json:"projectId"`
 		} `json:"request"`
-		Signature string `json:"signature"`
+		Signature       string `json:"signature"`
+		ContractAddress string `json:"contractAddress"`
 	}
 
 	rb := &reqBody{
@@ -534,7 +536,8 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 			EpochId:     payload.EpochID,
 			ProjectId:   payload.ProjectID,
 		},
-		Signature: "0x" + payload.Signature,
+		Signature:       "0x" + payload.Signature,
+		ContractAddress: s.settingsObj.Signer.Domain.VerifyingContract,
 	}
 
 	// url = "host+port" ; endpoint = "/endpoint"
