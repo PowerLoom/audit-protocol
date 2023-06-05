@@ -33,7 +33,7 @@ func NewRedisCache(readClient, writeClient *redis.Client) *RedisCache {
 	return cache
 }
 
-func (r *RedisCache) GetSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.UnfinalizedSnapshot, error) {
+func (r *RedisCache) GetUnfinalizedSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.UnfinalizedSnapshot, error) {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_UNFINALIZED_SNAPSHOT_CIDS, projectID)
 	snapshotCid := ""
 	height := strconv.Itoa(epochId)
@@ -267,4 +267,121 @@ func (r *RedisCache) StoreLastFinalizedEpoch(ctx context.Context, projectID stri
 	l.WithField("projectID", projectID).WithField("epochId", epochId).Debug("stored last finalized epoch in redis")
 
 	return nil
+}
+
+func (r *RedisCache) StoreFinalizedSnapshot(ctx context.Context, msg *datamodel.PowerloomSnapshotFinalizedMessage) error {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_SNAPSHOTS, msg.ProjectID)
+	l := log.WithField("msg", msg)
+
+	msg.Expiry = msg.Timestamp + 3600*24 // 1 day
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		l.WithError(err).Error("failed to marshal finalized snapshot")
+
+		return err
+	}
+
+	err = r.writeClient.ZAdd(ctx, key, &redis.Z{
+		Score:  float64(msg.EpochID),
+		Member: string(data),
+	}).Err()
+
+	if err != nil {
+		l.WithError(err).Error("failed to add finalized snapshot to zset")
+
+		return err
+	}
+
+	// get all the members
+	res, err := r.readClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+		Min: "-inf",
+		Max: "+inf",
+	}).Result()
+	if err != nil {
+		log.WithError(err).Error("failed to get all finalized snapshots")
+
+		// ignore error
+		return nil
+	}
+
+	// remove all the members that have expired
+	membersToRemove := make([]interface{}, 0)
+	timeNow := time.Now().Unix()
+
+	for _, member := range res {
+		m := new(datamodel.PowerloomSnapshotFinalizedMessage)
+
+		val, ok := member.Member.(string)
+		if !ok {
+			log.Error("CRITICAL: could not convert snapshot cid data stored in redis to string")
+		}
+
+		err = json.Unmarshal([]byte(val), m)
+		if err != nil {
+			log.WithError(err).Error("CRITICAL: could not unmarshal snapshot cid data stored in redis")
+
+			continue
+		}
+
+		if float64(m.Expiry) < float64(timeNow) {
+			membersToRemove = append(membersToRemove, member.Member)
+		}
+	}
+
+	if len(membersToRemove) == 0 {
+		return nil
+	}
+
+	err = r.writeClient.ZRem(ctx, key, membersToRemove).Err()
+	if err != nil {
+		log.WithError(err).Error("failed to remove expired snapshot cid from zset")
+	}
+
+	return nil
+}
+
+func (r *RedisCache) GetFinalizedSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.PowerloomSnapshotFinalizedMessage, error) {
+	key := fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_SNAPSHOTS, projectID)
+	l := log.WithField("projectId", projectID).WithField("epochId", epochId)
+
+	res, err := r.readClient.ZRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+		Min: strconv.Itoa(epochId),
+		Max: strconv.Itoa(epochId),
+	}).Result()
+	if err != nil {
+		l.WithError(err).Error("failed to get finalized snapshot from zset")
+
+		return nil, err
+	}
+
+	if len(res) == 0 {
+		l.Debug("no finalized snapshot found at epochId")
+
+		return nil, fmt.Errorf("no finalized snapshot found at epochId %d", epochId)
+	}
+
+	if len(res) > 1 {
+		l.Debug("more than one finalized snapshot found at epochId")
+
+		return nil, fmt.Errorf("more than one finalized snapshot found at epochId %d", epochId)
+	}
+
+	m := new(datamodel.PowerloomSnapshotFinalizedMessage)
+
+	val, ok := res[0].Member.(string)
+	if !ok {
+		l.Error("CRITICAL: could not convert finalized snapshot data stored in redis to string")
+
+		return nil, errors.New("failed to convert finalized snapshot data stored in redis to string")
+	}
+
+	err = json.Unmarshal([]byte(val), m)
+	if err != nil {
+		l.WithError(err).Error("CRITICAL: could not unmarshal finalized snapshot data stored in redis")
+
+		return nil, err
+	}
+
+	return m, nil
 }

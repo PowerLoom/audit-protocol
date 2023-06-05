@@ -53,7 +53,7 @@ func main() {
 	mqWorker := worker.NewWorker()
 
 	// health check is non-blocking health check http listener
-	health.HealthCheck()
+	health.HealthCheck(settingsObj.Healthcheck)
 
 	defer func() {
 		mqWorker.ShutdownWorker()
