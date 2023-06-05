@@ -100,7 +100,11 @@
     "cron_frequency": "0 0 * * *"
   },
   "reporting": {
-    "slack_webhook_url": "https://slack-reporting-url",
-    "offchain_consensus_issue_endpoint": "https://powerloom-reporting-url"
+    "slack_webhook_url": "https://hooks.slack.com/workflows/000000000/000000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+    "offchain_consensus_issue_endpoint": "http://offchain-consensus:8080/reportIssue"
+  },
+  "healthcheck": {
+    "port": 9000,
+    "endpoint": "/health"
   }
 }

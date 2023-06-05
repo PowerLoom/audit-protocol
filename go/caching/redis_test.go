@@ -57,7 +57,7 @@ func TestRedisCache_GetSnapshotAtEpochID(t *testing.T) {
 			Max: strconv.Itoa(epochID),
 		}).SetVal([]redis.Z{{Member: string(snapshotJSON)}})
 
-		snapshot, err := cache.GetSnapshotAtEpochID(context.Background(), projectID, epochID)
+		snapshot, err := cache.GetUnfinalizedSnapshotAtEpochID(context.Background(), projectID, epochID)
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}
@@ -75,7 +75,7 @@ func TestRedisCache_GetSnapshotAtEpochID(t *testing.T) {
 			Max: strconv.Itoa(epochID),
 		}).SetVal([]redis.Z{})
 
-		snapshot, err := cache.GetSnapshotAtEpochID(context.Background(), projectID, epochID)
+		snapshot, err := cache.GetUnfinalizedSnapshotAtEpochID(context.Background(), projectID, epochID)
 		if err == nil {
 			t.Errorf("Expected error, got no error")
 		}
@@ -91,7 +91,7 @@ func TestRedisCache_GetSnapshotAtEpochID(t *testing.T) {
 			Max: strconv.Itoa(epochID),
 		}).RedisNil()
 
-		snapshot, err := cache.GetSnapshotAtEpochID(context.Background(), projectID, epochID)
+		snapshot, err := cache.GetUnfinalizedSnapshotAtEpochID(context.Background(), projectID, epochID)
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}
@@ -109,7 +109,7 @@ func TestRedisCache_GetSnapshotAtEpochID(t *testing.T) {
 			Max: strconv.Itoa(epochID),
 		}).SetErr(expectedErr)
 
-		snapshot, err := cache.GetSnapshotAtEpochID(context.Background(), projectID, epochID)
+		snapshot, err := cache.GetUnfinalizedSnapshotAtEpochID(context.Background(), projectID, epochID)
 		if err == nil {
 			t.Errorf("Expected an error, but no error occurred")
 		}

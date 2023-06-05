@@ -67,6 +67,16 @@ func TestSendSignatureToRelayer(t *testing.T) {
 				MaxIdleConnsPerHost: 1,
 				IdleConnTimeout:     60,
 			},
+			Signer: &settings.Signer{
+				Domain: struct {
+					Name              string `json:"name"`
+					Version           string `json:"version"`
+					ChainId           string `json:"chainId"`
+					VerifyingContract string `json:"verifyingContract"`
+				}{
+					VerifyingContract: "0x0000000",
+				},
+			},
 		},
 	}
 

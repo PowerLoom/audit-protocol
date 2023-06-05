@@ -76,7 +76,7 @@ func main() {
 	mqWorker := worker.NewWorker(settingsObj, payloadCommitService, rabbitmqTaskMgr)
 
 	// health check is non-blocking health check http listener
-	health.HealthCheck()
+	health.HealthCheck(settingsObj.Healthcheck)
 
 	defer func() {
 		err := mqWorker.ShutdownWorker()

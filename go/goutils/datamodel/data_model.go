@@ -54,10 +54,11 @@ type PayloadCommitMessage struct {
 }
 
 type PowerloomSnapshotFinalizedMessage struct {
-	EpochID     int    `json:"epochId" validate:"required"`
-	ProjectID   string `json:"projectId" validate:"required"`
-	SnapshotCID string `json:"snapshotCid" validate:"required"`
-	Timestamp   int    `json:"timestamp" validate:"required"`
+	EpochID     int    `json:"epochId"`
+	ProjectID   string `json:"projectId"`
+	SnapshotCID string `json:"snapshotCid"`
+	Timestamp   int    `json:"timestamp"`
+	Expiry      int    `json:"expiry"` // for redis cleanup
 }
 
 type PayloadCommitFinalizedMessage struct {
@@ -96,11 +97,12 @@ type SnapshotterIssue struct {
 }
 
 type RelayerRequest struct {
-	ProjectID   string   `json:"projectId"`
-	SnapshotCID string   `json:"snapshotCid"`
-	EpochID     int      `json:"epochId"`
-	Signature   string   `json:"signature"`
-	Request     *Request `json:"request"`
+	ProjectID       string   `json:"projectId"`
+	SnapshotCID     string   `json:"snapshotCid"`
+	EpochID         int      `json:"epochId"`
+	Signature       string   `json:"signature"`
+	Request         *Request `json:"request"`
+	ContractAddress string   `json:"contractAddress"`
 }
 
 type Request struct {

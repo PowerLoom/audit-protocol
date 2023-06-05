@@ -114,7 +114,7 @@ func TestPayloadCommitService_Run(t *testing.T) {
 		return nil
 	}
 
-	mockRedisCache.GetSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+	mockRedisCache.GetUnfinalizedSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
 		return nil, nil
 	}
 
@@ -159,6 +159,28 @@ func TestPayloadCommitService_Run(t *testing.T) {
 	}
 
 	mockRedisCache.AddSnapshotterStatusReportMock = func(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error {
+		return nil
+	}
+
+	mockRedisCache.GetUnfinalizedSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+		return nil, nil
+	}
+
+	mockRedisCache.StoreFinalizedSnapshotMock = func(ctx context.Context, msg *datamodel.PowerloomSnapshotFinalizedMessage) error {
+		return nil
+	}
+
+	mockRedisCache.GetFinalizedSnapshotAtEpochIDMock = func(ctx context.Context, projectID string, epochId int) (*datamodel.PowerloomSnapshotFinalizedMessage, error) {
+		return &datamodel.PowerloomSnapshotFinalizedMessage{
+			EpochID:     1,
+			ProjectID:   "projectId",
+			SnapshotCID: "snapshotCID",
+			Timestamp:   int(time.Now().Unix()),
+			Expiry:      0,
+		}, nil
+	}
+
+	mockRedisCache.StoreLastFinalizedEpochMock = func(ctx context.Context, projectID string, epochId int) error {
 		return nil
 	}
 
@@ -302,7 +324,7 @@ func TestPayloadCommitService_HandlePayloadCommitTask(t *testing.T) {
 	pcService := InitPayloadCommitService(settingsObj, mockRedisCache, mockEthClientService, mockReportingService, mockIPfsService, mockDiskCache, mockWeb3Storage, mockContractAPIService, mockSignerService, mockTxManager)
 
 	// payload commit message is already processed, skip the message
-	mockRedisCache.GetSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+	mockRedisCache.GetUnfinalizedSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
 		return &datamodel.UnfinalizedSnapshot{
 			SnapshotCID: "snapshotCID",
 			Snapshot:    map[string]interface{}{"hello": "world"},
@@ -329,7 +351,7 @@ func TestPayloadCommitService_HandlePayloadCommitTask(t *testing.T) {
 		return errors.New("upload to ipfs failed")
 	}
 
-	mockRedisCache.GetSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+	mockRedisCache.GetUnfinalizedSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
 		return nil, nil
 	}
 
@@ -448,8 +470,22 @@ func TestPayloadCommitService_HandleFinalizedPayloadCommitTask(t *testing.T) {
 		SourceChainID: 100,
 	}
 
-	mockRedisCache.GetSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+	mockRedisCache.GetUnfinalizedSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
 		return nil, nil
+	}
+
+	mockRedisCache.StoreFinalizedSnapshotMock = func(ctx context.Context, msg *datamodel.PowerloomSnapshotFinalizedMessage) error {
+		return nil
+	}
+
+	mockRedisCache.GetFinalizedSnapshotAtEpochIDMock = func(ctx context.Context, projectID string, epochId int) (*datamodel.PowerloomSnapshotFinalizedMessage, error) {
+		return &datamodel.PowerloomSnapshotFinalizedMessage{
+			EpochID:     1,
+			ProjectID:   "projectId",
+			SnapshotCID: "snapshotCID",
+			Timestamp:   int(time.Now().Unix()),
+			Expiry:      0,
+		}, nil
 	}
 
 	mockIPfsService.GetSnapshotFromIPFSMock = func(string, string) error {
@@ -467,12 +503,16 @@ func TestPayloadCommitService_HandleFinalizedPayloadCommitTask(t *testing.T) {
 	})
 
 	// incorrect snapshot
-	mockRedisCache.GetSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+	mockRedisCache.GetUnfinalizedSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
 		return &datamodel.UnfinalizedSnapshot{
 			SnapshotCID: "incorrectSnapshotCID",
 			Snapshot:    map[string]interface{}{"hello": "world"},
 			TTL:         time.Now().Unix(),
 		}, nil
+	}
+
+	mockRedisCache.StoreLastFinalizedEpochMock = func(ctx context.Context, projectID string, epochId int) error {
+		return nil
 	}
 
 	mockReportingService.ReportMock = func(issueType datamodel.IssueType, projectID string, epochID string, extra map[string]interface{}) {
@@ -489,7 +529,7 @@ func TestPayloadCommitService_HandleFinalizedPayloadCommitTask(t *testing.T) {
 	})
 
 	// correct snapshot submission
-	mockRedisCache.GetSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
+	mockRedisCache.GetUnfinalizedSnapshotAtEpochIDMock = func(context.Context, string, int) (*datamodel.UnfinalizedSnapshot, error) {
 		return &datamodel.UnfinalizedSnapshot{
 			SnapshotCID: "snapshotCID",
 			Snapshot:    map[string]interface{}{"hello": "world"},

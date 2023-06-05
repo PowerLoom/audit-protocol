@@ -113,7 +113,8 @@ func (t *TxManager) SendSignatureToRelayer(payload *datamodel.SnapshotRelayerPay
 		Request: &datamodel.Request{
 			Deadline: (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
 		},
-		Signature: "0x" + payload.Signature,
+		Signature:       "0x" + payload.Signature,
+		ContractAddress: t.settingsObj.Signer.Domain.VerifyingContract,
 	}
 
 	httpClient := httpclient.GetDefaultHTTPClient(t.settingsObj.Relayer.Timeout, t.settingsObj)
