@@ -427,3 +427,167 @@ func TestRedisCache_AddSnapshotterStatusReport(t *testing.T) {
 		t.Errorf("Failed to meet Redis expectations: %v", err)
 	}
 }
+
+func TestRedisCache_StoreLastFinalizedEpoch(t *testing.T) {
+	mockClient, mock := redismock.NewClientMock()
+	cache := RedisCache{
+		readClient:  mockClient,
+		writeClient: mockClient,
+	}
+
+	ctx := context.Background()
+	projectID := "testProject"
+	epochID := 1
+
+	t.Run("Store last finalized epoch successfully", func(t *testing.T) {
+		mock.ExpectSet(fmt.Sprintf(redisutils.REDIS_KEY_LAST_FINALIZED_EPOCH, projectID), epochID, 0).SetVal("OK")
+
+		err := cache.StoreLastFinalizedEpoch(ctx, projectID, epochID)
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("Redis error when storing last finalized epoch", func(t *testing.T) {
+		expectedErr := errors.New("Redis error")
+
+		mock.ExpectSet(fmt.Sprintf(redisutils.REDIS_KEY_LAST_FINALIZED_EPOCH, projectID), epochID, 0).SetErr(expectedErr)
+
+		err := cache.StoreLastFinalizedEpoch(ctx, projectID, epochID)
+		if err == nil {
+			t.Errorf("Expected an error, but no error occurred")
+		}
+	})
+
+	// Ensure that all expectations were met
+	err := mock.ExpectationsWereMet()
+	if err != nil {
+		t.Errorf("Failed to meet Redis expectations: %v", err)
+	}
+}
+
+func TestRedisCache_StoreFinalizedSnapshot(t *testing.T) {
+	mockClient, mock := redismock.NewClientMock()
+	cache := RedisCache{
+		readClient:  mockClient,
+		writeClient: mockClient,
+	}
+
+	ctx := context.Background()
+
+	timeNow := int(time.Now().Unix())
+	msg := &datamodel.PowerloomSnapshotFinalizedMessage{
+		EpochID:     1,
+		ProjectID:   "projectId",
+		SnapshotCID: "snapshotCid",
+		Timestamp:   timeNow,
+		Expiry:      timeNow + 3600*24,
+	}
+
+	t.Run("Store finalized snapshot successfully", func(t *testing.T) {
+		data, _ := json.Marshal(msg)
+		mock.ExpectZAdd(fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_SNAPSHOTS, msg.ProjectID), &redis.Z{
+			Score:  float64(msg.EpochID),
+			Member: string(data),
+		}).SetVal(1)
+
+		err := cache.StoreFinalizedSnapshot(ctx, msg)
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("Redis error when storing finalized snapshot", func(t *testing.T) {
+		expectedErr := errors.New("Redis error")
+		data, _ := json.Marshal(msg)
+
+		mock.ExpectZAdd(fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_SNAPSHOTS, msg.ProjectID), &redis.Z{
+			Score:  float64(1),
+			Member: string(data),
+		}).SetErr(expectedErr)
+
+		err := cache.StoreFinalizedSnapshot(ctx, msg)
+		if err == nil {
+			t.Errorf("Expected an error, but no error occurred")
+		}
+	})
+
+	// Ensure that all expectations were met
+	err := mock.ExpectationsWereMet()
+	if err != nil {
+		t.Errorf("Failed to meet Redis expectations: %v", err)
+	}
+}
+
+func TestRedisCache_GetFinalizedSnapshotAtEpochID(t *testing.T) {
+	mockClient, mock := redismock.NewClientMock()
+	cache := RedisCache{
+		readClient:  mockClient,
+		writeClient: mockClient,
+	}
+
+	ctx := context.Background()
+
+	timeNow := int(time.Now().Unix())
+	msg := &datamodel.PowerloomSnapshotFinalizedMessage{
+		EpochID:     1,
+		ProjectID:   "projectId",
+		SnapshotCID: "snapshotCid",
+		Timestamp:   timeNow,
+		Expiry:      timeNow + 3600*24,
+	}
+
+	t.Run("Get finalized snapshot successfully", func(t *testing.T) {
+		data, _ := json.Marshal(msg)
+		mock.ExpectZRangeByScoreWithScores(fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_SNAPSHOTS, msg.ProjectID), &redis.ZRangeBy{
+			Min: strconv.Itoa(msg.EpochID),
+			Max: strconv.Itoa(msg.EpochID),
+		}).SetVal([]redis.Z{
+			{
+				Score:  float64(msg.EpochID),
+				Member: string(data),
+			},
+		})
+
+		result, err := cache.GetFinalizedSnapshotAtEpochID(ctx, msg.ProjectID, msg.EpochID)
+		if err != nil {
+			t.Errorf("Expected no error, got: %v", err)
+		}
+		if result == nil {
+			t.Errorf("Expected a result, got nil")
+		}
+		if result.EpochID != msg.EpochID {
+			t.Errorf("Expected epoch ID %d, got %d", msg.EpochID, result.EpochID)
+		}
+		if result.ProjectID != msg.ProjectID {
+			t.Errorf("Expected project ID %s, got %s", msg.ProjectID, result.ProjectID)
+		}
+		if result.SnapshotCID != msg.SnapshotCID {
+			t.Errorf("Expected snapshot CID %s, got %s", msg.SnapshotCID, result.SnapshotCID)
+		}
+		if result.Timestamp != msg.Timestamp {
+			t.Errorf("Expected timestamp %d, got %d", msg.Timestamp, result.Timestamp)
+		}
+		if result.Expiry != msg.Expiry {
+			t.Errorf("Expected expiry %d, got %d", msg.Expiry, result.Expiry)
+		}
+	})
+
+	t.Run("Redis error when getting finalized snapshot", func(t *testing.T) {
+		expectedErr := errors.New("Redis error when getting finalized snapshot")
+
+		mock.ExpectZRangeByScoreWithScores(fmt.Sprintf(redisutils.REDIS_KEY_FINALIZED_SNAPSHOTS, msg.ProjectID), &redis.ZRangeBy{
+			Min: strconv.Itoa(msg.EpochID),
+			Max: strconv.Itoa(msg.EpochID),
+		}).SetErr(expectedErr)
+
+		result, err := cache.GetFinalizedSnapshotAtEpochID(ctx, msg.ProjectID, msg.EpochID)
+		if err == nil {
+			t.Errorf("Expected an error, but no error occurred")
+		}
+
+		if result != nil {
+			t.Errorf("Expected nil result, got %v", result)
+		}
+	})
+}
