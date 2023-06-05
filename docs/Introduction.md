@@ -37,7 +37,7 @@ The project consists of the following services:
 ### Payload Commit
 
 The payload commit service has the following high-level functionalities:
-1. Listens to Rabbitmq "snapshot generated" events.
+1. Listens to Rabbitmq "Commit Snapshot" events.
 2. Store the snapshot on IPFS and/web3.storage (based on configuration).
     - stores cid from IPFS and web3.storage in Redis cache for the given project at provided epochID.
 3. Creates EIP-712 based structured data hash and generates the signature.
