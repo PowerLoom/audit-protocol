@@ -143,5 +143,5 @@ GET projectID:<project_id>:totalIncorrectSnapshotCount
 For the details of each component, refer to [component details](https://github.com/PowerLoom/pooler/blob/dockerify/README.md#major-components).
 
 ## Architecture Details
-Details about the working of various components are present in [Introduction](docs/Introduction.md)
+Details about the working of various components of Audit Protocol are present in [Introduction](docs/Introduction.md)
 if you're interested to know more about Audit Protocol.
