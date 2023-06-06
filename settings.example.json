@@ -1,5 +1,5 @@
 {
-  "instance_id": "account-address",
+  "instance_id": "snapshotter-account-address",
   "pooler_namespace": "relevant-namespace",
   "anchor_chain_rpc_url": "https://prost-rpc-url",
   "local_cache_path": "/home/ubuntu/local_cache/",
@@ -101,5 +101,9 @@
   "reporting": {
     "slack_webhook_url": "https://slack-reporting-url",
     "offchain_consensus_issue_endpoint": "https://powerloom-reporting-url"
+  },
+  "healthcheck": {
+    "port": 9000,
+    "endpoint": "/health"
   }
 }

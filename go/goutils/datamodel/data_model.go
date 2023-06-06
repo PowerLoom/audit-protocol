@@ -50,6 +50,7 @@ type PowerloomSnapshotFinalizedMessage struct {
 	ProjectID   string `json:"projectId"`
 	SnapshotCID string `json:"snapshotCid"`
 	Timestamp   int    `json:"timestamp"`
+	Expiry      int    `json:"expiry"` // for redis cleanup
 }
 
 type PayloadCommitFinalizedMessage struct {
