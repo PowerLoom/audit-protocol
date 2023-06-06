@@ -4,10 +4,6 @@
 - [Services](#services-details)
 - [Code Structure](#code-structure)
 
-
-***New Onchain architecture diagram with Audit-protocol components***
-
-![Onchain architecture](./images/onchain_architecture.png)
 # Audit Protocol
 
 This document describes some of the concepts and details the services of the Audit protocol.
@@ -23,8 +19,8 @@ The project consists of the following services:
 
 ### **Project**
 
-  1. A project in Audit-protocol can be any contract (like UNISWAPV2 pair contract) or aggregate of multiple contracts.
-  2. Each snapshot is specific to a project
+  1. A [project](https://github.com/PowerLoom/pooler/tree/onchain_pooler#extending-pooler-with-a-uniswap-v2-data-point) in Audit-protocol can be any contract (like UniswapV2 pair contract) or [aggregate](https://github.com/PowerLoom/pooler/tree/onchain_pooler#extending-pooler-with-a-uniswap-v2-data-point) of multiple such contracts.
+  2. Each [snapshot](https://github.com/PowerLoom/pooler/tree/onchain_pooler#base-snapshot-generation) is specific to a project
 
 ### **EpochID**
 
@@ -34,15 +30,15 @@ The project consists of the following services:
 
 ## Services Details
 
-### Payload Commit
+### Payload Commit Service
 
-The payload commit service has the following high-level functionalities:
-1. Listens to Rabbitmq "Commit Snapshot" events.
+The payload commit service has the following functionalities:
+1. Listens to Rabbitmq "Snaptshot Commit" messages.
 2. Store the snapshot on IPFS and/web3.storage (based on configuration).
     - stores cid from IPFS and web3.storage in Redis cache for the given project at provided epochID.
 3. Creates EIP-712 based structured data hash and generates the signature.
 4. Submits the signature to the relayer (if configured) otherwise submits snapshot to the smart contract.
-5. Listens for "snapshot finalizated" event on Rabbitmq
+5. Listens for "snapshot finalized" event on Rabbitmq
    - if finalized snapshot for a given project against an epochId has the same SnapshotCID as stored in Redis cache
      - store snapshot in local_disk cache
    - if finalized SnapshotCID is different, fetch finalized snapshot from IPFS and store in local disk cache
@@ -56,7 +52,7 @@ Code for this service is located at [payload-commit](../go/payload-commit/)
 ### Pruning Service (IPFS unpinning)
 
 The pruning service has the following high-level functionalities:
-- Runs as a cron job for every configured interval (default 7 days)
+- Runs as a cron job for every configured interval (default every day)
 - Unpins IPFS CIDs of snapshots stored in the local disk for more than configured value (default 7 days)
 
 ***Call Flow for pruning service***
