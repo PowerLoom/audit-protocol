@@ -5,7 +5,7 @@ participant cron
 database ipfs
 database local_disk
 
-ps -> cron: create cron entry according to config (default every 7days)
+ps -> cron: create cron entry according to config (default every day)
 
 group cron job triggered
     ps -> local_disk: read all snapshot cids older than configured max age (default 7days)
