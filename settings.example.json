@@ -1,5 +1,5 @@
 {
-  "instance_id": "snapshotter-account-address",
+  "instance_id": "account-address",
   "pooler_namespace": "relevant-namespace",
   "anchor_chain_rpc_url": "https://prost-rpc-url",
   "local_cache_path": "/home/ubuntu/local_cache/",
