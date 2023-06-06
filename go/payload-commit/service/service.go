@@ -369,7 +369,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).WithField("cid", unfinalizedSnapshot.SnapshotCID).Error("failed to unpin snapshot cid from ipfs")
 		}
 	} else {
-		err = s.redisCache.StoreLastFinalizedEpoch(context.Background(), msg.Message.ProjectID, prevEpochId)
+		err = s.redisCache.StoreLastFinalizedEpoch(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
 		if err != nil {
 			log.WithError(err).Error("failed to store last finalized epoch")
 		}
