@@ -1,7 +1,7 @@
 {
-  "instance_id": "snapshotter-account-address",
+  "instance_id": "account-address",
   "pooler_namespace": "relevant-namespace",
-  "anchor_chain_rpc_url": "https://rpc-url",
+  "anchor_chain_rpc_url": "https://prost-rpc-url",
   "local_cache_path": "/home/ubuntu/local_cache/",
   "concurrency": 20,
   "worker_concurrency": 100,
@@ -29,15 +29,15 @@
     }
   },
   "ipfs": {
-    "url": "/dns/ipfs/tcp/5001",
-    "reader_url": "/dns/ipfs/tcp/5001",
-    "reader_auth_config": {
-      "project_api_key": "ipfs-project-id",
-      "project_api_secret": "ipfs-project-secret"
-    },
+    "url": "ipfs-writer-url",
     "writer_auth_config": {
-      "project_api_key": "ipfs-project-id",
-      "project_api_secret": "ipfs-project-secret"
+      "project_api_key": "ipfs-writer-key",
+      "project_api_secret": "ipfs-writer-secret"
+    },
+    "reader_url": "ipfs-reader-url",
+    "reader_auth_config": {
+      "project_api_key": "ipfs-reader-key",
+      "project_api_secret": "ipfs-reader-secret"
     },
     "write_rate_limit": {
       "req_per_sec": 130,
@@ -81,16 +81,16 @@
     "domain": {
       "name": "PowerloomProtocolContract",
       "version": "0.1",
-      "chainId": "100",
-      "verifyingContract": "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"
+      "chainId": "102",
+      "verifyingContract": "protocol-state-contract"
     },
-    "accountAddress": "0x05BE3003b0C5047DfEA4B7563Ce07B8fb268d721",
-    "privateKey": "",
+    "accountAddress": "signer-account-address",
+    "privateKey": "signer-account-private-key",
     "deadlineBuffer": 10
   },
   "relayer": {
-    "host": "0.0.0.0:8080",
-    "endpoint": "/endpoint",
+    "host": "https://relayer-url",
+    "endpoint": "/submitSnapshot",
     "timeout": 60
   },
   "pruning": {
@@ -99,8 +99,8 @@
     "cron_frequency": "0 0 * * *"
   },
   "reporting": {
-    "slack_webhook_url": "https://hooks.slack.com/workflows/000000000/000000000/XXXXXXXXXXXXXXXXXXXXXXXX",
-    "offchain_consensus_issue_endpoint": "http://offchain-consensus:8080/reportIssue"
+    "slack_webhook_url": "https://slack-reporting-url",
+    "offchain_consensus_issue_endpoint": "https://powerloom-reporting-url"
   },
   "healthcheck": {
     "port": 9000,
