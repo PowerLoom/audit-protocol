@@ -326,6 +326,8 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).Error("failed to create file")
 		}
 
+		finalizedSnapshot := make(map[string]interface{})
+
 		// get snapshot from ipfs and store it in output path
 		err = s.ipfsClient.GetSnapshotFromIPFS(prevSnapshot.SnapshotCID, filePath)
 		if err != nil {
@@ -339,15 +341,19 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to get snapshot from ipfs",
 				})
+		} else {
+			snapshotDataBytes, _ := os.ReadFile(filePath)
+			_ = json.Unmarshal(snapshotDataBytes, &finalizedSnapshot)
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
 			SubmittedSnapshotCid: "",
 			FinalizedSnapshotCid: prevSnapshot.SnapshotCID,
+			FinalizedSnapshot:    finalizedSnapshot,
 			State:                datamodel.MissedSnapshotSubmission,
 			Reason:               "INTERNAL_ERROR: snapshot was missed due to internal error",
 		}
-	} else if unfinalizedSnapshot.SnapshotCID != prevSnapshot.SnapshotCID {
+	} else if unfinalizedSnapshot.SnapshotCID == prevSnapshot.SnapshotCID {
 		// if stored snapshot cid does not match with finalized snapshot cid, fetch snapshot from ipfs and store in local disk.
 		log.Debug("cached snapshot cid does not match with finalized snapshot cid, fetching snapshot commit message from ipfs")
 
@@ -370,6 +376,8 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).Error("failed to create file")
 		}
 
+		finalizedSnapshot := make(map[string]interface{})
+
 		// get snapshot from ipfs and store it in output path
 		err = s.ipfsClient.GetSnapshotFromIPFS(prevSnapshot.SnapshotCID, filePath)
 		if err != nil {
@@ -383,11 +391,16 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to get snapshot from ipfs",
 				})
+		} else {
+			snapshotDataBytes, _ := os.ReadFile(filePath)
+			_ = json.Unmarshal(snapshotDataBytes, &finalizedSnapshot)
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
 			SubmittedSnapshotCid: unfinalizedSnapshot.SnapshotCID,
+			SubmittedSnapshot:    unfinalizedSnapshot.Snapshot,
 			FinalizedSnapshotCid: prevSnapshot.SnapshotCID,
+			FinalizedSnapshot:    finalizedSnapshot,
 			State:                datamodel.IncorrectSnapshotSubmission,
 		}
 

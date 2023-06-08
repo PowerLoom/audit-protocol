@@ -69,7 +69,9 @@ type SnapshotRelayerPayload struct {
 
 type SnapshotterStatusReport struct {
 	SubmittedSnapshotCid string                  `json:"submittedSnapshotCid"`
+	SubmittedSnapshot    map[string]interface{}  `json:"submittedSnapshot,omitempty"`
 	FinalizedSnapshotCid string                  `json:"finalizedSnapshotCid"`
+	FinalizedSnapshot    map[string]interface{}  `json:"finalizedSnapshot,omitempty"`
 	State                SnapshotSubmissionState `json:"state"`
 	Reason               string                  `json:"reason"`
 }
