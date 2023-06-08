@@ -71,6 +71,7 @@ type SnapshotterStatusReport struct {
 	SubmittedSnapshotCid string                  `json:"submittedSnapshotCid"`
 	FinalizedSnapshotCid string                  `json:"finalizedSnapshotCid"`
 	State                SnapshotSubmissionState `json:"state"`
+	Reason               string                  `json:"reason"`
 }
 
 type UnfinalizedSnapshot struct {
