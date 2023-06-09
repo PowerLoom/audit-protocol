@@ -54,8 +54,8 @@ export ipfs_url="${IPFS_URL:-/dns/ipfs/tcp/5001}"
 export ipfs_api_key="${IPFS_API_KEY:-}"
 export ipfs_api_secret="${IPFS_API_SECRET:-}"
 
-export protocol_state_contract="${PROTOCOL_STATE_CONTRACT:-0xb71EAc336ffd776BAe4b1F861E58FaF13aB7c34B}"
-export relayer_host="${RELAYER_HOST:-https://relayer-test1b.powerloom.io}"
+export protocol_state_contract="${PROTOCOL_STATE_CONTRACT:-0xb1983E8ce013F62fC503AA5C7704B91a3bf25eC8}"
+export relayer_host="${RELAYER_HOST:-https://relayer-prod1b.powerloom.io/75822d76fa4d497ab3b409b3f097f4fa}"
 
 export slack_reporting_url="${SLACK_REPORTING_URL:-}"
 export powerloom_reporting_url="${POWERLOOM_REPORTING_URL:-}"
