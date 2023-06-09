@@ -127,6 +127,7 @@ func (e *UnsupportedMultiaddrError) Error() string {
 	return fmt.Sprintf("unsupported multiaddr url pattern: %s", e.URL)
 }
 
+// ParseMultiAddrURL tries to parse a multiaddr URL, if the url is not multiaddr it returns url as it is
 func ParseMultiAddrURL(url string) (string, error) {
 	parts := make([]string, 0) // [host,port,scheme]
 
@@ -171,10 +172,9 @@ func ParseMultiAddrURL(url string) (string, error) {
 		} else {
 			url = fmt.Sprintf("http://%s", url) // default to http if scheme is not present
 		}
-	} else {
-		return "", err
 	}
 
+	// return url as it is, invalid url will be caught while initializing ipfs client
 	return url, nil
 }
 
