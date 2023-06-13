@@ -210,6 +210,9 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		}, false)
 	}
 
+	// publish snapshot submitted event
+	go s.publishSnapshotSubmittedEvent(msg)
+
 	// sign payload commit message (eip712 signature)
 	signerData, signature, err := s.signPayload(msg.SnapshotCID, msg.ProjectID, int64(msg.EpochID))
 	if err != nil {
@@ -282,33 +285,6 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			return err
 		}
 	}
-
-	// publish snapshot submitted event
-	go func() {
-		eventMsg := &datamodel.SnapshotSubmittedEventMessage{
-			SnapshotCid: msg.SnapshotCID,
-			EpochId:     msg.EpochID,
-			ProjectId:   msg.ProjectID,
-			BroadcastId: s.uuid.String(),
-			Timestamp:   time.Now().Unix(),
-		}
-
-		msgBytes, err := json.Marshal(eventMsg)
-		if err != nil {
-			log.WithError(err).Error("failed to marshal snapshot submitted event message")
-
-			return
-		}
-
-		err = s.taskMgr.Publish(context.Background(), worker.TypeEventDetectorWorker, msgBytes)
-		if err != nil {
-			log.WithField("msg", string(msgBytes)).WithError(err).Error("failed to publish snapshot submitted event message")
-
-			return
-		}
-
-		log.Info("published snapshot submitted event message")
-	}()
 
 	// store unfinalized payload cid in redis
 	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg)
@@ -704,4 +680,31 @@ func (s *PayloadCommitService) initLocalCachedData() error {
 	}
 
 	return nil
+}
+
+// publishSnapshotSubmittedEvent publishes snapshot submitted event message
+func (s *PayloadCommitService) publishSnapshotSubmittedEvent(msg *datamodel.PayloadCommitMessage) {
+	eventMsg := &datamodel.SnapshotSubmittedEventMessage{
+		SnapshotCid: msg.SnapshotCID,
+		EpochId:     msg.EpochID,
+		ProjectId:   msg.ProjectID,
+		BroadcastId: s.uuid.String(),
+		Timestamp:   time.Now().Unix(),
+	}
+
+	msgBytes, err := json.Marshal(eventMsg)
+	if err != nil {
+		log.WithError(err).Error("failed to marshal snapshot submitted event message")
+
+		return
+	}
+
+	err = s.taskMgr.Publish(context.Background(), worker.TypeEventDetectorWorker, msgBytes)
+	if err != nil {
+		log.WithField("msg", string(msgBytes)).WithError(err).Error("failed to publish snapshot submitted event message")
+
+		return
+	}
+
+	log.Info("published snapshot submitted event message")
 }
