@@ -30,7 +30,7 @@ func initSettings() *settings.SettingsObj {
 		InstanceId:        "",
 		PoolerNamespace:   "",
 		AnchorChainRPCURL: "",
-		LocalCachePath:    "",
+		LocalCachePath:    "/tmp",
 		Concurrency:       0,
 		WorkerConcurrency: 0,
 		HttpClient:        nil,
