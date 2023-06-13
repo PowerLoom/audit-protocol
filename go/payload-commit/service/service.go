@@ -178,31 +178,34 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 	// upload payload commit msg to ipfs and web3 storage
 	err = s.uploadToIPFSandW3s(msg)
 	if err != nil {
-		log.WithError(err).Error("failed to upload payload commit message to ipfs")
+		log.WithError(err).Error("failed to upload snapshot to ipfs")
 
-		errMsg := "failed to upload payload commit message to ipfs"
+		errMsg := "failed to upload snapshot to ipfs"
 		if msg.Web3Storage {
-			errMsg = "failed to upload payload commit message to ipfs and web3 storage"
+			errMsg = "failed to upload snapshot to ipfs and web3 storage"
 		}
 
 		go s.issueReporter.Report(reporting.PayloadCommitInternalIssue, msg.ProjectID, strconv.Itoa(msg.EpochID), map[string]interface{}{
 			"issueDetails": "Error: " + err.Error(),
 			"msg":          errMsg,
 		})
-	}
 
-	// store unfinalized payload cid in redis
-	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg)
-	if err != nil {
-		log.WithField("epochId", msg.EpochID).
-			WithField("messageId", msg.ProjectID).
-			WithField("snapshotCid", msg.SnapshotCID).
-			WithError(err).Error("failed to store snapshot cid in redis")
+		go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
+			SubmittedSnapshotCid: "",
+			State:                datamodel.MissedSnapshotSubmission,
+			Reason:               errMsg,
+		}, false)
 	}
 
 	// sign payload commit message (eip712 signature)
 	signerData, signature, err := s.signPayload(msg.SnapshotCID, msg.ProjectID, int64(msg.EpochID))
 	if err != nil {
+		go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
+			SubmittedSnapshotCid: msg.SnapshotCID,
+			State:                datamodel.MissedSnapshotSubmission,
+			Reason:               "failed to sign payload commit message",
+		}, false)
+
 		return err
 	}
 
@@ -234,13 +237,19 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 					"msg":          "failed to submit snapshot to contract",
 				})
 
+			go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
+				SubmittedSnapshotCid: msg.SnapshotCID,
+				State:                datamodel.MissedSnapshotSubmission,
+				Reason:               "failed to submit snapshot to contract",
+			}, false)
+
 			return err
 		}
 	} else {
 		// send payload commit message with signature to relayer
 		err = s.sendSignatureToRelayer(txPayload)
 		if err != nil {
-			log.WithError(err).Error("failed to send signature to relayer")
+			log.WithError(err).Error("failed to submit snapshot to relayer")
 
 			go s.issueReporter.Report(
 				reporting.MissedSnapshotIssue,
@@ -248,13 +257,31 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 				strconv.Itoa(msg.EpochID),
 				map[string]interface{}{
 					"issueDetails": "Error: " + err.Error(),
-					"msg":          "failed to send signature to relayer",
+					"msg":          "failed to submit snapshot to relayer",
 				})
+
+			go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
+				SubmittedSnapshotCid: msg.SnapshotCID,
+				State:                datamodel.MissedSnapshotSubmission,
+				Reason:               "failed to submit snapshot to relayer",
+			}, false)
 
 			return err
 		}
+	}
 
-		return nil
+	// store unfinalized payload cid in redis
+	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg)
+	if err != nil {
+		log.WithField("epochId", msg.EpochID).
+			WithField("messageId", msg.ProjectID).
+			WithField("snapshotCid", msg.SnapshotCID).
+			WithError(err).Error("failed to store snapshot cid in redis")
+
+		go s.issueReporter.Report(reporting.PayloadCommitInternalIssue, msg.ProjectID, strconv.Itoa(msg.EpochID), map[string]interface{}{
+			"issueDetails": "Error: " + err.Error(),
+			"msg":          "failed to store unfinalized snapshot in redis",
+		})
 	}
 
 	return nil
@@ -315,9 +342,9 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
-			SubmittedSnapshotCid: "",
 			FinalizedSnapshotCid: prevSnapshot.SnapshotCID,
 			State:                datamodel.MissedSnapshotSubmission,
+			Reason:               "INTERNAL_ERROR: snapshot was missed due to internal error",
 		}
 	} else if unfinalizedSnapshot.SnapshotCID != prevSnapshot.SnapshotCID {
 		// if stored snapshot cid does not match with finalized snapshot cid, fetch snapshot from ipfs and store in local disk.
@@ -342,6 +369,8 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).Error("failed to create file")
 		}
 
+		finalizedSnapshot := make(map[string]interface{})
+
 		// get snapshot from ipfs and store it in output path
 		err = s.ipfsClient.GetSnapshotFromIPFS(prevSnapshot.SnapshotCID, filePath)
 		if err != nil {
@@ -355,12 +384,18 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to get snapshot from ipfs",
 				})
+		} else {
+			snapshotDataBytes, _ := os.ReadFile(filePath)
+			_ = json.Unmarshal(snapshotDataBytes, &finalizedSnapshot)
 		}
 
 		report = &datamodel.SnapshotterStatusReport{
 			SubmittedSnapshotCid: unfinalizedSnapshot.SnapshotCID,
+			SubmittedSnapshot:    unfinalizedSnapshot.Snapshot,
 			FinalizedSnapshotCid: prevSnapshot.SnapshotCID,
+			FinalizedSnapshot:    finalizedSnapshot,
 			State:                datamodel.IncorrectSnapshotSubmission,
+			Reason:               "INTERNAL_ERROR: submitted snapshot cid does not match with finalized snapshot cid",
 		}
 
 		// unpin unfinalized snapshot cid from ipfs
@@ -386,7 +421,7 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	}
 
 	// generate report and store in redis
-	err = s.redisCache.AddSnapshotterStatusReport(context.Background(), prevEpochId, msg.Message.ProjectID, report)
+	err = s.redisCache.AddSnapshotterStatusReport(context.Background(), prevEpochId, msg.Message.ProjectID, report, true)
 	if err != nil {
 		log.WithError(err).Error("failed to add snapshotter status report to redis")
 	}
