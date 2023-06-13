@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-retryablehttp"
+	log "github.com/sirupsen/logrus"
 
 	"audit-protocol/goutils/settings"
 
@@ -39,6 +40,7 @@ func GetDefaultHTTPClient(timeout int, settingsObj *settings.SettingsObj) *retry
 	retryableHTTPClient := retryablehttp.NewClient()
 	retryableHTTPClient.RetryMax = 5
 	retryableHTTPClient.HTTPClient = rawHTTPClient
+	retryableHTTPClient.Logger = log.StandardLogger()
 
 	return retryableHTTPClient
 }

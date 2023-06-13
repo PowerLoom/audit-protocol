@@ -496,6 +496,10 @@ func TestPayloadCommitService_HandleFinalizedPayloadCommitTask(t *testing.T) {
 		return nil
 	}
 
+	mockRedisCache.StoreLastFinalizedEpochMock = func(ctx context.Context, projectID string, epochId int) error {
+		return nil
+	}
+
 	// missed snapshot
 	t.Run("missed snapshot submission", func(t *testing.T) {
 		err := pcService.HandleFinalizedPayloadCommitTask(msg)

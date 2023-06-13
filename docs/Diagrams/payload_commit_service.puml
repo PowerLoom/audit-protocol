@@ -32,22 +32,24 @@ end
 group snapshot finalized message
     rabbitmq -> pcs: received snapshot finalized message
 
-    pcs -> redis: get snapshot cid against epochId for the project
+    pcs -> redis: store finalized snapshot
+    redis -> pcs: get finalized snapshot against previous epochId for the project
+    redis -> pcs: get unfinalized snapshot against previous epochId for the project
 
-    alt stored snapshotCid == finalized snapshotCid
+    alt unfinalized snapshotCid == finalized snapshotCid (for previous epochId)
         pcs -> local_disk: store snapshot data
 
-    else stored snapshotCid != finalized snapshotCid
+    else stored snapshotCid != finalized snapshotCid (for previous epochId)
         pcs -> ipfs: unpin unfinalized snapshotCid
         pcs -> ipfs: get snapshot for finalized cid
 
         pcs -> local_disk: store fetched snapshot data
     end
 
-    pcs -> redis: prune unfinalized snapshotCid older than 7 days
+    pcs -> redis: prune unfinalized snapshotCid older than (configured duration default is 7days)
 
     pcs -> redis: generate and store snapshotter report
-    note left: [project wise]\ntotal missed snapshots count\ntotal successful snapshots count\nstatus report
+    note left: [project wise]\ntotal missed snapshots count\ntotal incorrect snapshots count\ntotal successful snapshots count\nstatus report
 end
 
 @enduml

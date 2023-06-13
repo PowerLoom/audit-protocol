@@ -47,7 +47,7 @@ fi
 
 cp settings.example.json settings.json
 
-export namespace=UNISWAPV2-ph15-prod
+export namespace=UNISWAPV2
 export prost_rpc_url="${PROST_RPC_URL:-https://rpc-prost1b.powerloom.io}"
 
 export ipfs_url="${IPFS_URL:-/dns/ipfs/tcp/5001}"

@@ -59,11 +59,11 @@ func InitW3S(settingsObj *settings.SettingsObj) Service {
 }
 
 func (w *W3S) UploadToW3s(msg interface{}) (string, error) {
-	log.Debug("uploading payload commit message to web3 storage")
-
-	if w.settingsObj.Web3Storage.URL == "" {
+	if w.settingsObj.Web3Storage.URL == "" || w.settingsObj.Web3Storage.APIToken == "" {
 		return "", nil
 	}
+
+	log.Debug("uploading payload commit message to web3 storage")
 
 	reqURL := w.settingsObj.Web3Storage.URL + w.settingsObj.Web3Storage.UploadURLSuffix
 

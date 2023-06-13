@@ -357,11 +357,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 			log.WithError(err).WithField("cid", unfinalizedSnapshot.SnapshotCID).Error("failed to unpin snapshot cid from ipfs")
 		}
 	} else {
-		err = s.redisCache.StoreLastFinalizedEpoch(context.Background(), msg.Message.ProjectID, prevEpochId)
-		if err != nil {
-			log.WithError(err).Error("failed to store last finalized epoch")
-		}
-
 		outputPath := filepath.Join(s.settingsObj.LocalCachePath, msg.Message.ProjectID, "snapshots", prevSnapshot.SnapshotCID+".json")
 
 		data, err := json.Marshal(unfinalizedSnapshot.Snapshot)
@@ -382,6 +377,11 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	err = s.redisCache.AddSnapshotterStatusReport(context.Background(), prevEpochId, msg.Message.ProjectID, report)
 	if err != nil {
 		log.WithError(err).Error("failed to add snapshotter status report to redis")
+	}
+
+	err = s.redisCache.StoreLastFinalizedEpoch(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
+	if err != nil {
+		log.WithError(err).Error("failed to store last finalized epoch")
 	}
 
 	return nil

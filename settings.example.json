@@ -82,12 +82,12 @@
     "domain": {
       "name": "PowerloomProtocolContract",
       "version": "0.1",
-      "chainId": "100",
+      "chainId": "102",
       "verifyingContract": "protocol-state-contract"
     },
     "accountAddress": "signer-account-address",
     "privateKey": "signer-account-private-key",
-    "deadlineBuffer": 10
+    "deadlineBuffer": 30
   },
   "relayer": {
     "host": "https://relayer-url",
@@ -100,8 +100,8 @@
     "cron_frequency": "0 0 * * *"
   },
   "reporting": {
-    "slack_webhook_url": "https://hooks.slack.com/workflows/000000000/000000000/XXXXXXXXXXXXXXXXXXXXXXXX",
-    "offchain_consensus_issue_endpoint": "http://offchain-consensus:8080/reportIssue"
+    "slack_webhook_url": "https://slack-reporting-url",
+    "offchain_consensus_issue_endpoint": "https://powerloom-reporting-url"
   },
   "healthcheck": {
     "port": 9000,
