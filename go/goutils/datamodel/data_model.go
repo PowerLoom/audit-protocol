@@ -47,10 +47,10 @@ type (
 type PayloadCommitMessage struct {
 	Message       map[string]interface{} `json:"message" validate:"required"`
 	Web3Storage   bool                   `json:"web3Storage"`
-	SourceChainID int                    `json:"sourceChainId" validate:"required"`
+	SourceChainID int                    `json:"sourceChainId"`
 	ProjectID     string                 `json:"projectId" validate:"required"`
 	EpochID       int                    `json:"epochId" validate:"required"`
-	SnapshotCID   string                 `json:"snapshotCID" validate:"required"`
+	SnapshotCID   string                 `json:"snapshotCID"`
 }
 
 type PowerloomSnapshotFinalizedMessage struct {
@@ -64,7 +64,7 @@ type PowerloomSnapshotFinalizedMessage struct {
 type PayloadCommitFinalizedMessage struct {
 	Message       *PowerloomSnapshotFinalizedMessage `json:"message" validate:"required"`
 	Web3Storage   bool                               `json:"web3Storage"`
-	SourceChainID int                                `json:"sourceChainId" validate:"required"`
+	SourceChainID int                                `json:"sourceChainId"`
 }
 
 type SnapshotRelayerPayload struct {
