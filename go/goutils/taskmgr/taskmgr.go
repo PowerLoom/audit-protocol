@@ -10,16 +10,16 @@ import (
 )
 
 const (
-	TaskSuffix      string = "task"
-	DataSuffix      string = ".Data"
-	FinalizedSuffix string = ".Finalized"
-	DLXSuffix       string = "dlx"
+	TaskSuffix        string = "task"
+	DataSuffix        string = ".Data"
+	FinalizedSuffix   string = ".Finalized"
+	SnapshotSubmitted string = ".SnapshotSubmitted"
 )
 
 // TaskMgr interface is used to publish and consume tasks.
 // can be implemented by rabbitmq, kafka, webhooks etc.
 type TaskMgr interface {
-	Publish(ctx context.Context) error
+	Publish(ctx context.Context, workerType worker.Type, msg []byte) error
 
 	// Consume creates a new consumer and starts consuming tasks.
 	// as this method can be implemented by different task managers, we need to pass config for consumer initialization.

@@ -20,11 +20,16 @@
     "setup": {
       "core": {
         "commit_payload_exchange": "powerloom-backend-commit-payload:",
-        "exchange": "audit-protocol-backend"
+        "exchange": "audit-protocol-backend",
+        "event_detector_exchange": "powerloom-backend-event-detector:"
       },
       "payload_commit": {
         "queue_name_prefix": "powerloom-backend-commit-payload-queue:",
         "routing_key_prefix": "powerloom-backend-commit-payload:"
+      },
+      "event_detector": {
+          "queue_name_prefix": "powerloom-event-detector:",
+          "routing_key_prefix": "powerloom-event-detector:"
       }
     }
   },

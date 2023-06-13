@@ -90,3 +90,11 @@ type SnapshotterIssue struct {
 	TimeOfReporting string `json:"timeOfReporting"`
 	Extra           string `json:"extra"`
 }
+
+type SnapshotSubmittedEventMessage struct {
+	SnapshotCid string `json:"snapshotCid"`
+	EpochId     int    `json:"epochId"`
+	ProjectId   string `json:"projectId"`
+	BroadcastId string `json:"broadcastId"`
+	Timestamp   int64  `json:"timestamp"`
+}

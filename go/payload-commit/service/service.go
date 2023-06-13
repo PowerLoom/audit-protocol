@@ -15,12 +15,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
+	"github.com/google/uuid"
 	"github.com/hashicorp/go-retryablehttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
@@ -34,6 +36,8 @@ import (
 	contractApi "audit-protocol/goutils/smartcontract/api"
 	"audit-protocol/goutils/smartcontract/transactions"
 	"audit-protocol/goutils/taskmgr"
+	rabbitmqMgr "audit-protocol/goutils/taskmgr/rabbitmq"
+	"audit-protocol/goutils/taskmgr/worker"
 	w3storage "audit-protocol/goutils/w3s"
 	"audit-protocol/payload-commit/signer"
 )
@@ -52,6 +56,8 @@ type PayloadCommitService struct {
 	privKey       *ecdsa.PrivateKey
 	issueReporter *reporting.IssueReporter
 	httpClient    *retryablehttp.Client
+	taskMgr       *rabbitmqMgr.RabbitmqTaskMgr
+	uuid          uuid.UUID
 }
 
 // InitPayloadCommitService initializes the payload commit service.
@@ -96,6 +102,11 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		log.WithError(err).Fatal("failed to get private key")
 	}
 
+	taskMgr, err := gi.Invoke[*rabbitmqMgr.RabbitmqTaskMgr]()
+	if err != nil {
+		log.WithError(err).Fatal("failed to invoke task manager")
+	}
+
 	pcService := &PayloadCommitService{
 		settingsObj:   settingsObj,
 		redisCache:    redisCache,
@@ -108,6 +119,8 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		privKey:       privKey,
 		issueReporter: reporter,
 		httpClient:    httpclient.GetDefaultHTTPClient(settingsObj.HttpClient.ConnectionTimeout),
+		taskMgr:       taskMgr,
+		uuid:          uuid.New(),
 	}
 
 	_ = pcService.initLocalCachedData()
@@ -269,6 +282,33 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 			return err
 		}
 	}
+
+	// publish snapshot submitted event
+	go func() {
+		eventMsg := &datamodel.SnapshotSubmittedEventMessage{
+			SnapshotCid: msg.SnapshotCID,
+			EpochId:     msg.EpochID,
+			ProjectId:   msg.ProjectID,
+			BroadcastId: s.uuid.String(),
+			Timestamp:   time.Now().Unix(),
+		}
+
+		msgBytes, err := json.Marshal(eventMsg)
+		if err != nil {
+			log.WithError(err).Error("failed to marshal snapshot submitted event message")
+
+			return
+		}
+
+		err = s.taskMgr.Publish(context.Background(), worker.TypeEventDetectorWorker, msgBytes)
+		if err != nil {
+			log.WithField("msg", string(msgBytes)).WithError(err).Error("failed to publish snapshot submitted event message")
+
+			return
+		}
+
+		log.Info("published snapshot submitted event message")
+	}()
 
 	// store unfinalized payload cid in redis
 	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg)
