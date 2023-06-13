@@ -15,7 +15,7 @@ type DbCache interface {
 	CheckIfProjectExists(ctx context.Context, projectID string) (bool, error)
 	StoreProjects(background context.Context, projects []string) error
 	AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamodel.PayloadCommitMessage) error
-	AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error
+	AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport, incrCount bool) error
 	StoreLastFinalizedEpoch(ctx context.Context, projectID string, epochId int) error
 	StoreFinalizedSnapshot(ctx context.Context, msg *datamodel.PowerloomSnapshotFinalizedMessage) error
 	GetFinalizedSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.PowerloomSnapshotFinalizedMessage, error)

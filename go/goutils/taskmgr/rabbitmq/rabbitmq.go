@@ -50,9 +50,42 @@ func NewRabbitmqTaskMgr() *RabbitmqTaskMgr {
 	return taskMgr
 }
 
-func (r *RabbitmqTaskMgr) Publish(ctx context.Context) error {
-	// TODO implement me
-	panic("implement me")
+func (r *RabbitmqTaskMgr) Publish(ctx context.Context, workerType worker.Type, msg []byte) error {
+	defer func() {
+		// recover from panic
+		if p := recover(); p != nil {
+			log.Errorf("recovered from panic: %v", p)
+		}
+	}()
+
+	channel, err := r.getChannel(workerType)
+	if err != nil {
+		return err
+	}
+
+	exchange := r.getExchange(workerType)
+	routingKey := r.getRoutingKeys(workerType)
+
+	err = channel.Publish(
+		exchange,
+		routingKey[0],
+		false, // mandatory
+		false, // immediate
+		amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			Body:         msg,
+		},
+	)
+
+	if err != nil {
+		log.WithError(err).
+			WithField("exchange", exchange).
+			WithField("routingKey", routingKey).
+			Error("failed to publish rabbitmq message")
+	}
+
+	return err
 }
 
 // getChannel returns a channel from the connection
@@ -203,6 +236,8 @@ func (r *RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
 	switch workerType {
 	case worker.TypePayloadCommitWorker:
 		return fmt.Sprintf("%s%s", r.settings.Rabbitmq.Setup.Core.CommitPayloadExchange, r.settings.PoolerNamespace)
+	case worker.TypeEventDetectorWorker:
+		return fmt.Sprintf("%s%s", r.settings.Rabbitmq.Setup.Core.EventDetectorExchange, r.settings.PoolerNamespace)
 	default:
 		return ""
 	}
@@ -212,6 +247,8 @@ func (r *RabbitmqTaskMgr) getQueue(workerType worker.Type, suffix string) string
 	switch workerType {
 	case worker.TypePayloadCommitWorker:
 		return fmt.Sprintf("%s%s:%s", r.settings.Rabbitmq.Setup.PayloadCommit.QueueNamePrefix, r.settings.PoolerNamespace, r.settings.InstanceId)
+	case worker.TypeEventDetectorWorker:
+		return fmt.Sprintf("%s%s:%s", r.settings.Rabbitmq.Setup.EventDetector.QueueNamePrefix, r.settings.PoolerNamespace, r.settings.InstanceId)
 	default:
 		return ""
 	}
@@ -224,6 +261,10 @@ func (r *RabbitmqTaskMgr) getRoutingKeys(workerType worker.Type) []string {
 		return []string{
 			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.PayloadCommit.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.FinalizedSuffix),
 			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.PayloadCommit.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.DataSuffix),
+		}
+	case worker.TypeEventDetectorWorker:
+		return []string{
+			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.EventDetector.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.SnapshotSubmitted),
 		}
 	default:
 		return nil

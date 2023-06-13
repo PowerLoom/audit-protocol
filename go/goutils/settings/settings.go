@@ -38,11 +38,16 @@ type (
 			Core struct {
 				Exchange              string `json:"exchange"`
 				CommitPayloadExchange string `json:"commit_payload_exchange"`
+				EventDetectorExchange string `json:"event_detector_exchange"`
 			} `json:"core"`
 			PayloadCommit struct {
 				QueueNamePrefix  string `json:"queue_name_prefix"`
 				RoutingKeyPrefix string `json:"routing_key_prefix"`
 			} `json:"payload_commit"`
+			EventDetector struct {
+				QueueNamePrefix  string `json:"queue_name_prefix"`
+				RoutingKeyPrefix string `json:"routing_key_prefix"`
+			} `json:"event_detector"`
 		} `json:"setup"`
 	}
 
