@@ -68,9 +68,12 @@ type SnapshotRelayerPayload struct {
 }
 
 type SnapshotterStatusReport struct {
-	SubmittedSnapshotCid string                  `json:"submittedSnapshotCid"`
+	SubmittedSnapshotCid string                  `json:"submittedSnapshotCid,omitempty"`
+	SubmittedSnapshot    map[string]interface{}  `json:"submittedSnapshot,omitempty"`
 	FinalizedSnapshotCid string                  `json:"finalizedSnapshotCid"`
+	FinalizedSnapshot    map[string]interface{}  `json:"finalizedSnapshot,omitempty"`
 	State                SnapshotSubmissionState `json:"state"`
+	Reason               string                  `json:"reason"`
 }
 
 type UnfinalizedSnapshot struct {
@@ -86,4 +89,12 @@ type SnapshotterIssue struct {
 	EpochID         string `json:"epochId"`
 	TimeOfReporting string `json:"timeOfReporting"`
 	Extra           string `json:"extra"`
+}
+
+type SnapshotSubmittedEventMessage struct {
+	SnapshotCid string `json:"snapshotCid"`
+	EpochId     int    `json:"epochId"`
+	ProjectId   string `json:"projectId"`
+	BroadcastId string `json:"broadcastId"`
+	Timestamp   int64  `json:"timestamp"`
 }

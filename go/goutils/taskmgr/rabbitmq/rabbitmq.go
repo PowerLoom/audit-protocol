@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/swagftw/gi"
 
 	"audit-protocol/goutils/settings"
@@ -18,9 +19,17 @@ import (
 )
 
 type RabbitmqTaskMgr struct {
-	conn     *amqp.Connection
-	settings *settings.SettingsObj
+	consumeConn *amqp.Connection
+	publishConn *amqp.Connection
+	settings    *settings.SettingsObj
 }
+
+type ConnectionType string
+
+const (
+	Consumer  ConnectionType = "consumer"
+	Publisher ConnectionType = "publisher"
+)
 
 var _ taskmgr.TaskMgr = &RabbitmqTaskMgr{}
 
@@ -31,14 +40,31 @@ func NewRabbitmqTaskMgr() *RabbitmqTaskMgr {
 		log.WithError(err).Fatalf("failed to invoke settingsObj object")
 	}
 
-	conn, err := Dial(settingsObj)
+	consumeConn := new(amqp.Connection)
+	publishConn := new(amqp.Connection)
+
+	err = backoff.Retry(func() error {
+		consumeConn, err = Dial(settingsObj)
+
+		return err
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
+	if err != nil {
+		log.WithError(err).Fatalf("failed to connect to rabbitmq")
+	}
+
+	err = backoff.Retry(func() error {
+		publishConn, err = Dial(settingsObj)
+
+		return err
+	}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
 	if err != nil {
 		log.WithError(err).Fatalf("failed to connect to rabbitmq")
 	}
 
 	taskMgr := &RabbitmqTaskMgr{
-		conn:     conn,
-		settings: settingsObj,
+		consumeConn: consumeConn,
+		publishConn: publishConn,
+		settings:    settingsObj,
 	}
 
 	if err := gi.Inject(taskMgr); err != nil {
@@ -50,29 +76,85 @@ func NewRabbitmqTaskMgr() *RabbitmqTaskMgr {
 	return taskMgr
 }
 
-func (r *RabbitmqTaskMgr) Publish(ctx context.Context) error {
-	// TODO implement me
-	panic("implement me")
+// TODO: improve publishing logic with channel pooling
+func (r *RabbitmqTaskMgr) Publish(ctx context.Context, workerType worker.Type, msg []byte) error {
+	defer func() {
+		// recover from panic
+		if p := recover(); p != nil {
+			log.Errorf("recovered from panic: %v", p)
+		}
+	}()
+
+	channel, err := r.getChannel(workerType, Publisher)
+	if err != nil {
+		return err
+	}
+
+	defer func(channel *amqp.Channel) {
+		err = channel.Close()
+		if err != nil {
+			log.WithError(err).Error("failed to close rabbitmq channel")
+		}
+	}(channel)
+
+	exchange := r.getExchange(workerType)
+	routingKey := r.getRoutingKeys(workerType)
+
+	err = channel.Publish(
+		exchange,
+		routingKey[0],
+		true,  // mandatory
+		false, // immediate
+		amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			Body:         msg,
+		},
+	)
+	if err != nil {
+		log.WithError(err).
+			WithField("exchange", exchange).
+			WithField("routingKey", routingKey).
+			Error("failed to publish rabbitmq message")
+	}
+
+	return err
 }
 
 // getChannel returns a channel from the connection
 // this method is also used to create a new channel if channel is closed
-func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, error) {
-	if r.conn == nil || r.conn.IsClosed() {
+func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type, connectionType ConnectionType) (*amqp.Channel, error) {
+	var conn *amqp.Connection
+
+	switch connectionType {
+	case Consumer:
+		conn = r.consumeConn
+	case Publisher:
+		conn = r.publishConn
+	}
+
+	if conn == nil || conn.IsClosed() {
 		log.Debug("rabbitmq connection is closed, reconnecting")
 		var err error
 
-		r.conn, err = Dial(r.settings)
+		conn, err = Dial(r.settings)
 		if err != nil {
 			return nil, err
 		}
+
+		switch connectionType {
+		case Consumer:
+			r.consumeConn = conn
+		case Publisher:
+			r.publishConn = conn
+		}
 	}
 
-	channel, err := r.conn.Channel()
+	channel, err := conn.Channel()
 	if err != nil {
 		log.Errorf("failed to open a channel on rabbitmq: %v", err)
 
-		return nil, taskmgr.ErrConsumerInitFailed
+		return nil, err
 	}
 
 	exchange := r.getExchange(workerType)
@@ -81,7 +163,7 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 	if err != nil {
 		log.Errorf("failed to declare an exchange on rabbitmq: %v", err)
 
-		return nil, taskmgr.ErrConsumerInitFailed
+		return nil, err
 	}
 
 	// declare the queue
@@ -92,7 +174,7 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 	if err != nil {
 		log.Errorf("failed to declare a queue on rabbitmq: %v", err)
 
-		return nil, taskmgr.ErrConsumerInitFailed
+		return nil, err
 	}
 
 	// bind the queue to the exchange on the routing keys
@@ -101,7 +183,7 @@ func (r *RabbitmqTaskMgr) getChannel(workerType worker.Type) (*amqp.Channel, err
 		if err != nil {
 			log.WithField("routingKey", routingKey).Errorf("failed to bind a queue on rabbitmq: %v", err)
 
-			return nil, taskmgr.ErrConsumerInitFailed
+			return nil, err
 		}
 	}
 
@@ -116,7 +198,8 @@ func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, m
 			log.Errorf("recovered from panic: %v", p)
 		}
 	}()
-	channel, err := r.getChannel(workerType)
+
+	channel, err := r.getChannel(workerType, Consumer)
 	if err != nil {
 		return err
 	}
@@ -129,7 +212,7 @@ func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, m
 	}(channel)
 
 	defer func() {
-		err = r.conn.Close()
+		err = r.consumeConn.Close()
 		if err != nil && !errors.Is(err, amqp.ErrClosed) {
 			log.Errorf("failed to close connection on rabbitmq: %v", err)
 		}
@@ -157,7 +240,7 @@ func (r *RabbitmqTaskMgr) Consume(ctx context.Context, workerType worker.Type, m
 	connCloseChan := make(chan *amqp.Error, 1)
 	channelCloseChan := make(chan *amqp.Error, 1)
 
-	connCloseChan = r.conn.NotifyClose(connCloseChan)
+	connCloseChan = r.consumeConn.NotifyClose(connCloseChan)
 	channelCloseChan = channel.NotifyClose(channelCloseChan)
 
 	go func() {
@@ -203,6 +286,8 @@ func (r *RabbitmqTaskMgr) getExchange(workerType worker.Type) string {
 	switch workerType {
 	case worker.TypePayloadCommitWorker:
 		return fmt.Sprintf("%s%s", r.settings.Rabbitmq.Setup.Core.CommitPayloadExchange, r.settings.PoolerNamespace)
+	case worker.TypeEventDetectorWorker:
+		return fmt.Sprintf("%s%s", r.settings.Rabbitmq.Setup.Core.EventDetectorExchange, r.settings.PoolerNamespace)
 	default:
 		return ""
 	}
@@ -212,6 +297,8 @@ func (r *RabbitmqTaskMgr) getQueue(workerType worker.Type, suffix string) string
 	switch workerType {
 	case worker.TypePayloadCommitWorker:
 		return fmt.Sprintf("%s%s:%s", r.settings.Rabbitmq.Setup.PayloadCommit.QueueNamePrefix, r.settings.PoolerNamespace, r.settings.InstanceId)
+	case worker.TypeEventDetectorWorker:
+		return fmt.Sprintf("%s%s:%s", r.settings.Rabbitmq.Setup.EventDetector.QueueNamePrefix, r.settings.PoolerNamespace, r.settings.InstanceId)
 	default:
 		return ""
 	}
@@ -225,18 +312,32 @@ func (r *RabbitmqTaskMgr) getRoutingKeys(workerType worker.Type) []string {
 			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.PayloadCommit.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.FinalizedSuffix),
 			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.PayloadCommit.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.DataSuffix),
 		}
+	case worker.TypeEventDetectorWorker:
+		return []string{
+			fmt.Sprintf("%s%s:%s%s", r.settings.Rabbitmq.Setup.EventDetector.RoutingKeyPrefix, r.settings.PoolerNamespace, r.settings.InstanceId, taskmgr.SnapshotSubmitted),
+		}
 	default:
 		return nil
 	}
 }
 
 func (r *RabbitmqTaskMgr) Shutdown(ctx context.Context) error {
-	if r.conn == nil || r.conn.IsClosed() {
+	if r.consumeConn == nil || r.consumeConn.IsClosed() {
 		return nil
 	}
 
-	if err := r.conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
+	if err := r.consumeConn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
 		log.Errorf("failed to close connection on rabbitmq: %v", err)
+
+		return err
+	}
+
+	if r.publishConn == nil || r.publishConn.IsClosed() {
+		return nil
+	}
+
+	if err := r.publishConn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
+		log.WithError(err).Error("failed to close connection on rabbitmq")
 
 		return err
 	}

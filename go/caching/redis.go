@@ -194,10 +194,29 @@ func (r *RedisCache) AddUnfinalizedSnapshotCID(ctx context.Context, msg *datamod
 }
 
 // AddSnapshotterStatusReport adds the snapshotter's status report to the given project and epoch ID.
-func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport) error {
+func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int, projectId string, report *datamodel.SnapshotterStatusReport, incrCount bool) error {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_SNAPSHOTTER_STATUS_REPORT, projectId)
 
+	storedReport := new(datamodel.SnapshotterStatusReport)
+
+	reportJsonString, err := r.readClient.HGet(ctx, key, strconv.Itoa(epochId)).Result()
+	if err == nil || reportJsonString != "" {
+		_ = json.Unmarshal([]byte(reportJsonString), storedReport)
+	}
+
 	if report != nil {
+		if storedReport.SubmittedSnapshotCid != "" {
+			report.SubmittedSnapshotCid = storedReport.SubmittedSnapshotCid
+		}
+
+		if storedReport.Reason != "" {
+			report.Reason = storedReport.Reason
+		}
+
+		if storedReport.FinalizedSnapshotCid != "" {
+			report.FinalizedSnapshotCid = storedReport.FinalizedSnapshotCid
+		}
+
 		reportJson, err := json.Marshal(report)
 		if err != nil {
 			log.WithError(err).Error("failed to marshal snapshotter status report")
@@ -222,9 +241,11 @@ func (r *RedisCache) AddSnapshotterStatusReport(ctx context.Context, epochId int
 		key = fmt.Sprintf(redisutils.REDIS_KEY_TOTAL_SUCCESSFUL_SNAPSHOT_COUNT, projectId)
 	}
 
-	err := r.writeClient.Incr(ctx, key).Err()
-	if err != nil {
-		log.WithError(err).Error("failed to increment total missed snapshot count")
+	if incrCount {
+		err = r.writeClient.Incr(ctx, key).Err()
+		if err != nil {
+			log.WithError(err).Error("failed to increment total missed snapshot count")
+		}
 	}
 
 	log.Debug("added snapshotter status report in redis")
