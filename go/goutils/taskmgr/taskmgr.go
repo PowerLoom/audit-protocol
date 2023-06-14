@@ -2,7 +2,6 @@ package taskmgr
 
 import (
 	"context"
-	"errors"
 
 	"github.com/streadway/amqp"
 
@@ -78,7 +77,3 @@ func (t *Task) Nack(requeue bool) error {
 }
 
 type ErrTaskMgr error
-
-var (
-	ErrConsumerInitFailed = errors.New("failed to initialize consumer")
-)
