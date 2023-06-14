@@ -31,19 +31,17 @@ func (w *Worker) ConsumeTask() error {
 	// start consuming messages in separate go routine.
 	// messages will be sent back over taskChan.
 	go func() {
-		err := backoff.Retry(func() error {
-			err := w.taskmgr.Consume(context.Background(), workerInterface.TypePayloadCommitWorker, taskChan)
-			if err != nil {
-				log.WithError(err).Error("failed to consume the message, retrying")
+		for {
+			_ = backoff.Retry(func() error {
+				err := w.taskmgr.Consume(context.Background(), workerInterface.TypePayloadCommitWorker, taskChan)
+				if err != nil {
+					log.WithError(err).Error("failed to consume the message, retrying")
 
-				return err
-			}
+					return err
+				}
 
-			return nil
-		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
-
-		if err != nil {
-			log.WithError(err).Fatal("failed to consume the messages after max retries")
+				return nil
+			}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
 		}
 	}()
 
