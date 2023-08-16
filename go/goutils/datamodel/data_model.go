@@ -18,11 +18,6 @@ type SnapshotterStateUpdate struct {
 
 const RELAYER_SEND_STATE_ID string = "RELAYER_SEND"
 
-type SnapshotterEpochProcessingReportItem struct {
-	EpochID          int                    `json:"epochId"`
-	TransitionStatus map[string]interface{} `json:"transitionStatus"`
-}
-
 type SummaryProjectVerificationStatus struct {
 	ProjectId     string `json:"projectId"`
 	ProjectHeight string `json:"chainHeight"`

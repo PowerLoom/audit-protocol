@@ -44,13 +44,7 @@ func (r *RedisCache) UpdateEpochProcessingStatus(ctx context.Context, projectID 
 		Error:     err,
 		Timestamp: time.Now().Unix(),
 	}
-	state_update := datamodel.SnapshotterEpochProcessingReportItem{
-		EpochID: epochId,
-		TransitionStatus: map[string]interface{}{
-			projectID: transition_status_item,
-		},
-	}
-	state_update_bytes, err2 := json.Marshal(state_update)
+	state_update_bytes, err2 := json.Marshal(transition_status_item)
 
 	if err2 != nil {
 		log.WithError(err2).Error("failed to marshal state update message on relayer submission")
