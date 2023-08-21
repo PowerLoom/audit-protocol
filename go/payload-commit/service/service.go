@@ -252,6 +252,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to submit snapshot to contract",
 				})
+			go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "failed", err.Error())
 
 			go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
 				SubmittedSnapshotCid: msg.SnapshotCID,
@@ -261,6 +262,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 
 			return err
 		}
+		go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "success", "")
 	} else {
 		// send payload commit message with signature to relayer
 		err = s.sendSignatureToRelayer(txPayload)
@@ -275,7 +277,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 					"issueDetails": "Error: " + err.Error(),
 					"msg":          "failed to submit snapshot to relayer",
 				})
-
+			go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "failed", err.Error())
 			go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
 				SubmittedSnapshotCid: msg.SnapshotCID,
 				State:                datamodel.MissedSnapshotSubmission,
@@ -284,6 +286,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 
 			return err
 		}
+		go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "success", "")
 	}
 
 	// store unfinalized payload cid in redis

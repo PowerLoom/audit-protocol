@@ -33,6 +33,36 @@ func NewRedisCache(readClient, writeClient *redis.Client) *RedisCache {
 	return cache
 }
 
+func (r *RedisCache) UpdateEpochProcessingStatus(ctx context.Context, projectID string, epochId int, status string, err string) error {
+	htable := fmt.Sprintf(redisutils.REDIS_KEY_EPOCH_STATE_ID, strconv.Itoa(epochId), datamodel.RELAYER_SEND_STATE_ID)
+
+	l := log.WithField("hash table", htable).
+		WithField("projectID", projectID).WithField("epochId", epochId).WithField("status", status)
+
+	transition_status_item := datamodel.SnapshotterStateUpdate{
+		Status:    status,
+		Error:     err,
+		Timestamp: time.Now().Unix(),
+	}
+	state_update_bytes, err2 := json.Marshal(transition_status_item)
+
+	if err2 != nil {
+		log.WithError(err2).Error("failed to marshal state update message on relayer submission")
+		return err2
+	}
+	err_ := r.writeClient.HSet(
+		ctx,
+		htable,
+		projectID,
+		string(state_update_bytes),
+	).Err()
+	if err_ != nil {
+		l.WithError(err_).Error("failed to update epoch processing status in redis")
+		return err_
+	}
+	return nil
+}
+
 func (r *RedisCache) GetUnfinalizedSnapshotAtEpochID(ctx context.Context, projectID string, epochId int) (*datamodel.UnfinalizedSnapshot, error) {
 	key := fmt.Sprintf(redisutils.REDIS_KEY_PROJECT_UNFINALIZED_SNAPSHOT_CIDS, projectID)
 	snapshotCid := ""

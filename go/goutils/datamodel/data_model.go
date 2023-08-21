@@ -9,6 +9,15 @@ const (
 	IncorrectSnapshotSubmission SnapshotSubmissionState = "SUBMITTED_INCORRECT_SNAPSHOT"
 )
 
+type SnapshotterStateUpdate struct {
+	Status    string                 `json:"status"`
+	Error     string                 `json:"error"`
+	Extra     map[string]interface{} `json:"extra"`
+	Timestamp int64                  `json:"timestamp"`
+}
+
+const RELAYER_SEND_STATE_ID string = "RELAYER_SEND"
+
 type SummaryProjectVerificationStatus struct {
 	ProjectId     string `json:"projectId"`
 	ProjectHeight string `json:"chainHeight"`
