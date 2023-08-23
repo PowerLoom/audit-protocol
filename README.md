@@ -47,7 +47,7 @@ RabbitMQ message wise flow as mentioned in [Project Architecture](#project-archi
 1. `Snapshot Commit Message`:
    - Store snapshots on decentralized storage protocols like IPFS and/or Web3 Storage.
    - Submit snapshots to the smart contract for consensus.
-2. `Snaptshot Finalized Message`:
+2. `Snapshot Finalized Message`:
    - Receives finalized snapshot.
    - Compare committed snapshot with finalized snapshot.
    - Generate snapshotter report for snapshot submissions accordingly.
