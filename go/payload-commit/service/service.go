@@ -265,26 +265,35 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "success", "")
 	} else {
 		// send payload commit message with signature to relayer
-		err = s.sendSignatureToRelayer(txPayload)
-		if err != nil {
-			log.WithError(err).Error("failed to submit snapshot to relayer")
+		if strings.Contains(msg.ProjectID, "aggregate_24h_top_pairs_lite") ||
+			strings.Contains(msg.ProjectID, "aggregate_24h_top_tokens_lite") ||
+			strings.Contains(msg.ProjectID, "aggregate_7d_top_pairs_lite") ||
+			strings.Contains(msg.ProjectID, "aggregate_24h_stats_lite") {
 
-			go s.issueReporter.Report(
-				reporting.MissedSnapshotIssue,
-				msg.ProjectID,
-				strconv.Itoa(msg.EpochID),
-				map[string]interface{}{
-					"issueDetails": "Error: " + err.Error(),
-					"msg":          "failed to submit snapshot to relayer",
-				})
-			go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "failed", err.Error())
-			go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
-				SubmittedSnapshotCid: msg.SnapshotCID,
-				State:                datamodel.MissedSnapshotSubmission,
-				Reason:               "failed to submit snapshot to relayer",
-			}, false)
+			err = s.sendSignatureToRelayer(txPayload)
 
-			return err
+			if err != nil {
+				log.WithError(err).Error("failed to submit snapshot to relayer")
+
+				go s.issueReporter.Report(
+					reporting.MissedSnapshotIssue,
+					msg.ProjectID,
+					strconv.Itoa(msg.EpochID),
+					map[string]interface{}{
+						"issueDetails": "Error: " + err.Error(),
+						"msg":          "failed to submit snapshot to relayer",
+					})
+				go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "failed", err.Error())
+				go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
+					SubmittedSnapshotCid: msg.SnapshotCID,
+					State:                datamodel.MissedSnapshotSubmission,
+					Reason:               "failed to submit snapshot to relayer",
+				}, false)
+
+				return err
+			}
+		} else {
+			log.WithField("project_id", msg.ProjectID).Info("skipping relayer submission for project")
 		}
 		go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "success", "")
 	}
