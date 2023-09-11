@@ -59,8 +59,9 @@ export ipfs_api_secret="${IPFS_API_SECRET:-}"
 export slack_reporting_url="${SLACK_REPORTING_URL:-}"
 export powerloom_reporting_url="${POWERLOOM_REPORTING_URL:-}"
 
-export web3_storage_token="${WEB3_STORAGE_TOKEN:-}"
-
+if [ "$powerloom_reporting_url" ]; then
+    export powerloom_reporting_url="${powerloom_reporting_url}/reportIssue"
+fi
 # If IPFS_URL is empty, clear IPFS API key and secret
 if [ -z "$IPFS_URL" ]; then
     ipfs_api_key=""
