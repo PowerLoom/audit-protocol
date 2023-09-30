@@ -43,7 +43,7 @@ func GetDefaultHTTPClient(timeout int) *retryablehttp.Client {
 	}
 
 	retryableHTTPClient := retryablehttp.NewClient()
-	retryableHTTPClient.RetryMax = 5
+	retryableHTTPClient.RetryMax = 0
 	retryableHTTPClient.HTTPClient = rawHTTPClient
 	retryableHTTPClient.Logger = log.StandardLogger()
 
