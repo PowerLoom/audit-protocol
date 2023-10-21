@@ -7,15 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -24,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 	"github.com/swagftw/gi"
 
@@ -37,8 +35,6 @@ import (
 	"audit-protocol/goutils/smartcontract/transactions"
 	"audit-protocol/goutils/taskmgr"
 	rabbitmqMgr "audit-protocol/goutils/taskmgr/rabbitmq"
-	"audit-protocol/goutils/taskmgr/worker"
-	w3storage "audit-protocol/goutils/w3s"
 	"audit-protocol/payload-commit/signer"
 )
 
@@ -50,7 +46,6 @@ type PayloadCommitService struct {
 	ethClient     *ethclient.Client
 	contractAPI   *contractApi.ContractApi
 	ipfsClient    *ipfsutils.IpfsClient
-	web3sClient   *w3storage.W3S
 	diskCache     *caching.LocalDiskCache
 	txManager     *transactions.TxManager
 	privKey       *ecdsa.PrivateKey
@@ -87,11 +82,6 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		log.WithError(err).Fatal("failed to invoke ipfs client")
 	}
 
-	web3sClient, err := gi.Invoke[*w3storage.W3S]()
-	if err != nil {
-		log.WithError(err).Fatal("failed to invoke web3s client")
-	}
-
 	diskCache, err := gi.Invoke[*caching.LocalDiskCache]()
 	if err != nil {
 		log.WithError(err).Fatal("failed to invoke disk cache")
@@ -113,7 +103,6 @@ func InitPayloadCommitService(reporter *reporting.IssueReporter) *PayloadCommitS
 		ethClient:     ethClient,
 		contractAPI:   contractAPI,
 		ipfsClient:    ipfsClient,
-		web3sClient:   web3sClient,
 		diskCache:     diskCache,
 		txManager:     transactions.NewNonceManager(),
 		privKey:       privKey,
@@ -174,44 +163,11 @@ func (s *PayloadCommitService) Run(msgBody []byte, topic string) error {
 
 // HandlePayloadCommitTask handles the payload commit task.
 func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCommitMessage) error {
-	log.WithField("project_id", msg.ProjectID).Info("handling payload commit task")
-
-	// check if payload cid is already present at the epochId, for the given project in redis
-	// if yes, then skip the task
-	unfinalizedSnapshot, err := s.redisCache.GetUnfinalizedSnapshotAtEpochID(context.Background(), msg.ProjectID, msg.EpochID)
-	if unfinalizedSnapshot != nil {
-		log.WithField("epochId", msg.EpochID).
-			WithField("messageId", msg.ProjectID).
-			WithField("snapshotCid", unfinalizedSnapshot.SnapshotCID).
-			WithError(err).Debug("payload commit message already processed for the given epochId and project, skipping task")
-
-		return nil
-	}
-
-	// upload payload commit msg to ipfs and web3 storage
-	err = s.uploadToIPFSandW3s(msg)
-	if err != nil {
-		log.WithError(err).Error("failed to upload snapshot to ipfs")
-
-		errMsg := "failed to upload snapshot to ipfs"
-		if msg.Web3Storage {
-			errMsg = "failed to upload snapshot to ipfs and web3 storage"
-		}
-
-		go s.issueReporter.Report(reporting.PayloadCommitInternalIssue, msg.ProjectID, strconv.Itoa(msg.EpochID), map[string]interface{}{
-			"issueDetails": "Error: " + err.Error(),
-			"msg":          errMsg,
-		})
-
-		go s.redisCache.AddSnapshotterStatusReport(context.Background(), msg.EpochID, msg.ProjectID, &datamodel.SnapshotterStatusReport{
-			SubmittedSnapshotCid: "",
-			State:                datamodel.MissedSnapshotSubmission,
-			Reason:               errMsg,
-		}, false)
-	}
-
-	// publish snapshot submitted event
-	go s.publishSnapshotSubmittedEvent(msg)
+	log.WithFields(logrus.Fields{
+		"project ID":   msg.ProjectID,
+		"epoch ID":     msg.EpochID,
+		"snapshot CID": msg.SnapshotCID,
+	}).Info("handling payload commit task")
 
 	// sign payload commit message (eip712 signature)
 	signerData, signature, err := s.signPayload(msg.SnapshotCID, msg.ProjectID, int64(msg.EpochID))
@@ -289,19 +245,6 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 		go s.redisCache.UpdateEpochProcessingStatus(context.Background(), msg.ProjectID, msg.EpochID, "success", "")
 	}
 
-	// store unfinalized payload cid in redis
-	err = s.redisCache.AddUnfinalizedSnapshotCID(context.Background(), msg)
-	if err != nil {
-		log.WithField("epochId", msg.EpochID).
-			WithField("messageId", msg.ProjectID).
-			WithField("snapshotCid", msg.SnapshotCID).
-			WithError(err).Error("failed to store snapshot cid in redis")
-
-		go s.issueReporter.Report(reporting.PayloadCommitInternalIssue, msg.ProjectID, strconv.Itoa(msg.EpochID), map[string]interface{}{
-			"issueDetails": "Error: " + err.Error(),
-			"msg":          "failed to store unfinalized snapshot in redis",
-		})
-	}
 
 	return nil
 }
@@ -448,87 +391,6 @@ func (s *PayloadCommitService) HandleFinalizedPayloadCommitTask(msg *datamodel.P
 	err = s.redisCache.StoreLastFinalizedEpoch(context.Background(), msg.Message.ProjectID, msg.Message.EpochID)
 	if err != nil {
 		log.WithError(err).Error("failed to store last finalized epoch")
-	}
-
-	return nil
-}
-
-func (s *PayloadCommitService) uploadToIPFSandW3s(msg *datamodel.PayloadCommitMessage) error {
-	log.WithField("msg", msg).Debug("uploading payload commit msg to ipfs and web3 storage")
-
-	wg := sync.WaitGroup{}
-
-	// upload to ipfs
-	var ipfsUploadErr error
-
-	ipfsErrChan := make(chan error)
-
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-
-		ipfsUploadErr = backoff.Retry(func() error {
-			ipfsUploadErr = s.ipfsClient.UploadSnapshotToIPFS(msg)
-			if ipfsUploadErr != nil {
-				log.WithError(ipfsUploadErr).Error("failed to upload snapshot to ipfs, retrying")
-
-				return ipfsUploadErr
-			}
-
-			return nil
-		}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
-
-		if ipfsUploadErr != nil {
-			log.WithError(ipfsUploadErr).Error("failed to upload snapshot to ipfs after max retries")
-			ipfsErrChan <- ipfsUploadErr
-
-			return
-		}
-
-		ipfsErrChan <- nil
-	}()
-
-	// upload to web3 storage
-	var (
-		w3sUploadErr error
-		snapshotCid  string
-	)
-
-	if msg.Web3Storage {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			w3sUploadErr = backoff.Retry(func() error {
-				snapshotCid, w3sUploadErr = s.web3sClient.UploadToW3s(msg.Message)
-				if w3sUploadErr != nil {
-					return w3sUploadErr
-				}
-
-				return nil
-			}, backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 5))
-
-			if w3sUploadErr != nil {
-				log.WithError(w3sUploadErr).Error("failed to upload snapshot to web3 storage after max retries")
-			}
-		}()
-	}
-
-	// if ipfs upload fails, wait for web3 storage upload to finish if msg.Web3Storage flag is true
-	if err := <-ipfsErrChan; err != nil {
-		if msg.Web3Storage {
-			wg.Wait()
-
-			if w3sUploadErr != nil || snapshotCid == "" {
-				return fmt.Errorf("failed to upload to ipfs and web3 storage")
-			}
-
-			msg.SnapshotCID = snapshotCid
-		} else {
-			return fmt.Errorf("failed to upload to ipfs")
-		}
 	}
 
 	return nil
@@ -683,31 +545,4 @@ func (s *PayloadCommitService) initLocalCachedData() error {
 	}
 
 	return nil
-}
-
-// publishSnapshotSubmittedEvent publishes snapshot submitted event message
-func (s *PayloadCommitService) publishSnapshotSubmittedEvent(msg *datamodel.PayloadCommitMessage) {
-	eventMsg := &datamodel.SnapshotSubmittedEventMessage{
-		SnapshotCid: msg.SnapshotCID,
-		EpochId:     msg.EpochID,
-		ProjectId:   msg.ProjectID,
-		BroadcastId: s.uuid.String(),
-		Timestamp:   time.Now().Unix(),
-	}
-
-	msgBytes, err := json.Marshal(eventMsg)
-	if err != nil {
-		log.WithError(err).Error("failed to marshal snapshot submitted event message")
-
-		return
-	}
-
-	err = s.taskMgr.Publish(context.Background(), worker.TypeEventDetectorWorker, msgBytes)
-	if err != nil {
-		log.WithField("msg", string(msgBytes)).WithError(err).Error("failed to publish snapshot submitted event message")
-
-		return
-	}
-
-	log.Info("published snapshot submitted event message")
 }

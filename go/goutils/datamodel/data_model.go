@@ -46,8 +46,6 @@ type (
 )
 
 type PayloadCommitMessage struct {
-	Message       map[string]interface{} `json:"message"`
-	Web3Storage   bool                   `json:"web3Storage"`
 	SourceChainID int                    `json:"sourceChainId"`
 	ProjectID     string                 `json:"projectId"`
 	EpochID       int                    `json:"epochId"`
