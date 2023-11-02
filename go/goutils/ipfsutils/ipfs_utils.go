@@ -1,9 +1,7 @@
 package ipfsutils
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -17,7 +15,6 @@ import (
 	"github.com/swagftw/gi"
 	"golang.org/x/time/rate"
 
-	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/settings"
 )
@@ -195,7 +192,6 @@ func ParseURL(ipfsUrl string) (string, error) {
 
 	return ipfsUrl, nil
 }
-
 
 // GetSnapshotFromIPFS returns the snapshot from IPFS.
 func (client *IpfsClient) GetSnapshotFromIPFS(snapshotCID string, outputPath string) error {

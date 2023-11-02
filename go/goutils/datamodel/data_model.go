@@ -5,8 +5,10 @@ import "github.com/ethereum/go-ethereum/signer/core/apitypes"
 type SnapshotSubmissionState string
 
 const (
-	MissedSnapshotSubmission    SnapshotSubmissionState = "MISSED_SNAPSHOT"
-	IncorrectSnapshotSubmission SnapshotSubmissionState = "SUBMITTED_INCORRECT_SNAPSHOT"
+	MissedSnapshotSubmission        SnapshotSubmissionState = "MISSED_SNAPSHOT"
+	IncorrectSnapshotSubmission     SnapshotSubmissionState = "SUBMITTED_INCORRECT_SNAPSHOT"
+	OnlyFinalizedSnapshotSubmission SnapshotSubmissionState = "ONLY_FINALIZED_SNAPSHOT_RECIEVED"
+	SuccessfulSnapshotSubmission    SnapshotSubmissionState = "SUCCESSFUL_SNAPSHOT_SUBMISSION"
 )
 
 type SnapshotterStateUpdate struct {
