@@ -1,9 +1,7 @@
 package ipfsutils
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -17,7 +15,6 @@ import (
 	"github.com/swagftw/gi"
 	"golang.org/x/time/rate"
 
-	"audit-protocol/goutils/datamodel"
 	"audit-protocol/goutils/httpclient"
 	"audit-protocol/goutils/settings"
 )
@@ -194,37 +191,6 @@ func ParseURL(ipfsUrl string) (string, error) {
 	}
 
 	return ipfsUrl, nil
-}
-
-func (client *IpfsClient) UploadSnapshotToIPFS(payloadCommit *datamodel.PayloadCommitMessage) error {
-	err := client.writeClientRateLimiter.Wait(context.Background())
-	if err != nil {
-		log.WithError(err).Error("ipfs rate limiter errored")
-
-		return err
-	}
-
-	msg, err := json.Marshal(payloadCommit.Message)
-	if err != nil {
-		log.WithError(err).Error("failed to marshal payload commit message")
-
-		return err
-	}
-
-	snapshotCid, err := client.writeClient.Add(bytes.NewReader(msg), shell.CidVersion(1))
-	if err != nil {
-		log.WithError(err).Error("failed to add snapshot to ipfs")
-
-		return err
-	}
-
-	log.WithField("snapshotCID", snapshotCid).
-		WithField("epochId", payloadCommit.EpochID).
-		Debug("ipfs add Successful")
-
-	payloadCommit.SnapshotCID = snapshotCid
-
-	return nil
 }
 
 // GetSnapshotFromIPFS returns the snapshot from IPFS.

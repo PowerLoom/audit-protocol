@@ -5,8 +5,10 @@ import "github.com/ethereum/go-ethereum/signer/core/apitypes"
 type SnapshotSubmissionState string
 
 const (
-	MissedSnapshotSubmission    SnapshotSubmissionState = "MISSED_SNAPSHOT"
-	IncorrectSnapshotSubmission SnapshotSubmissionState = "SUBMITTED_INCORRECT_SNAPSHOT"
+	MissedSnapshotSubmission        SnapshotSubmissionState = "MISSED_SNAPSHOT"
+	IncorrectSnapshotSubmission     SnapshotSubmissionState = "SUBMITTED_INCORRECT_SNAPSHOT"
+	OnlyFinalizedSnapshotSubmission SnapshotSubmissionState = "ONLY_FINALIZED_SNAPSHOT_RECIEVED"
+	SuccessfulSnapshotSubmission    SnapshotSubmissionState = "SUCCESSFUL_SNAPSHOT_SUBMISSION"
 )
 
 type SnapshotterStateUpdate struct {
@@ -46,12 +48,10 @@ type (
 )
 
 type PayloadCommitMessage struct {
-	Message       map[string]interface{} `json:"message"`
-	Web3Storage   bool                   `json:"web3Storage"`
-	SourceChainID int                    `json:"sourceChainId"`
-	ProjectID     string                 `json:"projectId"`
-	EpochID       int                    `json:"epochId"`
-	SnapshotCID   string                 `json:"snapshotCID"`
+	SourceChainID int    `json:"sourceChainId"`
+	ProjectID     string `json:"projectId"`
+	EpochID       int    `json:"epochId"`
+	SnapshotCID   string `json:"snapshotCID"`
 }
 
 type PowerloomSnapshotFinalizedMessage struct {
@@ -78,7 +78,6 @@ type SnapshotRelayerPayload struct {
 
 type SnapshotterStatusReport struct {
 	SubmittedSnapshotCid string                  `json:"submittedSnapshotCid,omitempty"`
-	SubmittedSnapshot    map[string]interface{}  `json:"submittedSnapshot,omitempty"`
 	FinalizedSnapshotCid string                  `json:"finalizedSnapshotCid"`
 	FinalizedSnapshot    map[string]interface{}  `json:"finalizedSnapshot,omitempty"`
 	State                SnapshotSubmissionState `json:"state"`
@@ -88,7 +87,6 @@ type SnapshotterStatusReport struct {
 type UnfinalizedSnapshot struct {
 	SnapshotCID string                 `json:"snapshotCid"`
 	Snapshot    map[string]interface{} `json:"snapshot"`
-	Expiration  int64                  `json:"expiration"`
 }
 
 type SnapshotterIssue struct {
