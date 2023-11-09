@@ -146,7 +146,6 @@ type SettingsObj struct {
 
 // ParseSettings parses the settings.json file and returns a SettingsObj
 func ParseSettings() *SettingsObj {
-	log.Debug("parsing settings")
 
 	v := validator.New()
 
@@ -163,8 +162,6 @@ func ParseSettings() *SettingsObj {
 		panic(err)
 	}
 
-	log.Debug("settings json data is", string(data))
-
 	err = json.Unmarshal(data, settingsObj)
 	if err != nil {
 		log.Error("cannot unmarshal the settings json ", err)
@@ -177,7 +174,6 @@ func ParseSettings() *SettingsObj {
 	}
 
 	SetDefaults(settingsObj)
-	log.Infof("final Settings Object being used %+v", settingsObj)
 
 	err = gi.Inject(settingsObj)
 	if err != nil {
