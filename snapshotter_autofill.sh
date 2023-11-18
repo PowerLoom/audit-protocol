@@ -45,9 +45,13 @@ if [ "$WEB3_STORAGE_TOKEN" ]; then
     echo "Found WEB3_STORAGE_TOKEN ${WEB3_STORAGE_TOKEN}";
 fi
 
+if [ "$NAMESPACE" ]; then
+    echo "Found NAMESPACE ${NAMESPACE}";
+fi
+
 cp settings.example.json settings.json
 
-export namespace=UNISWAPV2
+export namespace="${NAMESPACE:-UNISWAPV2}"
 export prost_rpc_url="${PROST_RPC_URL:-https://rpc-prost1b.powerloom.io}"
 
 export ipfs_url="${IPFS_URL:-/dns/ipfs/tcp/5001}"
