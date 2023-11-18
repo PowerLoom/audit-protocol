@@ -33,7 +33,7 @@ The project consists of the following services:
 ### Payload Commit Service
 
 The payload commit service has the following functionalities:
-1. Listens to Rabbitmq "Snaptshot Commit" messages.
+1. Listens to Rabbitmq "Snapshot Commit" messages.
 2. Store the snapshot on IPFS and/web3.storage (based on configuration).
     - stores cid from IPFS and web3.storage in Redis cache for the given project at provided epochID.
 3. Creates EIP-712 based structured data hash and generates the signature.
@@ -69,7 +69,7 @@ Common utils that are used by multiple Golang services are available in [goutils
 - [caching](../go/caching) - Generic caching interface
 - [logger](../go/goutils/logger/) - Logger initialization and setup code
 - [redisutils](../go/goutils/redisutils/) - Redis client initialization and common operations wrapper code
-- [settings](../go/goutils/settings/) - Parsing the settings and settings deaults
+- [settings](../go/goutils/settings/) - Parsing the settings and settings defaults
 - [slackutils](../go/goutils/slackutils/) - Code to interact with slack workflow
 - [datamodel](../go/goutils/datamodel/) - Data models used across services
 - [ipfsutils](../go/goutils/ipfsutils/) - IPFS client initialization and common functionality
