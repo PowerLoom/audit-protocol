@@ -9,7 +9,7 @@ on:
   release:
     types: ['published']
   push:
-    branches: [ "dockerify" ]
+    branches: [ "dockerify", "phase2"]
     # Publish semver tags as releases.
     tags: [ 'v*.*.*' ]
   pull_request:
