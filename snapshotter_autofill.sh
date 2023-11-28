@@ -45,10 +45,20 @@ if [ "$WEB3_STORAGE_TOKEN" ]; then
     echo "Found WEB3_STORAGE_TOKEN ${WEB3_STORAGE_TOKEN}";
 fi
 
+if [ "$NAMESPACE" ]; then
+    echo "Found NAMESPACE ${NAMESPACE}";
+fi
+
+if [ "$PROST_CHAIN_ID" ]; then
+    echo "Found PROST_CHAIN_ID ${PROST_CHAIN_ID}";
+fi
+
 cp settings.example.json settings.json
 
-export namespace=UNISWAPV2
+export namespace="${NAMESPACE:-UNISWAPV2}"
 export prost_rpc_url="${PROST_RPC_URL:-https://rpc-prost1b.powerloom.io}"
+
+export prost_chain_id="${PROST_CHAIN_ID:-103}"
 
 export ipfs_url="${IPFS_URL:-/dns/ipfs/tcp/5001}"
 export ipfs_api_key="${IPFS_API_KEY:-}"
@@ -70,6 +80,7 @@ fi
 
 echo "Using Namespace: ${namespace}"
 echo "Using Prost RPC URL: ${prost_rpc_url}"
+echo "Using Prost Chain ID: ${prost_chain_id}"
 echo "Using IPFS URL: ${ipfs_url}"
 echo "Using IPFS API KEY: ${ipfs_api_key}"
 echo "Using protocol state contract: ${protocol_state_contract}"
@@ -81,6 +92,7 @@ echo "Using web3 storage token: ${web3_storage_token}"
 sed -i'.backup' "s#relevant-namespace#$namespace#" settings.json
 
 sed -i'.backup' "s#https://prost-rpc-url#$prost_rpc_url#" settings.json
+sed -i'.backup' "s#prost-chain-id#$prost_chain_id#" settings.json
 
 sed -i'.backup' "s#ipfs-writer-url#$ipfs_url#" settings.json
 sed -i'.backup' "s#ipfs-writer-key#$ipfs_api_key#" settings.json
