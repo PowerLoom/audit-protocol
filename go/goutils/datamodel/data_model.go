@@ -69,6 +69,7 @@ type PayloadCommitFinalizedMessage struct {
 }
 
 type SnapshotRelayerPayload struct {
+	SlotId	    int                       `json:"slotId"`
 	ProjectID   string                    `json:"projectId"`
 	SnapshotCID string                    `json:"snapshotCid"`
 	EpochID     int                       `json:"epochId"`

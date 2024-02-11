@@ -70,6 +70,7 @@ func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epoc
 		PrimaryType: "Request",
 		Types: types.Types{
 			"Request": []types.Type{
+				{Name: "slotId", Type: "uint256"}
 				{Name: "deadline", Type: "uint256"},
 				{Name: "snapshotCid", Type: "string"},
 				{Name: "epochId", Type: "uint256"},
@@ -89,6 +90,7 @@ func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epoc
 			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
+			"slotId":      (*math.HexOrDecimal256)(big.NewInt(0)),
 			"deadline":    (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(settingsObj.Signer.DeadlineBuffer))),
 			"snapshotCid": snapshotCid,
 			"epochId":     (*math.HexOrDecimal256)(big.NewInt(epochId)),
