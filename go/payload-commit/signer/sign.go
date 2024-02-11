@@ -70,7 +70,7 @@ func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epoc
 		PrimaryType: "Request",
 		Types: types.Types{
 			"Request": []types.Type{
-				{Name: "slotId", Type: "uint256"}
+				{Name: "slotId", Type: "uint256"},
 				{Name: "deadline", Type: "uint256"},
 				{Name: "snapshotCid", Type: "string"},
 				{Name: "epochId", Type: "uint256"},
