@@ -91,7 +91,7 @@
     },
     "accountAddress": "signer-account-address",
     "privateKey": "signer-account-private-key",
-    "deadlineBuffer": 30
+    "deadlineBuffer": 500
   },
   "relayer": {
     "host": "https://relayer-url",
