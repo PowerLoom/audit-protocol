@@ -10,6 +10,11 @@ if [ -z "$SIGNER_ACCOUNT_ADDRESS" ]; then
     exit 1;
 fi
 
+if [ -z "$SLOT_ID" ]; then
+    echo "SLOT_ID not found, please set this in your .env!";
+    exit 1;
+fi
+
 if [ -z "$SIGNER_ACCOUNT_PRIVATE_KEY" ]; then
     echo "SIGNER_ACCOUNT_PRIVATE_KEY not found, please set this in your .env!";
     exit 1;
@@ -90,7 +95,7 @@ echo "Using powerloom reporting url: ${powerloom_reporting_url}"
 echo "Using web3 storage token: ${web3_storage_token}"
 
 sed -i'.backup' "s#relevant-namespace#$namespace#" settings.json
-
+sed -i'.backup' "s#slot-id#$SLOT_ID#" settings.json
 sed -i'.backup' "s#https://prost-rpc-url#$prost_rpc_url#" settings.json
 sed -i'.backup' "s#prost-chain-id#$prost_chain_id#" settings.json
 

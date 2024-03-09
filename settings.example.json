@@ -1,5 +1,6 @@
 {
   "instance_id": "account-address",
+  "slot_id": "slot-id",
   "pooler_namespace": "relevant-namespace",
   "anchor_chain_rpc_url": "https://prost-rpc-url",
   "local_cache_path": "/home/ubuntu/local_cache/",

@@ -126,6 +126,7 @@ type (
 
 type SettingsObj struct {
 	InstanceId        string       `json:"instance_id" validate:"required"`
+	SlotId			  int 		   `json:"slot_id" validate:"required"`
 	PoolerNamespace   string       `json:"pooler_namespace" validate:"required"`
 	AnchorChainRPCURL string       `json:"anchor_chain_rpc_url" validate:"required"`
 	LocalCachePath    string       `json:"local_cache_path" validate:"required"`

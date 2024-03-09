@@ -182,7 +182,7 @@ func (s *PayloadCommitService) HandlePayloadCommitTask(msg *datamodel.PayloadCom
 
 	// create transaction payload
 	txPayload := &datamodel.SnapshotRelayerPayload{
-		SlotId:	     0,
+		SlotId:      s.settingsObj.SlotId,
 		ProjectID:   msg.ProjectID,
 		EpochID:     msg.EpochID,
 		SnapshotCID: msg.SnapshotCID,
@@ -398,12 +398,12 @@ func (s *PayloadCommitService) signPayload(snapshotCid, projectId string, epochI
 // sendSignatureToRelayer sends the signature to the relayer.
 func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.SnapshotRelayerPayload) error {
 	type reqBody struct {
-		SlotId	    int    `json:"slotId"`
+		SlotId      int    `json:"slotId"`
 		ProjectID   string `json:"projectId"`
 		SnapshotCID string `json:"snapshotCid"`
 		EpochID     int    `json:"epochId"`
 		Request     struct {
-			SlotId	    int    `json:"slotId"`
+			SlotId      int    `json:"slotId"`
 			Deadline    uint64 `json:"deadline"`
 			SnapshotCid string `json:"snapshotCid"`
 			EpochId     int    `json:"epochId"`
@@ -414,18 +414,18 @@ func (s *PayloadCommitService) sendSignatureToRelayer(payload *datamodel.Snapsho
 	}
 
 	rb := &reqBody{
-		SlotId:      0,
+		SlotId:      s.settingsObj.SlotId,
 		ProjectID:   payload.ProjectID,
 		SnapshotCID: payload.SnapshotCID,
 		EpochID:     payload.EpochID,
 		Request: struct {
-			SlotId	    int    `json:"slotId"`
+			SlotId      int    `json:"slotId"`
 			Deadline    uint64 `json:"deadline"`
 			SnapshotCid string `json:"snapshotCid"`
 			EpochId     int    `json:"epochId"`
 			ProjectId   string `json:"projectId"`
-		}{	
-			SlotId:	     0,
+		}{
+			SlotId:      s.settingsObj.SlotId,
 			Deadline:    (*big.Int)(payload.Request["deadline"].(*math.HexOrDecimal256)).Uint64(),
 			SnapshotCid: payload.SnapshotCID,
 			EpochId:     payload.EpochID,
