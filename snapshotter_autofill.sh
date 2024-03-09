@@ -84,6 +84,7 @@ if [ -z "$IPFS_URL" ]; then
 fi
 
 echo "Using Namespace: ${namespace}"
+echo "Using Slot ID: ${SLOT_ID}"
 echo "Using Prost RPC URL: ${prost_rpc_url}"
 echo "Using Prost Chain ID: ${prost_chain_id}"
 echo "Using IPFS URL: ${ipfs_url}"
