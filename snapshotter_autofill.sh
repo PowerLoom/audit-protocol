@@ -68,7 +68,7 @@ export prost_chain_id="${PROST_CHAIN_ID:-103}"
 export ipfs_url="${IPFS_URL:-/dns/ipfs/tcp/5001}"
 export ipfs_api_key="${IPFS_API_KEY:-}"
 export ipfs_api_secret="${IPFS_API_SECRET:-}"
-
+export slot_id="${SLOT_ID:-0}"
 export protocol_state_contract="${PROTOCOL_STATE_CONTRACT:-0x102Af943b34FAC403a6ACB8e463f44bE164aa942}"
 export relayer_host="${RELAYER_HOST:-https://relayer-prod1b.powerloom.io/75822d76fa4d497ab3b409b3f097f4fa}"
 
@@ -84,7 +84,7 @@ if [ -z "$IPFS_URL" ]; then
 fi
 
 echo "Using Namespace: ${namespace}"
-echo "Using Slot ID: ${SLOT_ID}"
+echo "Using Slot ID: ${slot_id}"
 echo "Using Prost RPC URL: ${prost_rpc_url}"
 echo "Using Prost Chain ID: ${prost_chain_id}"
 echo "Using IPFS URL: ${ipfs_url}"
@@ -96,7 +96,7 @@ echo "Using powerloom reporting url: ${powerloom_reporting_url}"
 echo "Using web3 storage token: ${web3_storage_token}"
 
 sed -i'.backup' "s#relevant-namespace#$namespace#" settings.json
-sed -i'.backup' "s#slot-id#$SLOT_ID#" settings.json
+sed -i'.backup' "s#slot-id#$slot_id#" settings.json
 sed -i'.backup' "s#https://prost-rpc-url#$prost_rpc_url#" settings.json
 sed -i'.backup' "s#prost-chain-id#$prost_chain_id#" settings.json
 
