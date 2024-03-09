@@ -68,7 +68,7 @@ export prost_chain_id="${PROST_CHAIN_ID:-103}"
 export ipfs_url="${IPFS_URL:-/dns/ipfs/tcp/5001}"
 export ipfs_api_key="${IPFS_API_KEY:-}"
 export ipfs_api_secret="${IPFS_API_SECRET:-}"
-export slot_id="${SLOT_ID:-0}"
+export slot_id=${SLOT_ID:-0}
 export protocol_state_contract="${PROTOCOL_STATE_CONTRACT:-0x102Af943b34FAC403a6ACB8e463f44bE164aa942}"
 export relayer_host="${RELAYER_HOST:-https://relayer-prod1b.powerloom.io/75822d76fa4d497ab3b409b3f097f4fa}"
 
