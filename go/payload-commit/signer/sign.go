@@ -90,7 +90,7 @@ func GetSignerData(client *ethclient.Client, snapshotCid, projectId string, epoc
 			VerifyingContract: settingsObj.Signer.Domain.VerifyingContract,
 		},
 		Message: types.TypedDataMessage{
-			"slotId":      (*math.HexOrDecimal256)(big.NewInt(0)),
+			"slotId":      (*math.HexOrDecimal256)(big.NewInt(int64(settingsObj.SlotId))),
 			"deadline":    (*math.HexOrDecimal256)(big.NewInt(int64(block) + int64(settingsObj.Signer.DeadlineBuffer))),
 			"snapshotCid": snapshotCid,
 			"epochId":     (*math.HexOrDecimal256)(big.NewInt(epochId)),
