@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ipfs/go-cid"
 	"github.com/remeh/sizedwaitgroup"
 	log "github.com/sirupsen/logrus"
@@ -14,7 +13,6 @@ import (
 	"audit-protocol/goutils/ipfsutils"
 	"audit-protocol/goutils/logger"
 	"audit-protocol/goutils/settings"
-	"audit-protocol/goutils/smartcontract"
 	pruning "audit-protocol/pruning/service"
 )
 
@@ -52,14 +50,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	contractApi := smartcontract.InitContractAPI()
-
 	log.Info("getting projects from contract")
-	projects, err := contractApi.GetProjects(&bind.CallOpts{})
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	projects := []string{};
 	projectToCIDsMapping := make(map[string][]cid.Cid)
 
 	log.Info("creating project to cids mapping")

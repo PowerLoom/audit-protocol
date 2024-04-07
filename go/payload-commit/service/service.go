@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
@@ -489,13 +488,6 @@ func (s *PayloadCommitService) initLocalCachedData() error {
 		return nil
 	}
 
-	// get projects from smart contract
-	projects, err = s.contractAPI.GetProjects(&bind.CallOpts{})
-	if err != nil {
-		log.WithError(err).Error("failed to get projects from smart contract")
-
-		return err
-	}
 
 	if len(projects) == 0 {
 		return nil
