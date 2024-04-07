@@ -45,10 +45,7 @@ func NewNonceManager() *TxManager {
 		log.WithError(err).Fatal("failed to get chain id")
 	}
 
-	gasPrice, err := ethClient.SuggestGasPrice(context.Background())
-	if err != nil {
-		gasPrice = big.NewInt(10000000)
-	}
+	gasPrice := big.NewInt(100000) 
 
 	txMgr := &TxManager{
 		Mu:          sync.Mutex{},
@@ -107,10 +104,12 @@ func (t *TxManager) SubmitSnapshot(api *contractApi.ContractApi, privKey *ecdsa.
 					return signedTx, nil
 				},
 			},
+			0,
 			msg.SnapshotCID,
 			big.NewInt(int64(msg.EpochID)),
 			msg.ProjectID,
 			contractApi.PowerloomProtocolStateRequest{
+				SlotId:      big.NewInt(0),
 				Deadline:    (*big.Int)(deadline),
 				SnapshotCid: msg.SnapshotCID,
 				EpochId:     big.NewInt(int64(msg.EpochID)),
